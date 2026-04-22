@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { float64, int32, string } from "./columns";
+import { dateTime, float64, int32, string } from "./columns";
 import { fn, tableFn } from "./functions";
 import { compileSql, sql } from "./sql";
 
@@ -56,8 +56,17 @@ describe("ck-orm functions", function describeClickHouseOrmFunctions() {
     expect(countBuilt.query).toContain("count()");
     expect(fn.count().decoder(10)).toBe("10");
 
+    const countIfBuilt = compileExpression(fn.countIf(fn.not(int32().bind({ name: "id", tableName: "orders" }))));
+    expect(countIfBuilt.query).toContain("countIf(not(`orders`.`id`))");
+
     const countWithArg = compileExpression(fn.count(string().bind({ name: "name", tableName: "orders" })));
     expect(countWithArg.query).toContain("count(`orders`.`name`)");
+
+    const minBuilt = compileExpression(fn.min(int32().bind({ name: "id", tableName: "orders" })));
+    expect(minBuilt.query).toContain("min(`orders`.`id`)");
+
+    const maxBuilt = compileExpression(fn.max(string().bind({ name: "name", tableName: "orders" })));
+    expect(maxBuilt.query).toContain("max(`orders`.`name`)");
   });
 
   it("uses conservative aggregate decoders and covers not/coalesce/tuple/arrayZip", function testDecoders() {
@@ -74,7 +83,13 @@ describe("ck-orm functions", function describeClickHouseOrmFunctions() {
     expect(fn.sum(int32()).decoder(12)).toBe("12");
     expect(fn.sum(int32()).decoder(7n)).toBe("7");
     expect(fn.sumIf(float64(), fn.not(fn.count())).decoder(7n)).toBe(7);
+    expect(fn.countIf(fn.not(int32())).decoder(9)).toBe("9");
     expect(fn.avg(int32()).decoder("4.5")).toBe(4.5);
+    expect(fn.min(int32()).decoder("8")).toBe(8);
+    expect(fn.max(string()).decoder(1n)).toBe("1");
+    const aggregateDate = new Date("2026-04-21T12:34:56.000Z");
+    expect(fn.min(dateTime()).decoder(aggregateDate)).toBe(aggregateDate);
+    expect(fn.max(dateTime()).decoder("2026-04-21T00:00:00.000Z")).toEqual(new Date("2026-04-21T00:00:00.000Z"));
     expect(fn.uniqExact(int32()).decoder(5)).toBe("5");
     expect(fn.count().decoder(true)).toBe("true");
     expect(fn.count().decoder(1n)).toBe("1");

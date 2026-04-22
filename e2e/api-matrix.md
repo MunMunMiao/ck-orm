@@ -35,6 +35,9 @@ This matrix records coverage from the real ClickHouse E2E suite only. It does no
 | `ne` | `operators.e2e.test.ts` |
 | `gt` | `query-basics.e2e.test.ts`, `operators.e2e.test.ts` |
 | `gte` | `operators.e2e.test.ts` |
+| `has` | `operators.e2e.test.ts` |
+| `hasAll` | `operators.e2e.test.ts` |
+| `hasAny` | `operators.e2e.test.ts` |
 | `lt` | `operators.e2e.test.ts`, `builder-analytics.e2e.test.ts` |
 | `lte` | `operators.e2e.test.ts` |
 | `like` | `injection-values.e2e.test.ts` |
@@ -86,9 +89,12 @@ This matrix records coverage from the real ClickHouse E2E suite only. It does no
 | `fn.toDateTime` | `functions.e2e.test.ts` |
 | `fn.toStartOfMonth` | `functions.e2e.test.ts`, `builder-analytics.e2e.test.ts` |
 | `fn.count` | `dataset-smoke.e2e.test.ts`, `functions.e2e.test.ts` |
+| `fn.countIf` | `functions.e2e.test.ts` |
 | `fn.sum` | `functions.e2e.test.ts`, `builder-analytics.e2e.test.ts` |
 | `fn.sumIf` | `functions.e2e.test.ts` |
 | `fn.avg` | `functions.e2e.test.ts` |
+| `fn.min` | `functions.e2e.test.ts` |
+| `fn.max` | `functions.e2e.test.ts` |
 | `fn.uniqExact` | `functions.e2e.test.ts` |
 | `fn.coalesce` | `functions.e2e.test.ts` |
 | `fn.tuple` | `functions.e2e.test.ts` |

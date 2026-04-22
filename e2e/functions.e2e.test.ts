@@ -50,29 +50,44 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
     const [row] = await db
       .select({
         eventCount: fn.count(webEvents.event_id).as("event_count"),
+        usEventCount: fn.countIf(eq(webEvents.country, "US")).as("us_event_count"),
         totalRevenue: fn.sum(webEvents.revenue).as("total_revenue"),
         totalRevenueUs: fn.sumIf(webEvents.revenue, eq(webEvents.country, "US")).as("total_revenue_us"),
         avgRevenue: fn.avg(webEvents.event_id).as("avg_event_id"),
+        minEventId: fn.min(webEvents.event_id).as("min_event_id"),
+        maxEventId: fn.max(webEvents.event_id).as("max_event_id"),
         uniqueUsers: fn.uniqExact(webEvents.user_id).as("unique_users"),
       })
       .from(webEvents);
 
     const presentAggregateRow = expectPresent(row, "aggregate row");
     expect(presentAggregateRow.eventCount).toBe("100000");
+    expect(presentAggregateRow.usEventCount).toBe("25000");
     expect(presentAggregateRow.totalRevenue).toMatch(/^\d+\.\d+$/);
     expect(presentAggregateRow.totalRevenueUs).toMatch(/^\d+\.\d+$/);
     expect(presentAggregateRow.avgRevenue).toBeGreaterThan(50_000);
+    expect(presentAggregateRow.minEventId).toBe(1n);
+    expect(presentAggregateRow.maxEventId).toBe(100000n);
     expect(presentAggregateRow.uniqueUsers).toBe("5000");
+
+    const monthBucket = fn.toStartOfMonth(webEvents.viewed_at).as("month");
 
     const [monthRow] = await db
       .select({
-        month: fn.toStartOfMonth(webEvents.viewed_at).as("month"),
+        firstViewedAt: fn.min(webEvents.viewed_at).as("first_viewed_at"),
+        lastViewedAt: fn.max(webEvents.viewed_at).as("last_viewed_at"),
+        month: monthBucket,
       })
       .from(webEvents)
-      .orderBy(webEvents.event_id)
+      .groupBy(monthBucket)
+      .orderBy(monthBucket)
       .limit(1);
 
-    expectDate(expectPresent(monthRow, "monthRow").month);
+    const presentMonthRow = expectPresent(monthRow, "monthRow");
+    expectDate(presentMonthRow.firstViewedAt);
+    expectDate(presentMonthRow.lastViewedAt);
+    expectDate(presentMonthRow.month);
+    expect(presentMonthRow.firstViewedAt.getTime()).toBeLessThan(presentMonthRow.lastViewedAt.getTime());
   });
 
   it("supports fn.coalesce, fn.tuple, fn.arrayZip and fn.not", async function testCompositeFunctions() {

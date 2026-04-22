@@ -456,6 +456,9 @@ Public condition helpers:
 - `lt`
 - `lte`
 - `between`
+- `has`
+- `hasAll`
+- `hasAny`
 - `like`
 - `notLike`
 - `ilike`
@@ -530,6 +533,8 @@ const query = db
 ```
 
 `Predicate` is the public name for reusable boolean SQL clauses. You can use the same predicate objects in `where`, `having`, join `on` clauses, and boolean-aware helpers such as `exists(...)`.
+
+`has(...)`, `hasAll(...)`, and `hasAny(...)` map directly to the native ClickHouse functions and keep ClickHouse's array, map, and JSON semantics.
 
 `where(...)` is variadic, while `having(...)` takes a single predicate. For multi-clause `having`, compose the predicate first with `and(...)` or `or(...)`.
 
@@ -852,9 +857,12 @@ Common helpers include:
 - `fn.toDateTime()`
 - `fn.toStartOfMonth()`
 - `fn.count()`
+- `fn.countIf()`
 - `fn.sum()`
 - `fn.sumIf()`
 - `fn.avg()`
+- `fn.min()`
+- `fn.max()`
 - `fn.uniqExact()`
 - `fn.coalesce()`
 - `fn.tuple()`

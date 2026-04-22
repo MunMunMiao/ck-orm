@@ -1,12 +1,16 @@
 {
   "name": "ck-orm",
-  "version": "0.0.1",
+  "version": "0.0.3",
   "type": "module",
   "main": "src/index.ts",
   "types": "src/index.ts",
   "description": "ClickHouse ORM for modern JS runtimes",
   "author": "MunMunMiao",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MunMunMiao/ck-orm.git"
+  },
   "scripts": {
     "build": "bun x --bun tsdown --config-loader native --config tsdown.config.ts",
     "lint": "biome check --error-on-warnings .",

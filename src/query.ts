@@ -1435,6 +1435,56 @@ export const between = (expression: unknown, start: unknown, end: unknown): Pred
   });
 };
 
+const isArraySqlType = (sqlType?: string): sqlType is `Array(${string})` => {
+  return typeof sqlType === "string" && sqlType.startsWith("Array(") && sqlType.endsWith(")");
+};
+
+const compilePredicateFunction = (name: string, args: SQLFragment[]): SQLFragment => {
+  return sql`${sql.raw(name)}(${joinSqlParts(args, ", ")})`;
+};
+
+const compileArrayFunctionArg = (value: unknown, ctx: BuildContext, leftExpression: SqlExpression<unknown>) => {
+  if (Array.isArray(value) && isArraySqlType(leftExpression.sqlType)) {
+    return compileValue(value, ctx, leftExpression.sqlType);
+  }
+  return compileValue(value, ctx);
+};
+
+export const has = (haystack: unknown, needle: unknown): Predicate => {
+  const haystackExpression = ensureComparableExpression(haystack);
+  return createExpression<boolean>({
+    compile: (ctx) => compilePredicateFunction("has", [haystackExpression.compile(ctx), compileValue(needle, ctx)]),
+    decoder: (value) => Boolean(value),
+    sqlType: "Bool",
+  });
+};
+
+export const hasAll = (set: unknown, subset: unknown): Predicate => {
+  const setExpression = ensureComparableExpression(set);
+  return createExpression<boolean>({
+    compile: (ctx) =>
+      compilePredicateFunction("hasAll", [
+        setExpression.compile(ctx),
+        compileArrayFunctionArg(subset, ctx, setExpression),
+      ]),
+    decoder: (value) => Boolean(value),
+    sqlType: "Bool",
+  });
+};
+
+export const hasAny = (arrX: unknown, arrY: unknown): Predicate => {
+  const arrXExpression = ensureComparableExpression(arrX);
+  return createExpression<boolean>({
+    compile: (ctx) =>
+      compilePredicateFunction("hasAny", [
+        arrXExpression.compile(ctx),
+        compileArrayFunctionArg(arrY, ctx, arrXExpression),
+      ]),
+    decoder: (value) => Boolean(value),
+    sqlType: "Bool",
+  });
+};
+
 const createInExpression = (
   negate: boolean,
   left: unknown,

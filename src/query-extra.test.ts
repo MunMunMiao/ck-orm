@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { float64, int32, string } from "./columns";
+import { array, float64, int32, string } from "./columns";
 import { fn, tableFn } from "./functions";
 import {
   and,
@@ -14,6 +14,9 @@ import {
   expr,
   gt,
   gte,
+  has,
+  hasAll,
+  hasAny,
   ilike,
   inArray,
   like,
@@ -46,6 +49,18 @@ const orders = chTable(
     id: int32(),
     name: string(),
     amount: float64(),
+  },
+  (table) => ({
+    engine: "MergeTree",
+    orderBy: [table.id],
+  }),
+);
+
+const taggedOrders = chTable(
+  "tagged_orders",
+  {
+    id: int32(),
+    tags: array(string()),
   },
   (table) => ({
     engine: "MergeTree",
@@ -460,6 +475,35 @@ describe("ck-orm query extras", function describeClickHouseOrmQueryExtras() {
           [compileQuerySymbol](),
       ).query,
     ).toContain("where `orders`.`id` = {orm_param1:Int32}");
+  });
+
+  it("compiles has-style predicates with array-aware parameter typing", function testHasPredicates() {
+    const db = new QueryClient({
+      schema: { taggedOrders },
+    });
+
+    const built = buildCompiled(
+      db
+        .select({
+          id: taggedOrders.id,
+        })
+        .from(taggedOrders)
+        .where(has(taggedOrders.tags, "vip"), hasAll(taggedOrders.tags, ["vip", "pro"]), hasAny(taggedOrders.tags, []))
+        [compileQuerySymbol](),
+    );
+
+    expect(normalizeSql(built.query)).toContain("has(`tagged_orders`.`tags`, {orm_param1:String})");
+    expect(normalizeSql(built.query)).toContain("hasAll(`tagged_orders`.`tags`, {orm_param2:Array(String)})");
+    expect(normalizeSql(built.query)).toContain("hasAny(`tagged_orders`.`tags`, {orm_param3:Array(String)})");
+    expect(built.params).toEqual({
+      orm_param1: "vip",
+      orm_param2: ["vip", "pro"],
+      orm_param3: [],
+    });
+
+    expect(has(taggedOrders.tags, "vip").decoder(1)).toBe(true);
+    expect(hasAll(taggedOrders.tags, ["vip"]).decoder(0)).toBe(false);
+    expect(hasAny(taggedOrders.tags, ["vip"]).decoder("1")).toBe(true);
   });
 
   it("supports drizzle-style db.count() for direct execution and scalar subqueries", async function testDbCount() {

@@ -164,6 +164,12 @@ const aggregateFns = {
       sqlType: "UInt64",
     });
   },
+  countIf(condition: unknown): SqlExpression<string> {
+    return createFunctionExpression("countIf", [condition], {
+      decoder: stringDecoder,
+      sqlType: "UInt64",
+    });
+  },
   sum(expression: unknown): SqlExpression<number | string> {
     return createFunctionExpression<number | string>("sum", [expression], {
       decoder: resolveAggregateDecoder(expression),
@@ -178,6 +184,20 @@ const aggregateFns = {
     return createFunctionExpression("avg", [expression], {
       decoder: numberDecoder,
       sqlType: "Float64",
+    });
+  },
+  min<TData = unknown>(expression: unknown): SqlExpression<TData> {
+    const wrapped = ensureExpression<TData>(expression);
+    return createFunctionExpression<TData>("min", [expression], {
+      decoder: wrapped.decoder,
+      sqlType: wrapped.sqlType,
+    });
+  },
+  max<TData = unknown>(expression: unknown): SqlExpression<TData> {
+    const wrapped = ensureExpression<TData>(expression);
+    return createFunctionExpression<TData>("max", [expression], {
+      decoder: wrapped.decoder,
+      sqlType: wrapped.sqlType,
     });
   },
   uniqExact(expression: unknown): SqlExpression<string> {

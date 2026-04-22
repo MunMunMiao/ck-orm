@@ -9,6 +9,9 @@ import {
   expr,
   gt,
   gte,
+  has,
+  hasAll,
+  hasAny,
   inArray,
   lt,
   lte,
@@ -113,6 +116,35 @@ describeE2E("ck-orm e2e operators", function describeOperators() {
     expect(notInRows).toEqual([{ id: 4 }, { id: 5 }, { id: 6 }]);
     expect(existsRows).toEqual([{ id: 1 }, { id: 2 }, { id: 3 }]);
     expect(notExistsRows).toEqual([{ id: 4001 }, { id: 4002 }, { id: 4003 }]);
+  });
+
+  it("supports has, hasAll and hasAny against array columns", async function testHasOperators() {
+    const db = createE2EDb();
+
+    const hasRows = await db
+      .select({ id: webEvents.event_id })
+      .from(webEvents)
+      .where(has(webEvents.tags, "tag_0"))
+      .orderBy(webEvents.event_id)
+      .limit(3);
+
+    const hasAllRows = await db
+      .select({ id: webEvents.event_id })
+      .from(webEvents)
+      .where(hasAll(webEvents.tags, ["tag_0", "segment_0"]))
+      .orderBy(webEvents.event_id)
+      .limit(3);
+
+    const hasAnyRows = await db
+      .select({ id: webEvents.event_id })
+      .from(webEvents)
+      .where(hasAny(webEvents.tags, ["tag_1", "segment_0"]))
+      .orderBy(webEvents.event_id)
+      .limit(5);
+
+    expect(hasRows).toEqual([{ id: 1n }, { id: 11n }, { id: 21n }]);
+    expect(hasAllRows).toEqual([{ id: 1n }, { id: 11n }, { id: 21n }]);
+    expect(hasAnyRows).toEqual([{ id: 1n }, { id: 2n }, { id: 6n }, { id: 11n }, { id: 12n }]);
   });
 
   it("supports asc, desc and expr in ordered builder queries", async function testOrderByAndExpr() {
