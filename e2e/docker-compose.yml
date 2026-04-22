@@ -1,0 +1,46 @@
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.3
+    restart: "no"
+    environment:
+      CLICKHOUSE_DB: ck_orm_e2e
+      CLICKHOUSE_USER: e2e
+      CLICKHOUSE_PASSWORD: e2e_password
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--user", "e2e", "--password", "e2e_password", "--query", "SELECT 1"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+  seed:
+    build:
+      context: ..
+      dockerfile: e2e/Dockerfile
+    restart: "no"
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    environment:
+      CLICKHOUSE_E2E_URL: http://clickhouse:8123
+      CLICKHOUSE_E2E_DATABASE: ck_orm_e2e
+      CLICKHOUSE_E2E_USERNAME: e2e
+      CLICKHOUSE_E2E_PASSWORD: e2e_password
+    command: ["bun", "run", "e2e/seed.ts"]
+
+  e2e:
+    build:
+      context: ..
+      dockerfile: e2e/Dockerfile
+    restart: "no"
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+    environment:
+      CLICKHOUSE_E2E_URL: http://clickhouse:8123
+      CLICKHOUSE_E2E_DATABASE: ck_orm_e2e
+      CLICKHOUSE_E2E_USERNAME: e2e
+      CLICKHOUSE_E2E_PASSWORD: e2e_password
+    command: ["bun", "test", "e2e"]

@@ -1,0 +1,30 @@
+{
+  "name": "ck-orm",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "description": "ClickHouse ORM for modern JS runtimes",
+  "author": "MunMunMiao",
+  "license": "MIT",
+  "scripts": {
+    "build": "bun x --bun tsdown --config-loader native --config tsdown.config.ts",
+    "lint": "biome check --error-on-warnings .",
+    "lint:fix": "biome check --write --unsafe --error-on-warnings .",
+    "test:orm": "bun test ./src",
+    "test:coverage": "rm -rf coverage && bun test ./src --coverage --coverage-reporter lcov",
+    "test:e2e": "bash ./e2e/run.sh",
+    "type-check": "tsc --noEmit",
+    "type-check:watch": "tsc --noEmit --watch"
+  },
+  "peerDependencies": {
+    "@opentelemetry/api": "^1.9.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.4.12",
+    "@opentelemetry/api": "^1.9.1",
+    "@types/bun": "1.3.12",
+    "tsdown": "0.21.9",
+    "typescript": "6.0.3"
+  }
+}
