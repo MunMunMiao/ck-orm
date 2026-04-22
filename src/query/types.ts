@@ -1,9 +1,9 @@
 import type { Column } from "../columns";
-import type { SqlExpression } from "../query-shared";
+import type { Selection } from "../query-shared";
 
 /**
  * Record shape supplied to `select({ ... })` — maps field names to
- * {@link SqlExpression} or {@link Column} values.
+ * {@link Selection} or {@link Column} values.
  */
 export type SelectionRecord = Record<string, unknown>;
 
@@ -36,7 +36,7 @@ export type InferSelectionResult<
   TSelection extends SelectionRecord,
   TNullableSources extends Record<string, boolean> = NoJoinedSources,
 > = {
-  [K in keyof TSelection]: TSelection[K] extends SqlExpression<infer TData, infer TSourceKey>
+  [K in keyof TSelection]: TSelection[K] extends Selection<infer TData, infer TSourceKey>
     ? ApplyNullability<TData, TSourceKey, TNullableSources>
     : TSelection[K] extends Column<infer TData, string, infer TTableName, infer TTableAlias>
       ? ApplyNullability<TData, TTableAlias extends string ? TTableAlias : TTableName, TNullableSources>

@@ -27,7 +27,7 @@ jobs:
       - name: Lint
         run: bun run lint
 
-  test:
+  coverage:
     runs-on: ubuntu-latest
 
     steps:
@@ -40,8 +40,8 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Test
-        run: bun run test:orm
+      - name: Coverage
+        run: bun run test:coverage
 
   type-check:
     runs-on: ubuntu-latest

@@ -11,9 +11,10 @@ import {
   ensureExpression,
   getExpressionSourceKey,
   joinSqlParts,
-  type OrderByExpression,
+  type Order,
   type Predicate,
   type QueryParams,
+  type Selection,
   type SelectionMeta,
   type SqlExpression,
   wrapSql,
@@ -28,7 +29,17 @@ type KnownQuerySource = AnyTable | AnySubquery | AnyCte;
 type ForcedSettings = Readonly<Record<string, string | number | boolean>>;
 type MutableForcedSettings = Record<string, string | number | boolean>;
 
-type SourceColumns = Record<string, SqlExpression<unknown>>;
+type SqlSelection<TData = unknown, TSourceKey extends string | undefined = string | undefined> = SqlExpression<
+  TData,
+  TSourceKey
+>;
+type SqlPredicate<TSourceKey extends string | undefined = string | undefined> = SqlExpression<boolean, TSourceKey>;
+type SqlOrder = {
+  readonly expression: SqlSelection<unknown>;
+  readonly direction: "asc" | "desc";
+};
+
+type SourceColumns = Record<string, Selection<unknown>>;
 
 type QueryMode = "query" | "command";
 type JoinUseNulls = 0 | 1;
@@ -144,7 +155,7 @@ export interface TableFunctionSource {
 interface SelectionItem {
   readonly key: string;
   readonly sqlAlias: string;
-  readonly expression: SqlExpression<unknown>;
+  readonly expression: SqlSelection<unknown>;
   readonly path: readonly [string] | readonly [string, string];
   readonly nullable?: boolean;
   readonly groupNullable?: boolean;
@@ -153,7 +164,7 @@ interface SelectionItem {
 interface JoinClause {
   readonly type: "inner" | "left";
   readonly source: QuerySource;
-  readonly on: Predicate;
+  readonly on: SqlPredicate;
 }
 
 export interface CompiledQueryMetadata {
@@ -197,8 +208,8 @@ type ThenHandler<TValue, TResult> = ((value: TValue) => TResult | PromiseLike<TR
 type CatchHandler<TResult> = ((reason: unknown) => TResult | PromiseLike<TResult>) | null | undefined;
 
 type ReferenceColumns<TSelection extends SelectionRecord> = {
-  [K in keyof TSelection]: SqlExpression<
-    TSelection[K] extends SqlExpression<infer TData>
+  [K in keyof TSelection]: Selection<
+    TSelection[K] extends Selection<infer TData>
       ? TData
       : TSelection[K] extends Column<infer TData, string>
         ? TData
@@ -354,7 +365,7 @@ const createReferenceExpression = <TData>(
   columnName: string,
   decoder: Decoder<TData>,
   sqlType?: string,
-): SqlExpression<TData> => {
+): SqlSelection<TData> => {
   return createExpression({
     compile: () =>
       sql.identifier({
@@ -451,7 +462,7 @@ const normalizeSelectionRecord = (
   return selectionItems;
 };
 
-const normalizeLimitValue = (value: PrimitiveValue | SqlExpression<unknown>, ctx: BuildContext) => {
+const normalizeLimitValue = (value: PrimitiveValue | Selection<unknown>, ctx: BuildContext) => {
   return compileValue(value, ctx, "Int64");
 };
 
@@ -469,7 +480,7 @@ const countDecoder: Decoder<number> = (value) => {
   return nextValue;
 };
 
-const buildLogicalPredicate = (operator: "and" | "or", predicates: readonly Predicate[]): Predicate => {
+const buildLogicalPredicate = (operator: "and" | "or", predicates: readonly SqlPredicate[]): SqlPredicate => {
   return createExpression<boolean>({
     compile: (ctx) =>
       sql`${sql.raw("(")}${joinSqlParts(
@@ -484,8 +495,10 @@ const buildLogicalPredicate = (operator: "and" | "or", predicates: readonly Pred
 const normalizePredicateGroup = (
   operator: "and" | "or",
   predicates: readonly PredicateInput[],
-): Predicate | undefined => {
-  const filteredPredicates = predicates.filter((predicate): predicate is Predicate => predicate !== undefined);
+): SqlPredicate | undefined => {
+  const filteredPredicates = predicates.filter((predicate): predicate is Predicate => predicate !== undefined) as
+    | SqlPredicate[]
+    | [];
 
   if (filteredPredicates.length === 0) {
     return undefined;
@@ -498,7 +511,7 @@ const normalizePredicateGroup = (
   return buildLogicalPredicate(operator, filteredPredicates);
 };
 
-type CountQuery<TData = number> = SqlExpression<TData> &
+type CountQuery<TData = number> = Selection<TData> &
   PromiseLike<TData> & {
     execute(options?: ClickHouseBaseQueryOptions): Promise<TData>;
     catch<TResult2 = never>(onrejected?: CatchHandler<TResult2>): Promise<TData | TResult2>;
@@ -522,7 +535,7 @@ const buildCountStatement = (
   config: {
     ctes?: readonly AnyCte[];
     source: CountSource;
-    condition?: Predicate;
+    condition?: SqlPredicate;
     outputAlias?: string;
   },
 ): SQLFragment => {
@@ -645,15 +658,15 @@ interface SelectBuilderConfig<_TResult extends Record<string, unknown>> {
   selection?: SelectionRecord;
   fromSource?: QuerySource;
   joins?: JoinClause[];
-  whereClause?: Predicate;
-  groupByItems?: SqlExpression<unknown>[];
-  havingClause?: Predicate;
-  orderByItems?: OrderByExpression[];
-  limitValue?: PrimitiveValue | SqlExpression<unknown>;
-  offsetValue?: PrimitiveValue | SqlExpression<unknown>;
+  whereClause?: SqlPredicate;
+  groupByItems?: SqlSelection[];
+  havingClause?: SqlPredicate;
+  orderByItems?: SqlOrder[];
+  limitValue?: PrimitiveValue | Selection<unknown>;
+  offsetValue?: PrimitiveValue | Selection<unknown>;
   limitByValue?: {
-    readonly columns: SqlExpression<unknown>[];
-    readonly limit: PrimitiveValue | SqlExpression<unknown>;
+    readonly columns: SqlSelection[];
+    readonly limit: PrimitiveValue | Selection<unknown>;
   };
   useFinal?: boolean;
   joinUseNulls?: JoinUseNulls;
@@ -672,15 +685,15 @@ export class SelectBuilder<
   private readonly selection?: TSelection;
   private fromSource?: QuerySource;
   private readonly joins: JoinClause[];
-  private whereClause?: Predicate;
-  private readonly groupByItems: SqlExpression<unknown>[];
-  private havingClause?: Predicate;
-  private readonly orderByItems: OrderByExpression[];
-  private limitValue?: PrimitiveValue | SqlExpression<unknown>;
-  private offsetValue?: PrimitiveValue | SqlExpression<unknown>;
+  private whereClause?: SqlPredicate;
+  private readonly groupByItems: SqlSelection[];
+  private havingClause?: SqlPredicate;
+  private readonly orderByItems: SqlOrder[];
+  private limitValue?: PrimitiveValue | Selection<unknown>;
+  private offsetValue?: PrimitiveValue | Selection<unknown>;
   private limitByValue?: {
-    readonly columns: SqlExpression<unknown>[];
-    readonly limit: PrimitiveValue | SqlExpression<unknown>;
+    readonly columns: SqlSelection[];
+    readonly limit: PrimitiveValue | Selection<unknown>;
   };
   private useFinal: boolean;
   private readonly joinUseNulls: TJoinUseNulls;
@@ -819,7 +832,7 @@ export class SelectBuilder<
         selectionItems.push({
           key: fieldKey,
           sqlAlias: hasJoins ? `__orm_${nextIndex}` : fieldKey,
-          expression,
+          expression: expression as SqlSelection<unknown>,
           path: hasJoins ? [sourceKey, fieldKey] : [fieldKey],
           nullable: groupNullable,
           groupNullable: hasJoins ? groupNullable : false,
@@ -892,7 +905,7 @@ export class SelectBuilder<
       TRootSource,
       AddJoinedSource<TJoinedSources, TSource, false>
     >({
-      joins: [...this.joins, { type: "inner", source, on }],
+      joins: [...this.joins, { type: "inner", source, on: on as SqlPredicate }],
     });
   }
 
@@ -921,7 +934,7 @@ export class SelectBuilder<
       TRootSource,
       AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>
     >({
-      joins: [...this.joins, { type: "left", source, on }],
+      joins: [...this.joins, { type: "left", source, on: on as SqlPredicate }],
     });
   }
 
@@ -934,27 +947,33 @@ export class SelectBuilder<
   }
 
   groupBy(
-    ...expressions: SqlExpression<unknown>[]
+    ...expressions: Selection<unknown>[]
   ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
     return this.clone({
-      groupByItems: [...this.groupByItems, ...expressions],
+      groupByItems: [...this.groupByItems, ...expressions.map((expression) => ensureExpression(expression))],
     });
   }
 
   having(condition?: Predicate): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
     return this.clone({
-      havingClause: condition,
+      havingClause: condition as SqlPredicate | undefined,
     });
   }
 
   orderBy(
-    ...expressions: Array<OrderByExpression | SqlExpression<unknown> | AnyColumn>
+    ...expressions: Array<Order | Selection<unknown>>
   ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
-    const nextOrderItems = expressions.map((expression) => {
+    const nextOrderItems = expressions.map((expression): SqlOrder => {
       if ("direction" in expression && "expression" in expression) {
-        return expression;
+        return {
+          direction: expression.direction,
+          expression: ensureExpression(expression.expression),
+        };
       }
-      return asc(ensureExpression(expression));
+      return {
+        direction: "asc",
+        expression: ensureExpression(expression),
+      };
     });
     return this.clone({
       orderByItems: [...this.orderByItems, ...nextOrderItems],
@@ -962,7 +981,7 @@ export class SelectBuilder<
   }
 
   limit(
-    value: PrimitiveValue | SqlExpression<unknown>,
+    value: PrimitiveValue | Selection<unknown>,
   ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
     return this.clone({
       limitValue: value,
@@ -970,7 +989,7 @@ export class SelectBuilder<
   }
 
   offset(
-    value: PrimitiveValue | SqlExpression<unknown>,
+    value: PrimitiveValue | Selection<unknown>,
   ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
     return this.clone({
       offsetValue: value,
@@ -984,12 +1003,12 @@ export class SelectBuilder<
   }
 
   limitBy(
-    columns: SqlExpression<unknown>[],
-    limit: PrimitiveValue | SqlExpression<unknown>,
+    columns: Selection<unknown>[],
+    limit: PrimitiveValue | Selection<unknown>,
   ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
     return this.clone({
       limitByValue: {
-        columns,
+        columns: columns.map((column) => ensureExpression(column)),
         limit,
       },
     });
@@ -1319,7 +1338,7 @@ export class QueryClient<TSchema = unknown, TJoinUseNulls extends JoinUseNulls =
   }
 }
 
-const ensureComparableExpression = (value: unknown): SqlExpression<unknown> => {
+const ensureComparableExpression = (value: unknown): SqlSelection<unknown> => {
   return ensureExpression(value);
 };
 
@@ -1348,8 +1367,9 @@ export function or(...conditions: PredicateInput[]): Predicate | undefined {
 }
 
 export const not = (condition: Predicate): Predicate => {
+  const wrapped = condition as SqlPredicate;
   return createExpression<boolean>({
-    compile: (ctx) => sql`${sql.raw("not (")}${condition.compile(ctx)}${sql.raw(")")}`,
+    compile: (ctx) => sql`${sql.raw("not (")}${wrapped.compile(ctx)}${sql.raw(")")}`,
     decoder: (value) => Boolean(value),
     sqlType: "Bool",
   });
@@ -1443,7 +1463,7 @@ const compilePredicateFunction = (name: string, args: SQLFragment[]): SQLFragmen
   return sql`${sql.raw(name)}(${joinSqlParts(args, ", ")})`;
 };
 
-const compileArrayFunctionArg = (value: unknown, ctx: BuildContext, leftExpression: SqlExpression<unknown>) => {
+const compileArrayFunctionArg = (value: unknown, ctx: BuildContext, leftExpression: SqlSelection<unknown>) => {
   if (Array.isArray(value) && isArraySqlType(leftExpression.sqlType)) {
     return compileValue(value, ctx, leftExpression.sqlType);
   }
@@ -1531,12 +1551,12 @@ export const notExists = (query: AnySubquery | AnyCte | SelectBuilder<Record<str
   return not(exists(query));
 };
 
-export const asc = (expression: SqlExpression<unknown>): OrderByExpression => ({
+export const asc = (expression: Selection<unknown>): Order => ({
   expression,
   direction: "asc",
 });
 
-export const desc = (expression: SqlExpression<unknown>): OrderByExpression => ({
+export const desc = (expression: Selection<unknown>): Order => ({
   expression,
   direction: "desc",
 });
@@ -1649,4 +1669,7 @@ export const createSessionId = () => {
   return `ck_orm_${createUuid().replaceAll("-", "_")}`;
 };
 
-export const expr = wrapSql;
+export const expr = <TData = unknown>(
+  value: SQLFragment,
+  config?: { decoder?: Decoder<TData>; sqlType?: string },
+): Selection<TData> => wrapSql(value, config);

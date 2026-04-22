@@ -14,7 +14,11 @@ describe("ck-orm public api", function describePublicApi() {
   it("keeps core schema and query builders available from the package root", function testPublicBuilders() {
     expect("chTable" in publicApi).toBe(true);
     expect("clickhouseClient" in publicApi).toBe(true);
+    expect("Grouping" in publicApi).toBe(false);
+    expect("Order" in publicApi).toBe(false);
     expect("Predicate" in publicApi).toBe(false);
+    expect("Selection" in publicApi).toBe(false);
+    expect("SqlExpression" in publicApi).toBe(false);
     expect("makeWhereCondition" in publicApi).toBe(false);
     expect("sql" in publicApi).toBe(true);
   });
@@ -22,7 +26,11 @@ describe("ck-orm public api", function describePublicApi() {
   it("keeps advanced root-exported types aligned with public_api.ts", function testRootExportedTypes() {
     expectType<RootApi.AnyColumn | undefined>(undefined);
     expectType<RootApi.AnyTable | undefined>(undefined);
+    expectType<RootApi.Order | undefined>(undefined);
     expectType<RootApi.Predicate | undefined>(undefined);
+    expectType<RootApi.Selection | undefined>(undefined);
+    // @ts-expect-error Grouping should remain private to clause internals
+    expectType<RootApi.Grouping | undefined>(undefined);
   });
 });
 

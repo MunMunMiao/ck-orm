@@ -15,7 +15,7 @@ import {
   ensureExpression,
   joinSqlParts,
   passThroughDecoder,
-  type SqlExpression,
+  type Selection,
 } from "./query-shared";
 import { sql } from "./sql";
 
@@ -34,7 +34,7 @@ const createFunctionExpression = <TData>(
     decoder?: Decoder<TData>;
     sqlType?: string;
   },
-): SqlExpression<TData> => {
+): Selection<TData> => {
   return createExpression({
     compile: (ctx) => compileFunctionCall(name, args, ctx),
     decoder: config?.decoder ?? (passThroughDecoder as Decoder<TData>),
@@ -50,7 +50,7 @@ const createParameterizedFunctionExpression = <TData>(
     decoder?: Decoder<TData>;
     sqlType?: string;
   },
-): SqlExpression<TData> => {
+): Selection<TData> => {
   return createExpression({
     compile: (ctx) => {
       assertValidSqlIdentifier(name, "function");
@@ -83,39 +83,39 @@ const resolveAggregateDecoder = (expression?: unknown): Decoder<number | string>
 /* ── scalar functions ──────────────────────────────────────────── */
 
 const scalarFns = {
-  call<TData = unknown>(name: string, ...args: unknown[]): SqlExpression<TData> {
+  call<TData = unknown>(name: string, ...args: unknown[]): Selection<TData> {
     return createFunctionExpression<TData>(name, args);
   },
-  withParams<TData = unknown>(name: string, parameters: readonly unknown[], ...args: unknown[]): SqlExpression<TData> {
+  withParams<TData = unknown>(name: string, parameters: readonly unknown[], ...args: unknown[]): Selection<TData> {
     return createParameterizedFunctionExpression<TData>(name, parameters, args);
   },
-  toString(expression: unknown, timezone?: unknown): SqlExpression<string> {
+  toString(expression: unknown, timezone?: unknown): Selection<string> {
     const args = timezone === undefined ? [expression] : [expression, timezone];
     return createFunctionExpression("toString", args, {
       decoder: stringDecoder,
       sqlType: "String",
     });
   },
-  toDate(expression: unknown): SqlExpression<Date> {
+  toDate(expression: unknown): Selection<Date> {
     return createFunctionExpression("toDate", [expression], {
       decoder: dateDecoder,
       sqlType: "Date",
     });
   },
-  toDateTime(expression: unknown, timezone?: unknown): SqlExpression<Date> {
+  toDateTime(expression: unknown, timezone?: unknown): Selection<Date> {
     const args = timezone === undefined ? [expression] : [expression, timezone];
     return createFunctionExpression("toDateTime", args, {
       decoder: dateDecoder,
       sqlType: "DateTime",
     });
   },
-  toStartOfMonth(expression: unknown): SqlExpression<Date> {
+  toStartOfMonth(expression: unknown): Selection<Date> {
     return createFunctionExpression("toStartOfMonth", [expression], {
       decoder: dateDecoder,
       sqlType: "Date",
     });
   },
-  coalesce<TData = unknown>(...args: unknown[]): SqlExpression<TData> {
+  coalesce<TData = unknown>(...args: unknown[]): Selection<TData> {
     const decoder =
       args.length > 0 && ensureExpression(args[0]).decoder
         ? (ensureExpression(args[0]).decoder as Decoder<TData>)
@@ -124,7 +124,7 @@ const scalarFns = {
       decoder,
     });
   },
-  tuple(...args: unknown[]): SqlExpression<unknown[]> {
+  tuple(...args: unknown[]): Selection<unknown[]> {
     return createFunctionExpression("tuple", args, {
       decoder: (value) => {
         if (!Array.isArray(value)) {
@@ -135,7 +135,7 @@ const scalarFns = {
       sqlType: "Tuple",
     });
   },
-  arrayZip(...args: unknown[]): SqlExpression<unknown[]> {
+  arrayZip(...args: unknown[]): Selection<unknown[]> {
     return createFunctionExpression("arrayZip", args, {
       decoder: (value) => {
         if (!Array.isArray(value)) {
@@ -146,7 +146,7 @@ const scalarFns = {
       sqlType: "Array",
     });
   },
-  not(expression: unknown): SqlExpression<boolean> {
+  not(expression: unknown): Selection<boolean> {
     return createFunctionExpression("not", [expression], {
       decoder: booleanDecoder,
       sqlType: "Bool",
@@ -157,50 +157,50 @@ const scalarFns = {
 /* ── aggregate functions ───────────────────────────────────────── */
 
 const aggregateFns = {
-  count(expression?: unknown): SqlExpression<string> {
+  count(expression?: unknown): Selection<string> {
     const args = expression === undefined ? [] : [expression];
     return createFunctionExpression("count", args, {
       decoder: stringDecoder,
       sqlType: "UInt64",
     });
   },
-  countIf(condition: unknown): SqlExpression<string> {
+  countIf(condition: unknown): Selection<string> {
     return createFunctionExpression("countIf", [condition], {
       decoder: stringDecoder,
       sqlType: "UInt64",
     });
   },
-  sum(expression: unknown): SqlExpression<number | string> {
+  sum(expression: unknown): Selection<number | string> {
     return createFunctionExpression<number | string>("sum", [expression], {
       decoder: resolveAggregateDecoder(expression),
     });
   },
-  sumIf(expression: unknown, condition: unknown): SqlExpression<number | string> {
+  sumIf(expression: unknown, condition: unknown): Selection<number | string> {
     return createFunctionExpression<number | string>("sumIf", [expression, condition], {
       decoder: resolveAggregateDecoder(expression),
     });
   },
-  avg(expression: unknown): SqlExpression<number> {
+  avg(expression: unknown): Selection<number> {
     return createFunctionExpression("avg", [expression], {
       decoder: numberDecoder,
       sqlType: "Float64",
     });
   },
-  min<TData = unknown>(expression: unknown): SqlExpression<TData> {
+  min<TData = unknown>(expression: unknown): Selection<TData> {
     const wrapped = ensureExpression<TData>(expression);
     return createFunctionExpression<TData>("min", [expression], {
       decoder: wrapped.decoder,
       sqlType: wrapped.sqlType,
     });
   },
-  max<TData = unknown>(expression: unknown): SqlExpression<TData> {
+  max<TData = unknown>(expression: unknown): Selection<TData> {
     const wrapped = ensureExpression<TData>(expression);
     return createFunctionExpression<TData>("max", [expression], {
       decoder: wrapped.decoder,
       sqlType: wrapped.sqlType,
     });
   },
-  uniqExact(expression: unknown): SqlExpression<string> {
+  uniqExact(expression: unknown): Selection<string> {
     return createFunctionExpression("uniqExact", [expression], {
       decoder: stringDecoder,
       sqlType: "UInt64",

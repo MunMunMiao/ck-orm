@@ -5,6 +5,7 @@ export { DecodeError } from "./errors";
 export type { BuildContext, QueryParams } from "./sql";
 
 const dataTypeSymbol = Symbol("clickhouseOrmDataType");
+const sourceKeySymbol = Symbol("clickhouseOrmSourceKey");
 
 export type Decoder<TData> = (value: unknown) => TData;
 
@@ -16,30 +17,33 @@ export interface TypedValue<TData> {
 
 export type InferData<TValue> = TValue extends TypedValue<infer TData> ? TData : never;
 
-export interface SqlExpression<TData = unknown, TSourceKey extends string | undefined = string | undefined>
+export interface Selection<TData = unknown, TSourceKey extends string | undefined = string | undefined>
   extends TypedValue<TData> {
+  readonly [sourceKeySymbol]: TSourceKey;
+  as<TAlias extends string>(alias: TAlias): AliasedSelection<TData, TAlias, TSourceKey>;
+  mapWith<TNext>(decoder: Decoder<TNext>): Selection<TNext, TSourceKey>;
+}
+
+export interface SqlExpression<TData = unknown, TSourceKey extends string | undefined = string | undefined>
+  extends Selection<TData, TSourceKey> {
   readonly kind: "expression" | "column";
   readonly sqlType?: string;
   readonly decoder: Decoder<TData>;
   readonly outputAlias?: string;
   readonly sourceKey?: TSourceKey;
   compile(ctx: BuildContext): SQLFragment;
-  as<TAlias extends string>(alias: TAlias): AliasedExpression<TData, TAlias, TSourceKey>;
-  mapWith<TNext>(decoder: Decoder<TNext>): SqlExpression<TNext, TSourceKey>;
 }
 
-export type Predicate<TSourceKey extends string | undefined = string | undefined> = SqlExpression<boolean, TSourceKey>;
+export type Predicate<TSourceKey extends string | undefined = string | undefined> = Selection<boolean, TSourceKey>;
 
-export interface AliasedExpression<
+export interface AliasedSelection<
   TData = unknown,
-  TAlias extends string = string,
+  _TAlias extends string = string,
   TSourceKey extends string | undefined = string | undefined,
-> extends SqlExpression<TData, TSourceKey> {
-  readonly outputAlias: TAlias;
-}
+> extends Selection<TData, TSourceKey> {}
 
-export interface OrderByExpression {
-  readonly expression: SqlExpression<unknown>;
+export interface Order {
+  readonly expression: Selection<unknown>;
   readonly direction: "asc" | "desc";
 }
 
@@ -63,17 +67,18 @@ export const createExpression = <TData, TSourceKey extends string | undefined = 
 }): SqlExpression<TData, TSourceKey> => {
   const expression = {
     [dataTypeSymbol]: undefined as TData,
+    [sourceKeySymbol]: undefined as TSourceKey,
     kind: "expression" as const,
     sqlType: config.sqlType,
     decoder: config.decoder,
     outputAlias: config.outputAlias,
     sourceKey: config.sourceKey,
     compile: config.compile,
-    as<TAlias extends string>(alias: TAlias): AliasedExpression<TData, TAlias, TSourceKey> {
+    as<TAlias extends string>(alias: TAlias): AliasedSelection<TData, TAlias, TSourceKey> {
       return createExpression({
         ...config,
         outputAlias: alias,
-      }) as AliasedExpression<TData, TAlias, TSourceKey>;
+      }) as AliasedSelection<TData, TAlias, TSourceKey>;
     },
     mapWith<TNext>(decoder: Decoder<TNext>): SqlExpression<TNext, TSourceKey> {
       return createExpression({

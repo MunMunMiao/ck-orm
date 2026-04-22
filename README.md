@@ -99,9 +99,11 @@ For local repository checks, use the scripts in [`package.json`](./package.json)
 - `bun run test:coverage`
 - `bun run test:e2e`
 
+`bun run test:coverage` inherits the repository-wide Bun threshold, which currently requires 100% lines and 100% functions.
+
 Repository workflows currently live in:
 
-- [`.github/workflows/ci.yml`](./.github/workflows/ci.yml): lint, unit tests, and type-check
+- [`.github/workflows/ci.yml`](./.github/workflows/ci.yml): lint, coverage, and type-check
 - [`.github/workflows/publish.yml`](./.github/workflows/publish.yml): manual npm publish workflow
 
 ## Quick start
@@ -413,6 +415,8 @@ const rows = await db
   .limit(10);
 ```
 
+Projection objects are built from public `Selection` values or columns. In practice that means table columns, `fn.*(...)`, and `expr(...)` outputs all compose the same way inside `select({ ... })`.
+
 Implicit selection returns the full table model when there are no joins:
 
 ```ts
@@ -534,6 +538,8 @@ const query = db
 
 `Predicate` is the public name for reusable boolean SQL clauses. You can use the same predicate objects in `where`, `having`, join `on` clauses, and boolean-aware helpers such as `exists(...)`.
 
+`Selection` is the public name for reusable computed builder values such as `fn.sum(...)`, `fn.toString(...)`, and `expr(sql...)`. Use `.as(...)` to alias them and `.mapWith(...)` to override decoding. `Order` is the clause object returned by `asc(...)` and `desc(...)`.
+
 `has(...)`, `hasAll(...)`, and `hasAny(...)` map directly to the native ClickHouse functions and keep ClickHouse's array, map, and JSON semantics.
 
 `where(...)` is variadic, while `having(...)` takes a single predicate. For multi-clause `having`, compose the predicate first with `and(...)` or `or(...)`.
@@ -573,10 +579,12 @@ const query = db
   .offset(0);
 ```
 
+`groupBy()` and `limitBy([...])` accept columns and computed `Selection` values from helpers like `fn.*(...)` or `expr(...)`.
+
 `orderBy()` accepts:
 
-- `desc(expr)`
-- `asc(expr)`
+- `desc(selection)`
+- `asc(selection)`
 - a column directly
 
 ### `final()`
@@ -814,7 +822,7 @@ Parameter transport is chosen automatically. You do not need to configure multip
 
 ### `expr()`
 
-Use `expr()` to wrap a raw SQL fragment as a builder expression:
+Use `expr()` to wrap a raw SQL fragment as a reusable `Selection`:
 
 ```ts
 import { expr, sql } from "ck-orm";

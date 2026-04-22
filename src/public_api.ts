@@ -91,7 +91,7 @@ export {
   notLike,
   or,
 } from "./query";
-export type { Predicate, SqlExpression } from "./query-shared";
+export type { Order, Predicate, Selection } from "./query-shared";
 export {
   type ClickHouseBaseQueryOptions,
   type ClickHouseClientConfig,

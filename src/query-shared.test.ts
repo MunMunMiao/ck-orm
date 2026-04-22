@@ -30,9 +30,17 @@ describe("ck-orm query shared helpers", function describeClickHouseOrmQueryShare
     expect(getExpressionSourceKey({})).toBeUndefined();
 
     const aliased = expression.as("one");
+    expect(isExpression(aliased)).toBe(true);
+    if (!isExpression(aliased)) {
+      throw new Error("Expected aliased selection to remain an internal expression");
+    }
     expect(aliased.outputAlias).toBe("one");
 
     const mapped = expression.mapWith((value) => String(value));
+    expect(isExpression(mapped)).toBe(true);
+    if (!isExpression(mapped)) {
+      throw new Error("Expected mapped selection to remain an internal expression");
+    }
     expect(mapped.decoder(2)).toBe("2");
   });
 
