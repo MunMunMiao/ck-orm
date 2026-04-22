@@ -135,7 +135,7 @@ The current E2E suite covers:
     - reserved `orm_param*` prefix rejection
     - `query_id` / `session_id` validation
     - per-request `session_timeout` and continued-session `session_check`
-    - `createTemporaryTable(name, definition)` single-statement boundary
+    - `createTemporaryTableRaw(name, definition)` single-statement boundary
     - `sql.join(...)` separator validation
 - advanced ClickHouse SQL
   - scalar `WITH`
@@ -148,6 +148,7 @@ The current E2E suite covers:
   - `runInSession()`
   - `registerTempTable()`
   - `createTemporaryTable()`
+  - `createTemporaryTableRaw()`
   - session cleanup
 - observability
   - `logger`

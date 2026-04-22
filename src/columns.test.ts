@@ -243,6 +243,21 @@ describe("ck-orm columns", function describeClickHouseOrmColumns() {
     expect(multiPolygon().mapToDriverValue(multiPolygonValue)).toBe(multiPolygonValue);
   });
 
+  it("preserves column ddl metadata across fluent builders and bind()", function testColumnDdlMetadata() {
+    const codec = sql`ZSTD(1)`;
+    const ttl = sql`now() + INTERVAL 1 DAY`;
+    const note = string().comment("session-local note").codec(codec).ttl(ttl);
+    expect(note.ddl?.comment).toBe("session-local note");
+    expect(note.ddl?.codec).toBe(codec);
+    expect(note.ddl?.ttl).toBe(ttl);
+
+    const bound = note.bind({
+      name: "note",
+      tableName: "tmp_scope",
+    });
+    expect(bound.ddl).toEqual(note.ddl);
+  });
+
   it("annotates container decode failures with the offending path", function testContainerDecodePath() {
     const items = array(int32());
     let arrErr: unknown;

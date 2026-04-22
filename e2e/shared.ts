@@ -1,5 +1,5 @@
-import type { AnyColumn } from "../src/columns";
-import type { AnyTable, Table } from "../src/schema";
+export { buildCreateTableStatement, buildDropTableStatement } from "../src/schema-ddl";
+
 import {
   aggregateFunction,
   alias,
@@ -356,45 +356,5 @@ export const createTempTableName = (prefix: string) => {
   const suffix = Math.random().toString(36).slice(2, 8);
   return `${prefix}_${Date.now()}_${suffix}`;
 };
-
-const escapeIdentifier = (value: string) => {
-  return `\`${value.replaceAll("`", "``")}\``;
-};
-
-const renderColumnName = (column: AnyColumn) => {
-  if (!column.name) {
-    throw new Error(`Expected bound column name for ${column.sqlType}`);
-  }
-  return escapeIdentifier(column.name);
-};
-
-const renderEngineClause = (table: AnyTable) => {
-  const engine = table.options.engine ?? "MergeTree";
-  if (engine === "ReplacingMergeTree" && table.options.versionColumn?.name) {
-    return `${engine}(${escapeIdentifier(table.options.versionColumn.name)})`;
-  }
-  return engine;
-};
-
-export const buildCreateTableStatement = (table: Table<Record<string, AnyColumn>>) => {
-  const columnDefinitions = Object.values(table.columns)
-    .map((column) => `  ${renderColumnName(column)} ${column.sqlType}`)
-    .join(",\n");
-
-  const orderByColumns = table.options.orderBy?.length
-    ? table.options.orderBy.map(renderColumnName).join(", ")
-    : "tuple()";
-
-  return `
-    CREATE TABLE ${table.originalName}
-    (
-${columnDefinitions}
-    )
-    ENGINE = ${renderEngineClause(table)}
-    ORDER BY (${orderByColumns})
-  `.trim();
-};
-
-export const buildDropTableStatement = (tableName: string) => `DROP TABLE IF EXISTS ${escapeIdentifier(tableName)}`;
 
 export const aliasedUsers = alias(users, "u");

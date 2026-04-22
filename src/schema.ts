@@ -1,5 +1,5 @@
-import type { AnyColumn, Column } from "./columns";
-import { sql } from "./sql";
+import type { AnyColumn, Column, DdlFragmentInput } from "./columns";
+import { type SQLFragment, sql } from "./sql";
 
 type InferSelect<TColumns extends Record<string, AnyColumn>> = {
   [K in keyof TColumns]: TColumns[K] extends Column<infer TData, string> ? TData : never;
@@ -79,15 +79,33 @@ export type ClickHouseTableEngine =
 
 type TableColumnRef<TColumns extends Record<string, AnyColumn>> = TColumns[keyof TColumns];
 
+type TableExpressionInput<TColumns extends Record<string, AnyColumn>> = TableColumnRef<TColumns> | DdlFragmentInput;
+type TableExpressionListInput<TColumns extends Record<string, AnyColumn>> =
+  | TableExpressionInput<TColumns>
+  | readonly TableExpressionInput<TColumns>[];
+type TableSettingValue = string | number | boolean | SQLFragment<unknown>;
+
 type TableOptionsConfig<TColumns extends Record<string, AnyColumn>> = {
-  readonly engine?: ClickHouseTableEngine;
-  readonly orderBy?: readonly TableColumnRef<TColumns>[];
+  readonly engine?: ClickHouseTableEngine | SQLFragment<unknown>;
+  readonly partitionBy?: TableExpressionListInput<TColumns>;
+  readonly primaryKey?: TableExpressionListInput<TColumns>;
+  readonly orderBy?: readonly TableExpressionInput<TColumns>[];
+  readonly sampleBy?: TableExpressionInput<TColumns>;
+  readonly ttl?: DdlFragmentInput | readonly DdlFragmentInput[];
+  readonly settings?: Record<string, TableSettingValue>;
+  readonly comment?: string;
   readonly versionColumn?: TableColumnRef<TColumns>;
 };
 
 export interface TableOptions {
-  readonly engine?: ClickHouseTableEngine;
-  readonly orderBy?: readonly AnyColumn[];
+  readonly engine?: ClickHouseTableEngine | SQLFragment<unknown>;
+  readonly partitionBy?: TableExpressionListInput<Record<string, AnyColumn>>;
+  readonly primaryKey?: TableExpressionListInput<Record<string, AnyColumn>>;
+  readonly orderBy?: readonly (AnyColumn | DdlFragmentInput)[];
+  readonly sampleBy?: AnyColumn | DdlFragmentInput;
+  readonly ttl?: DdlFragmentInput | readonly DdlFragmentInput[];
+  readonly settings?: Record<string, TableSettingValue>;
+  readonly comment?: string;
   readonly versionColumn?: AnyColumn;
 }
 
@@ -161,6 +179,36 @@ const bindColumns = <
   return boundColumns;
 };
 
+const isColumnLike = (value: unknown): value is AnyColumn => {
+  return typeof value === "object" && value !== null && "kind" in value && value.kind === "column";
+};
+
+const remapColumn = (boundColumns: Record<string, AnyColumn>, column: AnyColumn): AnyColumn => {
+  return column.name ? (boundColumns[column.name] ?? column) : column;
+};
+
+const remapExpressionInput = (
+  boundColumns: Record<string, AnyColumn>,
+  value: AnyColumn | DdlFragmentInput,
+): AnyColumn | DdlFragmentInput => {
+  return isColumnLike(value) ? remapColumn(boundColumns, value) : value;
+};
+
+const remapExpressionListInput = (
+  boundColumns: Record<string, AnyColumn>,
+  value: TableOptions["partitionBy"] | TableOptions["primaryKey"],
+) => {
+  if (value === undefined) {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => remapExpressionInput(boundColumns, entry));
+  }
+
+  return remapExpressionInput(boundColumns, value as AnyColumn | DdlFragmentInput);
+};
+
 export const chTable = <TName extends string, TColumns extends Record<string, AnyColumn>>(
   name: TName,
   columns: TColumns,
@@ -204,7 +252,12 @@ export const alias = <TTable extends AnyTable, TAlias extends string>(
     column.name ? (boundColumns[column.name as keyof typeof boundColumns] ?? column) : column;
   const mappedOptions: TableOptions = {
     ...table.options,
-    orderBy: table.options.orderBy?.map(remap),
+    partitionBy: remapExpressionListInput(boundColumns, table.options.partitionBy),
+    primaryKey: remapExpressionListInput(boundColumns, table.options.primaryKey),
+    orderBy: table.options.orderBy?.map((value) => remapExpressionInput(boundColumns, value)),
+    sampleBy: table.options.sampleBy
+      ? remapExpressionInput(boundColumns, table.options.sampleBy)
+      : table.options.sampleBy,
     versionColumn: table.options.versionColumn ? remap(table.options.versionColumn) : table.options.versionColumn,
   };
   const aliasedTable = {

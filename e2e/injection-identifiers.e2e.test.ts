@@ -51,7 +51,7 @@ describeE2E("ck-orm e2e injection identifiers", function describeInjectionIdenti
     const db = createE2EDb();
 
     await db.runInSession(async (sessionDb) => {
-      await expectClientValidationNotSent(sessionDb.createTemporaryTable("evil`; DROP", "(id Int32)"), {
+      await expectClientValidationNotSent(sessionDb.createTemporaryTableRaw("evil`; DROP", "(id Int32)"), {
         message: "[ck-orm] Invalid SQL identifier: evil`; DROP",
       });
     });

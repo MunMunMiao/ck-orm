@@ -166,5 +166,5 @@ This matrix records coverage from the real ClickHouse E2E suite only. It does no
 | semicolons inside string literals and comments | `injection-raw-sql.e2e.test.ts` |
 | `query_params`, `query_id`, and `session_id` validation | `injection-transport-and-boundaries.e2e.test.ts` |
 | per-request `session_timeout` and continued-session `session_check` | `injection-transport-and-boundaries.e2e.test.ts` |
-| `createTemporaryTable()` trusted-only boundary | `injection-transport-and-boundaries.e2e.test.ts` |
+| `createTemporaryTableRaw()` trusted-only boundary | `injection-transport-and-boundaries.e2e.test.ts` |
 | `sql.join()` separator validation | `injection-transport-and-boundaries.e2e.test.ts` |

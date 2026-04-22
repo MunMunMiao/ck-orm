@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { string } from "./columns";
 import { ClickHouseOrmError } from "./errors";
 import { fn } from "./functions";
 import { eq } from "./query";
 import { type ClickHouseClientConfig, type ClickHouseQueryOptions, clickhouseClient } from "./runtime";
+import { chTable } from "./schema";
 import { orderRewardLog } from "./test-schema/commerce";
 
 const originalFetch = globalThis.fetch;
@@ -259,6 +261,9 @@ describe("ck-orm runtime", function describeClickHouseOrmRuntime() {
 
   it("reuses one session id and cleans temp tables after runInSession failure", async function testRunInSessionCleanup() {
     const bodies: string[] = [];
+    const tmpScope = chTable("tmp_scope", {
+      user_id: string(),
+    });
     const { calls } = setFetchMock(async (_url, init) => {
       const text = await readBodyText(init.body);
       if (typeof text === "string") {
@@ -275,7 +280,7 @@ describe("ck-orm runtime", function describeClickHouseOrmRuntime() {
     await expect(
       db.runInSession(
         async (sessionDb) => {
-          await sessionDb.createTemporaryTable("tmp_scope", "(user_id String)");
+          await sessionDb.createTemporaryTable(tmpScope);
           sessionDb.registerTempTable("tmp_manual");
           await sessionDb.command("select 1");
           throw new Error("boom");
@@ -285,7 +290,7 @@ describe("ck-orm runtime", function describeClickHouseOrmRuntime() {
     ).rejects.toThrow("boom");
 
     expect(bodies).toEqual([
-      "CREATE TEMPORARY TABLE `tmp_scope` (user_id String)",
+      "CREATE TEMPORARY TABLE `tmp_scope`\n(\n  `user_id` String\n)\nENGINE = Memory",
       "select 1",
       "DROP TABLE IF EXISTS `tmp_manual`",
       "DROP TABLE IF EXISTS `tmp_scope`",

@@ -1,4 +1,4 @@
-import { clickhouseClient, sql } from "./ck-orm";
+import { chTable, clickhouseClient, sql, string } from "./ck-orm";
 import { commerceSchema } from "./schema/commerce";
 
 const createCommerceDb = () => {
@@ -19,11 +19,15 @@ export const exportRewardSummaryForLargeUserScope = async (
   onRow: (row: Record<string, unknown>) => Promise<void> | void,
 ) => {
   const commerceDb = createCommerceDb();
+  const tmpUserScope = chTable("tmp_user_scope", {
+    user_id: string(),
+  });
 
   return commerceDb.runInSession(async (sessionDb) => {
-    await sessionDb.createTemporaryTable("tmp_user_scope", "(user_id String)");
+    // Temporary tables stay scoped to this Session and disappear after cleanup.
+    await sessionDb.createTemporaryTable(tmpUserScope);
     await sessionDb.insertJsonEachRow(
-      "tmp_user_scope",
+      tmpUserScope,
       userIds.map((user_id) => ({ user_id })),
       {
         query_id: "reward_scope_seed",

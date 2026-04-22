@@ -15,6 +15,7 @@ import type { CompiledQuery } from "../query";
 import { createSessionId, decodeRow, QueryClient } from "../query";
 import type { QueryParams } from "../query-shared";
 import type { AnyTable } from "../schema";
+import { buildCreateTemporaryTableStatement } from "../schema-ddl";
 import { compileSql, sql } from "../sql";
 import {
   buildQueryParams,
@@ -22,21 +23,23 @@ import {
   type ClickHouseEndpointOptions,
   type ClickHouseQueryOptions,
   type ClickHouseStreamOptions,
+  type CreateTemporaryTableOptions,
   mergeClickHouseSettings,
   mergeQueryParams,
   normalizeRawQueryInput,
   normalizeSingleStatementSql,
   type RawQueryInput,
   type ResolveJoinUseNulls,
-  type SessionApi,
+  type Session,
   type SessionContext,
+  type SessionRunInSessionOptions,
   toClickHouseTableName,
 } from "./config";
 import type { FetchClickHouseTransport } from "./transport";
 
 export class ClickHouseOrmClient<TSchema, TJoinUseNulls extends 0 | 1 = 1>
   extends QueryClient<TSchema, TJoinUseNulls>
-  implements SessionApi
+  implements Session<TSchema, TJoinUseNulls>
 {
   readonly $client: FetchClickHouseTransport;
   readonly sessionId: string;
@@ -531,8 +534,18 @@ export class ClickHouseOrmClient<TSchema, TJoinUseNulls extends 0 | 1 = 1>
     }
   }
 
+  async createTemporaryTable(table: AnyTable, options?: CreateTemporaryTableOptions) {
+    if (!this.sessionContext) {
+      throw createSessionError("createTemporaryTable() requires runInSession()");
+    }
+    const statement = buildCreateTemporaryTableStatement(table, options?.mode);
+    this.registerValidatedTempTable(table.originalName);
+    await this.command(statement);
+  }
+
   /**
-   * Creates a CLICKHOUSE TEMPORARY TABLE inside the current session.
+   * Creates a CLICKHOUSE TEMPORARY TABLE inside the current session from a raw
+   * developer-controlled definition string.
    *
    * @param name Table name (validated via {@link sql.identifier}).
    * @param definition Raw column/engine definition appended after the table identifier
@@ -542,13 +555,13 @@ export class ClickHouseOrmClient<TSchema, TJoinUseNulls extends 0 | 1 = 1>
    *   trailing top-level `;` are stripped, but multiple statements are rejected.
    *   This is not a substitute for treating the argument as developer-controlled.
    */
-  async createTemporaryTable(name: string, definition: string) {
+  async createTemporaryTableRaw(name: string, definition: string) {
     if (!this.sessionContext) {
-      throw createSessionError("createTemporaryTable() requires runInSession()");
+      throw createSessionError("createTemporaryTableRaw() requires runInSession()");
     }
     const normalizedDefinition = normalizeSingleStatementSql(
       definition,
-      "createTemporaryTable() definition must not contain multiple statements; use developer-controlled SQL only",
+      "createTemporaryTableRaw() definition must not contain multiple statements; use developer-controlled SQL only",
     );
     const identifier = this.renderTempTableIdentifier(name);
     this.registerValidatedTempTable(name);
@@ -556,26 +569,8 @@ export class ClickHouseOrmClient<TSchema, TJoinUseNulls extends 0 | 1 = 1>
   }
 
   async runInSession<TResult>(
-    callback: (db: ClickHouseOrmClient<TSchema, TJoinUseNulls>) => Promise<TResult>,
-    options?: Omit<ClickHouseBaseQueryOptions, "session_id"> & {
-      session_id?: string;
-      /**
-       * Optional callback invoked when one or more temporary-table cleanup
-       * statements (`DROP TABLE IF EXISTS`) fail at the end of a session.
-       *
-       * Cleanup errors never override the user callback's error — they are
-       * collected after the user callback resolves/rejects and surfaced here.
-       *
-       * If this hook is **not** supplied:
-       * - When the user callback succeeded but cleanup failed, a
-       *   {@link ClickHouseOrmError} of `kind: "session"` is thrown with the
-       *   underlying cleanup errors attached via `cause` (an `AggregateError`
-       *   when there is more than one).
-       * - When the user callback already threw, cleanup errors are silently
-       *   discarded to preserve the original error (matches prior behaviour).
-       */
-      onCleanupError?: (errors: readonly unknown[], context: { sessionId: string }) => void;
-    },
+    callback: (db: Session<TSchema, TJoinUseNulls>) => Promise<TResult>,
+    options?: SessionRunInSessionOptions,
   ): Promise<TResult> {
     if (this.sessionContext) {
       if (options?.session_id && options.session_id !== this.defaultOptions.session_id) {

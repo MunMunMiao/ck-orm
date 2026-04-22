@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { sql } from "./ck-orm";
+import { chTable, int32, sql, string } from "./ck-orm";
 import { createE2EDb, createTempTableName, users } from "./shared";
 import { describeE2E, expectClientValidationNotSent, expectNoMutationAfterRejectedInjection } from "./test-helpers";
 
@@ -60,15 +60,15 @@ describeE2E(
       }
     });
 
-    it("rejects multi-statement createTemporaryTable() definitions and leaves base tables untouched", async function testCreateTemporaryTableDefinitionValidation() {
+    it("rejects multi-statement createTemporaryTableRaw() definitions and leaves base tables untouched", async function testCreateTemporaryTableDefinitionValidation() {
       const db = createE2EDb();
 
       await db.runInSession(async (sessionDb) => {
         await expectClientValidationNotSent(
-          sessionDb.createTemporaryTable("tmp_evil", "(id Int32); DROP TABLE users"),
+          sessionDb.createTemporaryTableRaw("tmp_evil", "(id Int32); DROP TABLE users"),
           {
             message:
-              "[ck-orm] createTemporaryTable() definition must not contain multiple statements; use developer-controlled SQL only",
+              "[ck-orm] createTemporaryTableRaw() definition must not contain multiple statements; use developer-controlled SQL only",
           },
         );
       });
@@ -76,12 +76,12 @@ describeE2E(
       await expectNoMutationAfterRejectedInjection();
     });
 
-    it("allows semicolons inside createTemporaryTable() string literals when the definition stays single-statement", async function testCreateTemporaryTableLiteralSemicolon() {
+    it("allows semicolons inside createTemporaryTableRaw() string literals when the definition stays single-statement", async function testCreateTemporaryTableLiteralSemicolon() {
       const db = createE2EDb();
       const tempTable = createTempTableName("tmp_literal_semicolon");
 
       await db.runInSession(async (sessionDb) => {
-        await sessionDb.createTemporaryTable(tempTable, "(id Int32, note String DEFAULT ';')");
+        await sessionDb.createTemporaryTableRaw(tempTable, "(id Int32, note String DEFAULT ';')");
         await sessionDb.command(sql`INSERT INTO ${sql.identifier(tempTable)} (id) VALUES (${1})`);
 
         const rows = await sessionDb.execute(sql`
@@ -120,7 +120,8 @@ describeE2E(
         const sessionRows = await db.runInSession(
           async (sessionDb) => {
             const sessionTempTable = createTempTableName("tmp_run_in_session_opts");
-            await sessionDb.createTemporaryTable(sessionTempTable, "(id Int32)");
+            const sessionTempScope = chTable(sessionTempTable, { id: int32() });
+            await sessionDb.createTemporaryTable(sessionTempScope);
             await sessionDb.command(sql`INSERT INTO ${sql.identifier(sessionTempTable)} (id) VALUES (${2})`);
             return await sessionDb.execute(sql`SELECT id FROM ${sql.identifier(sessionTempTable)} ORDER BY id`);
           },
@@ -156,6 +157,34 @@ describeE2E(
           .from(users)
           .orderBy(sql.join([sql.identifier("a")], "a;b")),
       ).toThrow("Invalid SQL join separator");
+    });
+
+    it("supports structured temporary-table schema with DEFAULT, MATERIALIZED and ALIAS expressions", async function testStructuredTempTableSchema() {
+      const db = createE2EDb();
+      const tempTable = createTempTableName("tmp_structured_schema");
+      const structuredScope = chTable(tempTable, {
+        base: int32(),
+        note: string().default(sql`'auto'`),
+        doubled: int32().materialized(sql`base * 2`),
+        label: string().aliasExpr(sql`concat('n=', toString(base))`),
+      });
+
+      await db.runInSession(async (sessionDb) => {
+        await sessionDb.createTemporaryTable(structuredScope);
+        await sessionDb.insertJsonEachRow(structuredScope, [{ base: 7 }]);
+
+        const rows = await sessionDb
+          .select({
+            base: structuredScope.base,
+            note: structuredScope.note,
+            doubled: structuredScope.doubled,
+            label: structuredScope.label,
+          })
+          .from(structuredScope)
+          .orderBy(structuredScope.base);
+
+        expect(rows).toEqual([{ base: 7, note: "auto", doubled: 14, label: "n=7" }]);
+      });
     });
   },
 );

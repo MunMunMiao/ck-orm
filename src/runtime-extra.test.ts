@@ -166,7 +166,7 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
     ).toBe(true);
 
     expect(() => db.registerTempTable("tmp_scope")).toThrow(ClickHouseOrmError);
-    await expectRejectsWithClickhouseError(db.createTemporaryTable("tmp_scope", "(id Int32)"), {
+    await expectRejectsWithClickhouseError(db.createTemporaryTable(chTable("tmp_scope", { id: int32() })), {
       kind: "session",
       executionState: "not_sent",
       message: "[ck-orm] createTemporaryTable() requires runInSession()",
@@ -831,7 +831,7 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("allows createTemporaryTable definitions with semicolons inside string literals", async function testCreateTemporaryTableLiteralSemicolon() {
+  it("allows createTemporaryTableRaw definitions with semicolons inside string literals", async function testCreateTemporaryTableLiteralSemicolon() {
     const bodies: string[] = [];
 
     globalThis.fetch = mock(async (_input: string | URL | Request, init?: RequestInit) => {
@@ -848,14 +848,14 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
     });
 
     await db.runInSession(async (sessionDb) => {
-      await sessionDb.createTemporaryTable("tmp_scope", "(note String DEFAULT ';')");
+      await sessionDb.createTemporaryTableRaw("tmp_scope", "(note String DEFAULT ';')");
     });
 
     expect(bodies).toContain("CREATE TEMPORARY TABLE `tmp_scope` (note String DEFAULT ';')");
     expect(bodies).toContain("DROP TABLE IF EXISTS `tmp_scope`");
   });
 
-  it("rejects createTemporaryTable definitions that contain inline semicolons", async function testCreateTemporaryTableRejectsSemicolons() {
+  it("rejects createTemporaryTableRaw definitions that contain inline semicolons", async function testCreateTemporaryTableRejectsSemicolons() {
     globalThis.fetch = (async () => new Response("", { status: 200 })) as unknown as typeof fetch;
 
     const db = clickhouseClient({
@@ -865,13 +865,13 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
 
     await expectRejectsWithClickhouseError(
       db.runInSession(async (sessionDb) => {
-        await sessionDb.createTemporaryTable("tmp_evil", "(id Int32); DROP TABLE users");
+        await sessionDb.createTemporaryTableRaw("tmp_evil", "(id Int32); DROP TABLE users");
       }),
       {
         kind: "client_validation",
         executionState: "not_sent",
         message:
-          "[ck-orm] createTemporaryTable() definition must not contain multiple statements; use developer-controlled SQL only",
+          "[ck-orm] createTemporaryTableRaw() definition must not contain multiple statements; use developer-controlled SQL only",
       },
     );
   });
@@ -894,7 +894,7 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
 
     await expectRejectsWithClickhouseError(
       db.runInSession(async (sessionDb) => {
-        await sessionDb.createTemporaryTable("evil`; DROP", "(id Int32)");
+        await sessionDb.createTemporaryTableRaw("evil`; DROP", "(id Int32)");
       }),
       {
         kind: "client_validation",
@@ -924,11 +924,13 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
       databaseUrl: "http://localhost:8123/demo_store",
       schema: { users },
     });
+    const tmpA = chTable("tmp_a", { id: int32() });
+    const tmpB = chTable("tmp_b", { id: int32() });
 
     await expectRejectsWithClickhouseError(
       db.runInSession(async (sessionDb) => {
-        await sessionDb.createTemporaryTable("tmp_a", "(id Int32)");
-        await sessionDb.createTemporaryTable("tmp_b", "(id Int32)");
+        await sessionDb.createTemporaryTable(tmpA);
+        await sessionDb.createTemporaryTable(tmpB);
       }),
       {
         kind: "session",
@@ -953,6 +955,7 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
       databaseUrl: "http://localhost:8123/demo_store",
       schema: { users },
     });
+    const tmpHook = chTable("tmp_hook", { id: int32() });
 
     const cleanupReports: Array<{ count: number; sessionId: string }> = [];
     const userError = new Error("user callback failed");
@@ -960,7 +963,7 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
     await expect(
       db.runInSession(
         async (sessionDb) => {
-          await sessionDb.createTemporaryTable("tmp_hook", "(id Int32)");
+          await sessionDb.createTemporaryTable(tmpHook);
           throw userError;
         },
         {

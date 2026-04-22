@@ -86,4 +86,28 @@ describe("ck-orm schema infer helpers", function describeClickHouseOrmSchemaInfe
     expect((aliased.options.orderBy?.[0] as { tableAlias?: string } | undefined)?.tableAlias).toBe("e");
     expect((aliased.options.versionColumn as { tableAlias?: string } | undefined)?.tableAlias).toBe("e");
   });
+
+  it("rebinds partitionBy and primaryKey arrays when aliasing tables", function testAliasRebindsExpressionLists() {
+    const events = chTable("events", { id: int32(), tenant_id: int32(), bucket_id: int32() }, (t) => ({
+      engine: "MergeTree",
+      partitionBy: [t.tenant_id, t.bucket_id],
+      primaryKey: [t.id, t.tenant_id],
+    }));
+
+    const aliased = alias(events, "e");
+    expect(aliased.options.partitionBy).toEqual([aliased.tenant_id, aliased.bucket_id]);
+    expect(aliased.options.primaryKey).toEqual([aliased.id, aliased.tenant_id]);
+  });
+
+  it("rebinds single partitionBy and primaryKey expressions when aliasing tables", function testAliasRebindsSingleExpressions() {
+    const events = chTable("events", { id: int32(), tenant_id: int32() }, (t) => ({
+      engine: "MergeTree",
+      partitionBy: t.tenant_id,
+      primaryKey: t.id,
+    }));
+
+    const aliased = alias(events, "e");
+    expect(aliased.options.partitionBy).toBe(aliased.tenant_id);
+    expect(aliased.options.primaryKey).toBe(aliased.id);
+  });
 });

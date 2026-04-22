@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { createSessionId, eq, expr, sql } from "./ck-orm";
+import { chTable, createSessionId, eq, expr, int32, sql } from "./ck-orm";
 import { createE2EDb, createTempTableName, pets, rewardEvents, users } from "./shared";
 import { describeE2E, expectPresent, takeAsync } from "./test-helpers";
 
@@ -99,6 +99,7 @@ describeE2E("ck-orm e2e session, cdc and stream", function describeSessionCdcAnd
     const db = createE2EDb();
     const manualTempTable = createTempTableName("manual_scope");
     const helperTempTable = createTempTableName("helper_scope");
+    const helperTempScope = chTable(helperTempTable, { user_id: int32() });
     const sessionId = createSessionId();
 
     const scopedRows = await db.runInSession(
@@ -107,8 +108,8 @@ describeE2E("ck-orm e2e session, cdc and stream", function describeSessionCdcAnd
         sessionDb.registerTempTable(manualTempTable);
         await sessionDb.insertJsonEachRow(manualTempTable, [{ user_id: 1 }, { user_id: 2 }]);
 
-        await sessionDb.createTemporaryTable(helperTempTable, "(user_id Int32)");
-        await sessionDb.insertJsonEachRow(helperTempTable, [{ user_id: 3 }]);
+        await sessionDb.createTemporaryTable(helperTempScope);
+        await sessionDb.insertJsonEachRow(helperTempScope, [{ user_id: 3 }]);
 
         return await sessionDb
           .select({

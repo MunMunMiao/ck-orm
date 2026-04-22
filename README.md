@@ -246,8 +246,43 @@ const orderRewardLog = chTable(
 Public table options:
 
 - `engine`
+- `partitionBy`
+- `primaryKey`
 - `orderBy`
+- `sampleBy`
+- `ttl`
+- `settings`
+- `comment`
 - `versionColumn`
+
+Column definitions can also carry DDL metadata directly:
+
+- `.default(expr)`
+- `.materialized(expr)`
+- `.aliasExpr(expr)`
+- `.comment(text)`
+- `.codec(expr)`
+- `.ttl(expr)`
+
+Example:
+
+```ts
+const orderRewardLog = chTable(
+  "order_reward_log",
+  {
+    id: int32(),
+    created_at: dateTime(),
+    shard_day: date().materialized(sql`toDate(created_at)`),
+    note: string().default(sql`'pending'`),
+  },
+  (table) => ({
+    engine: "ReplacingMergeTree",
+    partitionBy: sql`toYYYYMM(created_at)`,
+    orderBy: [table.id],
+    versionColumn: table.created_at,
+  }),
+);
+```
 
 ### Type inference
 
@@ -915,13 +950,19 @@ Inside a session callback, `ck-orm` gives you:
 - `runInSession()`
 - `registerTempTable()`
 - `createTemporaryTable()`
+- `createTemporaryTableRaw()`
 
 ### `runInSession()`
 
 ```ts
+const tmpScope = chTable("tmp_scope", {
+  user_id: string(),
+});
+
 await db.runInSession(async (sessionDb) => {
-  await sessionDb.createTemporaryTable("tmp_scope", "(user_id String)");
-  await sessionDb.insertJsonEachRow("tmp_scope", [
+  // Temporary tables live only inside this Session and are cleaned up automatically.
+  await sessionDb.createTemporaryTable(tmpScope);
+  await sessionDb.insertJsonEachRow(tmpScope, [
     { user_id: "user_100" },
     { user_id: "user_200" },
   ]);
@@ -931,8 +972,6 @@ await db.runInSession(async (sessionDb) => {
     FROM order_reward_log
     WHERE user_id IN (SELECT user_id FROM tmp_scope)
   `);
-}, {
-  session_timeout: 60,
 });
 ```
 
@@ -940,7 +979,8 @@ await db.runInSession(async (sessionDb) => {
 
 - queries inside a session are serialized to protect temporary table lifecycle
 - `createTemporaryTable()` automatically registers the table for cleanup
-- `createTemporaryTable()` validates the temporary table name and rejects multi-statement definitions
+- `createTemporaryTable()` consumes schema objects; temporary-table lifecycle stays on `Session`, not on the schema itself
+- `createTemporaryTableRaw()` is the trusted-only raw SQL escape hatch and rejects multi-statement definitions
 - `runInSession()` drops registered temporary tables when the callback finishes
 - nested `runInSession()` calls may reuse the same session
 - nested calls may not switch to a different `session_id`
@@ -1145,7 +1185,7 @@ The built-in protections include:
 Treat the following APIs like `eval`: only pass developer-controlled strings, never user-derived input.
 
 - `sql.raw(value)`
-- `db.createTemporaryTable(name, definition)`
+- `db.createTemporaryTableRaw(name, definition)`
 
 `fn.call(name, ...)` and `fn.withParams(name, ...)` validate `name`, but you should still treat dynamically chosen function names as developer-controlled input rather than end-user input.
 

@@ -1,12 +1,16 @@
 // Type-only contract file. It exists to keep the public runtime API honest
 // under `tsc --noEmit`; it is not runtime library code.
 import { int32, string } from "./columns";
-import { clickhouseClient } from "./runtime";
+import { clickhouseClient, type Session } from "./runtime";
 import { chTable } from "./schema";
 
 const users = chTable("users", {
   id: int32(),
   name: string(),
+});
+const tempUsers = chTable("tmp_users", {
+  id: int32(),
+  name: string().default("anonymous"),
 });
 
 const db = clickhouseClient({
@@ -15,7 +19,9 @@ const db = clickhouseClient({
 });
 
 db.runInSession(
-  async (sessionDb) => {
+  async (sessionDb: Session) => {
+    await sessionDb.createTemporaryTable(tempUsers, { mode: "if_not_exists" });
+    await sessionDb.createTemporaryTableRaw("tmp_users_raw", "(id Int32)");
     await sessionDb.execute("select 1", {
       session_timeout: 30,
       session_check: 1,

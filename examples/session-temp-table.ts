@@ -1,4 +1,4 @@
-import { clickhouseClient } from "./ck-orm";
+import { chTable, clickhouseClient, string } from "./ck-orm";
 import { commerceSchema } from "./schema/commerce";
 
 const createCommerceDb = () => {
@@ -16,10 +16,14 @@ const createCommerceDb = () => {
 
 export const runSessionTempTableExample = async () => {
   const commerceDb = createCommerceDb();
+  const tmpScope = chTable("tmp_scope", {
+    user_id: string(),
+  });
 
   return commerceDb.runInSession(async (sessionDb) => {
-    await sessionDb.createTemporaryTable("tmp_scope", "(user_id String)");
-    await sessionDb.insertJsonEachRow("tmp_scope", [{ user_id: "user_100" }, { user_id: "user_200" }]);
+    // Temporary tables live only inside this Session and are cleaned up automatically.
+    await sessionDb.createTemporaryTable(tmpScope);
+    await sessionDb.insertJsonEachRow(tmpScope, [{ user_id: "user_100" }, { user_id: "user_200" }]);
 
     return sessionDb.execute(
       `

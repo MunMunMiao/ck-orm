@@ -98,8 +98,9 @@ export {
   type ClickHouseEndpointOptions,
   type ClickHouseQueryOptions,
   type ClickHouseStreamOptions,
+  type CreateTemporaryTableOptions,
   clickhouseClient,
-  type SessionApi,
+  type Session,
 } from "./runtime";
 export type { AnyTable, Table } from "./schema";
 export {

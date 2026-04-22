@@ -10,6 +10,7 @@ import {
   type Order,
   type Predicate,
   type Selection,
+  type Session,
   sql,
   string,
 } from "./index";
@@ -18,10 +19,20 @@ const users = chTable("users", {
   id: int32(),
   name: string(),
 });
+const tempUsers = chTable("tmp_users", {
+  id: int32(),
+  name: string().default(sql`'anonymous'`),
+});
 
 const db = clickhouseClient({
   databaseUrl: "http://localhost:8123/public_api_typecheck",
   schema: { users },
+});
+
+db.runInSession(async (session: Session) => {
+  await session.createTemporaryTable(tempUsers);
+  await session.createTemporaryTableRaw("tmp_users_raw", "(id Int32)");
+  await session.select({ id: tempUsers.id }).from(tempUsers).execute();
 });
 
 const nameSelection: Selection<string> = fn.toString(users.name);

@@ -91,8 +91,8 @@ describeE2E("ck-orm e2e injection values", function describeInjectionValues() {
     });
 
     await db.runInSession(async (sessionDb) => {
-      await sessionDb.createTemporaryTable(tempTable, "(name String)");
-      await sessionDb.insertJsonEachRow(tempTable, [
+      await sessionDb.createTemporaryTable(patternScope);
+      await sessionDb.insertJsonEachRow(patternScope, [
         { name: "price100%real" },
         { name: "price100Xreal" },
         { name: "tag_user_1" },

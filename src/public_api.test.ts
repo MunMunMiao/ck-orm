@@ -29,6 +29,7 @@ describe("ck-orm public api", function describePublicApi() {
     expectType<RootApi.Order | undefined>(undefined);
     expectType<RootApi.Predicate | undefined>(undefined);
     expectType<RootApi.Selection | undefined>(undefined);
+    expectType<RootApi.Session | undefined>(undefined);
     // @ts-expect-error Grouping should remain private to clause internals
     expectType<RootApi.Grouping | undefined>(undefined);
   });

@@ -123,8 +123,8 @@ describeE2E("ck-orm e2e count and dynamic filters", function describeCountAndDyn
     );
 
     const result = await db.runInSession(async (sessionDb) => {
-      await sessionDb.createTemporaryTable(tempTableName, "(user_id Int32)");
-      await sessionDb.insertJsonEachRow(tempTableName, [{ user_id: 1 }, { user_id: 2 }, { user_id: 3 }]);
+      await sessionDb.createTemporaryTable(tempScope);
+      await sessionDb.insertJsonEachRow(tempScope, [{ user_id: 1 }, { user_id: 2 }, { user_id: 3 }]);
 
       const scopedTempUsers = sessionDb
         .select({

@@ -14,7 +14,8 @@ export type {
   ClickHouseFetchConfigOptions,
   ClickHouseQueryOptions,
   ClickHouseStreamOptions,
-  SessionApi,
+  CreateTemporaryTableOptions,
+  Session,
 } from "./runtime/config";
 
 export const clickhouseClient = <

@@ -2,7 +2,7 @@ import { toBigInt, toBoolean, toDate, toNumber, toStringValue } from "./coercion
 import { createClientValidationError, createDecodeError, DecodeError } from "./errors";
 import { assertValidSqlIdentifier } from "./internal/identifier";
 import { createExpression, type Decoder, type Encoder, type InferData, type SqlExpression } from "./query-shared";
-import { sql } from "./sql";
+import { type SQLFragment, sql } from "./sql";
 
 export interface ColumnBinding<
   TTableName extends string = string,
@@ -29,19 +29,38 @@ export interface Column<
   readonly tableName?: TTableName;
   readonly tableAlias?: TTableAlias;
   readonly sqlType: TSqlType;
+  readonly ddl?: ColumnDdlConfig;
   mapToDriverValue(value: TData): unknown;
   mapFromDriverValue(value: unknown): TData;
   bind<TNextTableName extends string, TNextTableAlias extends string | undefined = undefined>(
     binding: ColumnBinding<TNextTableName, TNextTableAlias>,
   ): Column<TData, TSqlType, TNextTableName, TNextTableAlias>;
+  default(expression: DdlFragmentInput): Column<TData, TSqlType, TTableName, TTableAlias>;
+  materialized(expression: DdlFragmentInput): Column<TData, TSqlType, TTableName, TTableAlias>;
+  aliasExpr(expression: DdlFragmentInput): Column<TData, TSqlType, TTableName, TTableAlias>;
+  comment(text: string): Column<TData, TSqlType, TTableName, TTableAlias>;
+  codec(expression: DdlFragmentInput): Column<TData, TSqlType, TTableName, TTableAlias>;
+  ttl(expression: DdlFragmentInput): Column<TData, TSqlType, TTableName, TTableAlias>;
 }
 
 export type AnyColumn = Column<unknown, string, string | undefined, string | undefined>;
+
+export type DdlFragmentInput = string | SQLFragment<unknown>;
+
+export interface ColumnDdlConfig {
+  readonly default?: DdlFragmentInput;
+  readonly materialized?: DdlFragmentInput;
+  readonly aliasExpr?: DdlFragmentInput;
+  readonly comment?: string;
+  readonly codec?: DdlFragmentInput;
+  readonly ttl?: DdlFragmentInput;
+}
 
 type ColumnFactoryConfig<TData, TSqlType extends string> = {
   readonly sqlType: TSqlType;
   readonly mapFromDriverValue: Decoder<TData>;
   readonly mapToDriverValue?: Encoder<TData>;
+  readonly ddl?: ColumnDdlConfig;
 };
 
 const identity = <TData>(value: TData) => value;
@@ -64,6 +83,35 @@ const rethrowDecodeWithPath = (error: unknown, segment: string, originalValue: u
   }
   const message = error instanceof Error ? error.message : String(error);
   return createDecodeError(message, originalValue, { path: segment });
+};
+
+const ddlModeLabels = {
+  default: "DEFAULT",
+  materialized: "MATERIALIZED",
+  aliasExpr: "ALIAS",
+} as const;
+
+type DdlModeKey = keyof typeof ddlModeLabels;
+
+const mergeColumnDdl = (
+  current: ColumnDdlConfig | undefined,
+  patch: Partial<ColumnDdlConfig>,
+  mode?: DdlModeKey,
+): ColumnDdlConfig => {
+  if (mode) {
+    for (const key of Object.keys(ddlModeLabels) as DdlModeKey[]) {
+      if (key !== mode && current?.[key] !== undefined) {
+        throw createClientValidationError(
+          `Column DDL cannot combine ${ddlModeLabels[mode]} with ${ddlModeLabels[key]}`,
+        );
+      }
+    }
+  }
+
+  return {
+    ...(current ?? {}),
+    ...patch,
+  };
 };
 
 const createColumnFactory = <
@@ -105,6 +153,7 @@ const createColumnFactory = <
     tableName: binding?.tableName as TTableName | undefined,
     tableAlias: binding?.tableAlias as TTableAlias | undefined,
     sqlType: config.sqlType,
+    ddl: config.ddl,
     mapFromDriverValue(value: unknown) {
       return config.mapFromDriverValue(value);
     },
@@ -115,6 +164,60 @@ const createColumnFactory = <
       nextBinding: ColumnBinding<TNextTableName, TNextTableAlias>,
     ) {
       return createColumnFactory<TData, TSqlType, TNextTableName, TNextTableAlias>(config, nextBinding);
+    },
+    default(expression: DdlFragmentInput) {
+      return createColumnFactory<TData, TSqlType, TTableName, TTableAlias>(
+        {
+          ...config,
+          ddl: mergeColumnDdl(config.ddl, { default: expression }, "default"),
+        },
+        binding,
+      );
+    },
+    materialized(expression: DdlFragmentInput) {
+      return createColumnFactory<TData, TSqlType, TTableName, TTableAlias>(
+        {
+          ...config,
+          ddl: mergeColumnDdl(config.ddl, { materialized: expression }, "materialized"),
+        },
+        binding,
+      );
+    },
+    aliasExpr(expression: DdlFragmentInput) {
+      return createColumnFactory<TData, TSqlType, TTableName, TTableAlias>(
+        {
+          ...config,
+          ddl: mergeColumnDdl(config.ddl, { aliasExpr: expression }, "aliasExpr"),
+        },
+        binding,
+      );
+    },
+    comment(text: string) {
+      return createColumnFactory<TData, TSqlType, TTableName, TTableAlias>(
+        {
+          ...config,
+          ddl: mergeColumnDdl(config.ddl, { comment: text }),
+        },
+        binding,
+      );
+    },
+    codec(expression: DdlFragmentInput) {
+      return createColumnFactory<TData, TSqlType, TTableName, TTableAlias>(
+        {
+          ...config,
+          ddl: mergeColumnDdl(config.ddl, { codec: expression }),
+        },
+        binding,
+      );
+    },
+    ttl(expression: DdlFragmentInput) {
+      return createColumnFactory<TData, TSqlType, TTableName, TTableAlias>(
+        {
+          ...config,
+          ddl: mergeColumnDdl(config.ddl, { ttl: expression }),
+        },
+        binding,
+      );
     },
   } as unknown as Column<TData, TSqlType, TTableName, TTableAlias>;
 };

@@ -1,4 +1,5 @@
 import { expect, it } from "bun:test";
+import { chTable, int32 } from "./ck-orm";
 import { createE2EDb } from "./shared";
 import { describeE2E, expectRejectsWithClickhouseError } from "./test-helpers";
 
@@ -22,12 +23,13 @@ describeE2E("ck-orm e2e session security", function describeSessionSecurity() {
     const db = createE2EDb();
     const session1Id = `test_session_iso_${Date.now()}_1`;
     const session2Id = `test_session_iso_${Date.now()}_2`;
+    const isolatedScope = chTable("iso_test_data", { id: int32() });
 
     // Session 1 creates a temp table
     await db.runInSession(
       async (sessionDb) => {
-        await sessionDb.createTemporaryTable("iso_test_data", "(id Int32)");
-        await sessionDb.insertJsonEachRow("iso_test_data", [{ id: 42 }]);
+        await sessionDb.createTemporaryTable(isolatedScope);
+        await sessionDb.insertJsonEachRow(isolatedScope, [{ id: 42 }]);
       },
       { session_id: session1Id },
     );
@@ -48,11 +50,12 @@ describeE2E("ck-orm e2e session security", function describeSessionSecurity() {
   it("cleans up temporary tables on session end", async function testTempTableCleanup() {
     const db = createE2EDb();
     const sessionId = `test_cleanup_${Date.now()}`;
+    const cleanupScope = chTable("cleanup_test", { id: int32() });
 
     await db.runInSession(
       async (sessionDb) => {
-        await sessionDb.createTemporaryTable("cleanup_test", "(id Int32)");
-        await sessionDb.insertJsonEachRow("cleanup_test", [{ id: 1 }]);
+        await sessionDb.createTemporaryTable(cleanupScope);
+        await sessionDb.insertJsonEachRow(cleanupScope, [{ id: 1 }]);
         // Verify temp table exists within session
         const rows = await sessionDb.execute("SELECT * FROM cleanup_test");
         expect(rows.length).toBe(1);
@@ -70,7 +73,7 @@ describeE2E("ck-orm e2e session security", function describeSessionSecurity() {
     const db = createE2EDb();
 
     await db.runInSession(async (sessionDb) => {
-      await expectRejectsWithClickhouseError(sessionDb.createTemporaryTable("evil`; DROP", "(id Int32)"), {
+      await expectRejectsWithClickhouseError(sessionDb.createTemporaryTableRaw("evil`; DROP", "(id Int32)"), {
         kind: "client_validation",
         executionState: "not_sent",
         message: "[ck-orm] Invalid SQL identifier: evil`; DROP",

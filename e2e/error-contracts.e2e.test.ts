@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { createSessionId, sql } from "./ck-orm";
+import { chTable, createSessionId, int32, sql } from "./ck-orm";
 import { auditEvents, createE2EDb, createTempTableName } from "./shared";
 import { describeE2E, expectRejectsWithClickhouseError, waitForQueryLogException } from "./test-helpers";
 
@@ -50,11 +50,12 @@ describeE2E("ck-orm e2e error contracts", function describeErrorContracts() {
     const db = createE2EDb();
     const sessionId = createSessionId();
     const tempTable = createTempTableName("expired_scope");
+    const tempScope = chTable(tempTable, { id: int32() });
 
     await db.runInSession(
       async (sessionDb) => {
-        await sessionDb.createTemporaryTable(tempTable, "(id Int32)");
-        await sessionDb.insertJsonEachRow(tempTable, [{ id: 1 }]);
+        await sessionDb.createTemporaryTable(tempScope);
+        await sessionDb.insertJsonEachRow(tempScope, [{ id: 1 }]);
       },
       { session_id: sessionId },
     );

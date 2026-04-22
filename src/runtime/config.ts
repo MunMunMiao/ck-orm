@@ -6,7 +6,7 @@ import type {
   ClickHouseOrmTracingOptions,
 } from "../observability";
 import { base64EncodeUtf8, canSetUserAgentHeader } from "../platform";
-import type { CompiledQuery } from "../query";
+import type { CompiledQuery, QueryClient } from "../query";
 import type { AnyTable } from "../schema";
 import { compileSql, type SQLFragment } from "../sql";
 import type { JsonHandling } from "./json-stream";
@@ -64,10 +64,59 @@ export interface ClickHouseStreamOptions extends ClickHouseBaseQueryOptions {
 
 export type ClickHouseEndpointOptions = Pick<ClickHouseBaseQueryOptions, "abort_signal" | "auth" | "http_headers">;
 
-export interface SessionApi {
+export type CreateTemporaryTableOptions = {
+  readonly mode?: "create" | "if_not_exists" | "or_replace";
+};
+
+export type SessionRunInSessionOptions = Omit<ClickHouseBaseQueryOptions, "session_id"> & {
+  session_id?: string;
+  /**
+   * Optional callback invoked when one or more temporary-table cleanup
+   * statements (`DROP TABLE IF EXISTS`) fail at the end of a session.
+   *
+   * Cleanup errors never override the user callback's error — they are
+   * collected after the user callback resolves/rejects and surfaced here.
+   *
+   * If this hook is **not** supplied:
+   * - When the user callback succeeded but cleanup failed, a
+   *   `session` error is thrown with the underlying cleanup errors
+   *   attached via `cause` (an `AggregateError` when there is more than
+   *   one).
+   * - When the user callback already threw, cleanup errors are silently
+   *   discarded to preserve the original error (matches prior behaviour).
+   */
+  onCleanupError?: (errors: readonly unknown[], context: { sessionId: string }) => void;
+};
+
+export interface Session<TSchema = unknown, TJoinUseNulls extends 0 | 1 = 1>
+  extends Pick<
+    QueryClient<TSchema, TJoinUseNulls>,
+    "schema" | "ctes" | "select" | "count" | "insert" | "$with" | "with"
+  > {
   readonly sessionId: string;
+  execute(query: RawQueryInput, options?: ClickHouseQueryOptions): Promise<Record<string, unknown>[]>;
+  stream(
+    query: RawQueryInput,
+    options?: ClickHouseStreamOptions,
+  ): AsyncGenerator<Record<string, unknown>, void, unknown>;
+  command(query: RawQueryInput, options?: ClickHouseBaseQueryOptions): Promise<void>;
+  ping(options?: ClickHouseEndpointOptions): Promise<void>;
+  replicasStatus(options?: ClickHouseEndpointOptions): Promise<void>;
+  withSettings<TSettings extends Record<string, string | number | boolean>>(
+    settings: TSettings,
+  ): Session<TSchema, ResolveJoinUseNulls<TSettings, TJoinUseNulls>>;
+  insertJsonEachRow(
+    table: AnyTable | string,
+    rows: readonly Record<string, unknown>[] | AsyncIterable<Record<string, unknown>>,
+    options?: ClickHouseBaseQueryOptions,
+  ): Promise<void>;
   registerTempTable(name: string): void;
-  createTemporaryTable(name: string, definition: string): Promise<void>;
+  createTemporaryTable(table: AnyTable, options?: CreateTemporaryTableOptions): Promise<void>;
+  createTemporaryTableRaw(name: string, definition: string): Promise<void>;
+  runInSession<TResult>(
+    callback: (db: Session<TSchema, TJoinUseNulls>) => Promise<TResult>,
+    options?: SessionRunInSessionOptions,
+  ): Promise<TResult>;
 }
 
 /**
