@@ -3,9 +3,9 @@ import {
   createLoggerInstrumentation,
   createTracingInstrumentation,
 } from "./observability";
-import { ClickHouseOrmClient, createOrmRunner } from "./runtime/client";
+import { type ClickHouseOrmClient, createClickHouseOrmClient } from "./runtime/client";
 import { type ClickHouseClientConfig, normalizeClientConfig, type ResolveJoinUseNulls } from "./runtime/config";
-import { FetchClickHouseTransport } from "./runtime/transport";
+import { createFetchClickHouseTransport } from "./runtime/transport";
 
 export type {
   ClickHouseBaseQueryOptions,
@@ -42,17 +42,13 @@ export const clickhouseClient = <
     ...(instrumentation ?? []),
   ] satisfies ClickHouseOrmInstrumentation[];
 
-  const client = new FetchClickHouseTransport(normalizedConfig);
+  const client = createFetchClickHouseTransport(normalizedConfig);
   const joinUseNulls = (config.clickhouse_settings?.join_use_nulls === 0 ? 0 : 1) as ResolveJoinUseNulls<TSettings, 1>;
 
-  let ormClient: ClickHouseOrmClient<TSchema, ResolveJoinUseNulls<TSettings, 1>>;
-  const runner = createOrmRunner(() => ormClient);
-
-  ormClient = new ClickHouseOrmClient<TSchema, ResolveJoinUseNulls<TSettings, 1>>({
+  return createClickHouseOrmClient<TSchema, ResolveJoinUseNulls<TSettings, 1>>({
     schema,
     client,
     instrumentations,
-    runner,
     joinUseNulls,
     defaultOptions: {
       clickhouse_settings: normalizedConfig.clickhouse_settings,
@@ -61,6 +57,4 @@ export const clickhouseClient = <
       role: normalizedConfig.role,
     },
   });
-
-  return ormClient;
 };

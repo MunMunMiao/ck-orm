@@ -1,5 +1,5 @@
 import { toBigInt, toBoolean, toDate, toNumber, toStringValue } from "./coercion";
-import { createClientValidationError, createDecodeError, DecodeError } from "./errors";
+import { createClientValidationError, createDecodeError, type DecodeError, isDecodeError } from "./errors";
 import { assertValidSqlIdentifier } from "./internal/identifier";
 import { createExpression, type Decoder, type Encoder, type InferData, type SqlExpression } from "./query-shared";
 import { type SQLFragment, sql } from "./sql";
@@ -66,7 +66,7 @@ type ColumnFactoryConfig<TData, TSqlType extends string> = {
 const identity = <TData>(value: TData) => value;
 
 const rethrowDecodeWithPath = (error: unknown, segment: string, originalValue: unknown): DecodeError => {
-  if (error instanceof DecodeError) {
+  if (isDecodeError(error)) {
     const innerPath = error.path ?? "";
     const combined = innerPath.startsWith("[")
       ? `${segment}${innerPath}`

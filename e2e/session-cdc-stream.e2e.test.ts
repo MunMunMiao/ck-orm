@@ -103,15 +103,15 @@ describeE2E("ck-orm e2e session, cdc and stream", function describeSessionCdcAnd
     const sessionId = createSessionId();
 
     const scopedRows = await db.runInSession(
-      async (sessionDb) => {
-        await sessionDb.command(`CREATE TEMPORARY TABLE ${manualTempTable} (user_id Int32)`);
-        sessionDb.registerTempTable(manualTempTable);
-        await sessionDb.insertJsonEachRow(manualTempTable, [{ user_id: 1 }, { user_id: 2 }]);
+      async (session) => {
+        await session.command(`CREATE TEMPORARY TABLE ${manualTempTable} (user_id Int32)`);
+        session.registerTempTable(manualTempTable);
+        await session.insertJsonEachRow(manualTempTable, [{ user_id: 1 }, { user_id: 2 }]);
 
-        await sessionDb.createTemporaryTable(helperTempScope);
-        await sessionDb.insertJsonEachRow(helperTempScope, [{ user_id: 3 }]);
+        await session.createTemporaryTable(helperTempScope);
+        await session.insertJsonEachRow(helperTempScope, [{ user_id: 3 }]);
 
-        return await sessionDb
+        return await session
           .select({
             id: users.id,
             name: users.name,

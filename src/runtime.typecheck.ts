@@ -19,14 +19,14 @@ const db = clickhouseClient({
 });
 
 db.runInSession(
-  async (sessionDb: Session) => {
-    await sessionDb.createTemporaryTable(tempUsers, { mode: "if_not_exists" });
-    await sessionDb.createTemporaryTableRaw("tmp_users_raw", "(id Int32)");
-    await sessionDb.execute("select 1", {
+  async (session: Session) => {
+    await session.createTemporaryTable(tempUsers, { mode: "if_not_exists" });
+    await session.createTemporaryTableRaw("tmp_users_raw", "(id Int32)");
+    await session.execute("select 1", {
       session_timeout: 30,
       session_check: 1,
     });
-    return await sessionDb.execute("select 1", {
+    return await session.execute("select 1", {
       session_timeout: 30,
       session_check: 1,
     });
@@ -36,6 +36,19 @@ db.runInSession(
     session_check: 1,
   },
 );
+
+db.runInSession(async (session: Session) => {
+  await session.runInSession(async (nestedSession) => {
+    const outerId: string = session.sessionId;
+    const innerId: string = nestedSession.sessionId;
+    void outerId;
+    void innerId;
+  });
+
+  await session.withSettings({ max_threads: 2 }).runInSession(async (nestedSession) => {
+    await nestedSession.command("select 1");
+  });
+});
 
 db.insert(users).values({
   id: 1,

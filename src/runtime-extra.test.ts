@@ -309,11 +309,11 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
     });
 
     await db.runInSession(
-      async (sessionDb) => {
-        for await (const _row of sessionDb.select().from(users).iterator()) {
+      async (session) => {
+        for await (const _row of session.select().from(users).iterator()) {
           break;
         }
-        await sessionDb.command("select 1");
+        await session.command("select 1");
         return undefined;
       },
       { session_id: "session_iter" },
@@ -678,8 +678,8 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
     expect(roleArrayUrl?.searchParams.getAll("role")).toEqual(["analyst", "auditor"]);
 
     const sessionRows = await db.runInSession(
-      async (sessionDb) => {
-        return await takeAsync(sessionDb.stream("select 1 as id, 'alice' as name"), 1);
+      async (session) => {
+        return await takeAsync(session.stream("select 1 as id, 'alice' as name"), 1);
       },
       { session_id: "raw_stream_session" },
     );
@@ -688,6 +688,40 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
     expect(urls.some((url) => url.searchParams.get("session_id") === "raw_stream_session")).toBe(true);
     expect(urls.some((url) => url.searchParams.get("max_threads") === "1")).toBe(true);
     expect(bodies.some((body) => body.includes("insert into `users`"))).toBe(true);
+  });
+
+  it("returns undecoded rows from executeCompiled and iteratorCompiled when compiled selection is empty", async function testCompiledRawSelectionBypass() {
+    globalThis.fetch = mock(async (_input: string | URL | Request, init?: RequestInit) => {
+      const bodyText = await readBodyText(init?.body);
+      if (typeof bodyText === "string" && bodyText.includes("FORMAT JSONEachRow")) {
+        return new Response('{"raw":"first"}\n{"raw":"second"}\n', {
+          status: 200,
+        });
+      }
+
+      return new Response(
+        JSON.stringify({
+          data: [{ raw: "row" }],
+        }),
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch;
+
+    const db = clickhouseClient({
+      databaseUrl: "http://localhost:8123/demo_store",
+      schema: { users },
+    });
+
+    const compiled = {
+      kind: "compiled-query" as const,
+      mode: "query" as const,
+      statement: "select 1 as raw",
+      params: {},
+      selection: [],
+    };
+
+    expect(await db.executeCompiled(compiled)).toEqual([{ raw: "row" }]);
+    expect(await takeAsync(db.iteratorCompiled(compiled), 2)).toEqual([{ raw: "first" }, { raw: "second" }]);
   });
 
   it("rejects user query_params that try to use internal orm_param prefixes", async function testReservedQueryParamPrefix() {
@@ -755,22 +789,21 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
       schema: { users },
     });
 
+    let nestedSessionId = "";
+
     await db.runInSession(
-      async (sessionDb) => {
-        sessionDb.registerTempTable("tmp_users");
-        sessionDb.registerTempTable("tmp_users");
+      async (session) => {
+        session.registerTempTable("tmp_users");
+        session.registerTempTable("tmp_users");
 
-        await sessionDb.runInSession(
-          async (nestedDb) => {
-            expect(nestedDb.sessionId).toBe(sessionDb.sessionId);
-            return undefined;
-          },
-          {
-            session_id: sessionDb.sessionId,
-          },
-        );
+        await session.runInSession(async (nestedSession) => {
+          nestedSessionId = nestedSession.sessionId;
+          expect(nestedSession.sessionId).not.toBe(session.sessionId);
+          await nestedSession.command("select 42");
+          return undefined;
+        });
 
-        const childDb = sessionDb.withSettings({
+        const childDb = session.withSettings({
           max_threads: 2,
         });
 
@@ -785,9 +818,9 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
 
     await expectRejectsWithClickhouseError(
       db.runInSession(
-        async (sessionDb) => {
-          await sessionDb.runInSession(async () => undefined, {
-            session_id: "another_session",
+        async (session) => {
+          await session.runInSession(async () => undefined, {
+            session_id: session.sessionId,
           });
         },
         { session_id: "outer_session" },
@@ -795,12 +828,15 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
       {
         kind: "session",
         executionState: "not_sent",
-        message: "[ck-orm] Nested runInSession() cannot create a different session",
+        message: "[ck-orm] Nested runInSession() cannot reuse an existing session_id",
       },
     );
 
     expect(urls.some((url) => url.searchParams.get("session_id") === "nested_same_session")).toBe(true);
+    expect(nestedSessionId).not.toBe("");
+    expect(urls.some((url) => url.searchParams.get("session_id") === nestedSessionId)).toBe(true);
     expect(urls.some((url) => url.searchParams.get("max_threads") === "2")).toBe(true);
+    expect(bodies).toContain("select 42");
     expect(bodies).toContain("select 1");
     expect(bodies).toContain("DROP TABLE IF EXISTS `tmp_users`");
   });
@@ -831,6 +867,345 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("rejects nested runInSession session_check=1 before sending requests", async function testNestedRunInSessionSessionCheckBoundary() {
+    const fetchSpy = mock(async () => {
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    });
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    const db = clickhouseClient({
+      databaseUrl: "http://localhost:8123/demo_store",
+      schema: { users },
+    });
+
+    await expectRejectsWithClickhouseError(
+      db.runInSession(
+        async (session) => {
+          await session.runInSession(async () => undefined, {
+            session_id: "child_session",
+            session_check: 1,
+          });
+        },
+        { session_id: "outer_session" },
+      ),
+      {
+        kind: "client_validation",
+        executionState: "not_sent",
+        message:
+          "[ck-orm] Nested runInSession() cannot use session_check=1 because child sessions are created by ck-orm",
+      },
+    );
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects createTemporaryTableRaw outside runInSession", async function testCreateTemporaryTableRawOutsideSession() {
+    globalThis.fetch = mock(async () => new Response("", { status: 200 })) as unknown as typeof fetch;
+
+    const db = clickhouseClient({
+      databaseUrl: "http://localhost:8123/demo_store",
+      schema: { users },
+    });
+
+    await expectRejectsWithClickhouseError(db.createTemporaryTableRaw("tmp_outside", "(id Int32)"), {
+      kind: "session",
+      executionState: "not_sent",
+      message: "[ck-orm] createTemporaryTableRaw() requires runInSession()",
+    });
+  });
+
+  it("creates distinct ids across outer child grandchild sessions", async function testNestedSessionIdsAcrossThreeLevels() {
+    const urls: URL[] = [];
+    const bodies: string[] = [];
+
+    globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" || input instanceof URL ? String(input) : input.url);
+      urls.push(url);
+
+      const bodyText = await readBodyText(init?.body);
+      if (typeof bodyText === "string") {
+        bodies.push(bodyText);
+      }
+
+      return new Response("", { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const db = clickhouseClient({
+      databaseUrl: "http://localhost:8123/demo_store",
+      schema: { users },
+    });
+
+    const sessionIds: string[] = [];
+
+    await db.runInSession(async (session) => {
+      sessionIds.push(session.sessionId);
+      await session.command("select 1");
+
+      await session.runInSession(async (nestedSession) => {
+        sessionIds.push(nestedSession.sessionId);
+        await nestedSession.command("select 2");
+
+        await nestedSession.runInSession(async (grandchildSession) => {
+          sessionIds.push(grandchildSession.sessionId);
+          await grandchildSession.command("select 3");
+        });
+      });
+    });
+
+    expect(new Set(sessionIds).size).toBe(3);
+    expect(sessionIds.every((value) => value !== "")).toBe(true);
+    expect(sessionIds.every((value) => urls.some((url) => url.searchParams.get("session_id") === value))).toBe(true);
+    expect(bodies).toContain("select 1");
+    expect(bodies).toContain("select 2");
+    expect(bodies).toContain("select 3");
+  });
+
+  it("rejects grandchild reuse of any ancestor session_id before sending requests", async function testGrandchildAncestorReuseBoundary() {
+    const fetchSpy = mock(async () => {
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    });
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    const db = clickhouseClient({
+      databaseUrl: "http://localhost:8123/demo_store",
+      schema: { users },
+    });
+
+    await expectRejectsWithClickhouseError(
+      db.runInSession(
+        async (outer) => {
+          await outer.runInSession(async (child) => {
+            await child.runInSession(async () => undefined, {
+              session_id: outer.sessionId,
+            });
+          });
+        },
+        { session_id: "outer_grandchild_reuse" },
+      ),
+      {
+        kind: "session",
+        executionState: "not_sent",
+        message: "[ck-orm] Nested runInSession() cannot reuse an existing session_id",
+      },
+    );
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("isolates sibling child sessions and cleans child temp tables before outer continues", async function testSiblingSessionIsolation() {
+    const tempTablesBySession = new Map<string, Set<string>>();
+
+    const getTempTables = (sessionId: string) => {
+      let tables = tempTablesBySession.get(sessionId);
+      if (!tables) {
+        tables = new Set<string>();
+        tempTablesBySession.set(sessionId, tables);
+      }
+      return tables;
+    };
+
+    globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" || input instanceof URL ? String(input) : input.url);
+      const sessionId = url.searchParams.get("session_id") ?? "";
+      const bodyText = await readBodyText(init?.body);
+
+      if (typeof bodyText !== "string") {
+        return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      }
+
+      const createMatch = bodyText.match(/^CREATE TEMPORARY TABLE `([^`]+)`/i);
+      if (createMatch) {
+        getTempTables(sessionId).add(createMatch[1]);
+        return new Response("", { status: 200 });
+      }
+
+      const dropMatch = bodyText.match(/^DROP TABLE IF EXISTS `([^`]+)`/i);
+      if (dropMatch) {
+        getTempTables(sessionId).delete(dropMatch[1]);
+        return new Response("", { status: 200 });
+      }
+
+      const tableMatch = bodyText.match(/from `([^`]+)`/i);
+      if (tableMatch) {
+        const tableName = tableMatch[1];
+        if (!getTempTables(sessionId).has(tableName)) {
+          return new Response(`Code: 60. DB::Exception: Table ${tableName} missing (UNKNOWN_TABLE)`, {
+            status: 404,
+          });
+        }
+
+        return new Response(JSON.stringify({ data: [{ id: 1 }] }), {
+          status: 200,
+        });
+      }
+
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const db = clickhouseClient({
+      databaseUrl: "http://localhost:8123/demo_store",
+      schema: { users },
+    });
+
+    const outerScope = chTable("tmp_outer_scope", { id: int32() });
+    const childOneScope = chTable("tmp_child_one_scope", { id: int32() });
+    const childTwoScope = chTable("tmp_child_two_scope", { id: int32() });
+
+    await db.runInSession(async (session) => {
+      await session.createTemporaryTable(outerScope);
+      expect(await session.execute(sql`select * from ${sql.identifier(outerScope.originalName)}`)).toEqual([{ id: 1 }]);
+
+      await session.runInSession(async (childOne) => {
+        await expectRejectsWithClickhouseError(
+          childOne.execute(sql`select * from ${sql.identifier(outerScope.originalName)}`),
+          {
+            kind: "request_failed",
+            executionState: "rejected",
+          },
+        );
+
+        await childOne.createTemporaryTable(childOneScope);
+        expect(await childOne.execute(sql`select * from ${sql.identifier(childOneScope.originalName)}`)).toEqual([
+          { id: 1 },
+        ]);
+      });
+
+      await expectRejectsWithClickhouseError(
+        session.execute(sql`select * from ${sql.identifier(childOneScope.originalName)}`),
+        {
+          kind: "request_failed",
+          executionState: "rejected",
+        },
+      );
+      expect(await session.execute(sql`select * from ${sql.identifier(outerScope.originalName)}`)).toEqual([{ id: 1 }]);
+
+      await session.runInSession(async (childTwo) => {
+        await expectRejectsWithClickhouseError(
+          childTwo.execute(sql`select * from ${sql.identifier(outerScope.originalName)}`),
+          {
+            kind: "request_failed",
+            executionState: "rejected",
+          },
+        );
+        await expectRejectsWithClickhouseError(
+          childTwo.execute(sql`select * from ${sql.identifier(childOneScope.originalName)}`),
+          {
+            kind: "request_failed",
+            executionState: "rejected",
+          },
+        );
+
+        await childTwo.createTemporaryTable(childTwoScope);
+        expect(await childTwo.execute(sql`select * from ${sql.identifier(childTwoScope.originalName)}`)).toEqual([
+          { id: 1 },
+        ]);
+      });
+
+      expect(await session.execute(sql`select * from ${sql.identifier(outerScope.originalName)}`)).toEqual([{ id: 1 }]);
+    });
+  });
+
+  it("inherits settings into nested child sessions without mutating the parent session identity", async function testNestedWithSettingsInheritance() {
+    const requests: Array<{ body: string; url: URL }> = [];
+
+    globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" || input instanceof URL ? String(input) : input.url);
+      const bodyText = await readBodyText(init?.body);
+
+      if (typeof bodyText === "string") {
+        requests.push({ body: bodyText, url });
+      }
+
+      return new Response("", { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const db = clickhouseClient({
+      databaseUrl: "http://localhost:8123/demo_store",
+      schema: { users },
+    });
+
+    let outerSessionId = "";
+    let childSessionId = "";
+
+    await db.runInSession(async (session) => {
+      outerSessionId = session.sessionId;
+
+      await session.withSettings({ max_threads: 2 }).runInSession(async (childSession) => {
+        childSessionId = childSession.sessionId;
+        await childSession.command("select 1");
+      });
+
+      await session.command("select 2");
+    });
+
+    expect(childSessionId).not.toBe("");
+    expect(childSessionId).not.toBe(outerSessionId);
+
+    const childRequest = requests.find(({ body }) => body === "select 1");
+    expect(childRequest?.url.searchParams.get("session_id")).toBe(childSessionId);
+    expect(childRequest?.url.searchParams.get("max_threads")).toBe("2");
+
+    const outerRequest = requests.find(({ body }) => body === "select 2");
+    expect(outerRequest?.url.searchParams.get("session_id")).toBe(outerSessionId);
+    expect(outerRequest?.url.searchParams.get("max_threads")).toBeNull();
+  });
+
+  it("keeps raw streams quiet when ignore_error_response is enabled on an error response", async function testStreamIgnoreErrorResponse() {
+    globalThis.fetch = mock(
+      async () => new Response("Code: 60. DB::Exception: missing table (UNKNOWN_TABLE)", { status: 404 }),
+    ) as unknown as typeof fetch;
+
+    const db = clickhouseClient({
+      databaseUrl: "http://localhost:8123/demo_store",
+      schema: { users },
+    });
+
+    expect(
+      await takeAsync(
+        db.stream("select * from missing_table", {
+          ignore_error_response: true,
+        }),
+        1,
+      ),
+    ).toEqual([]);
+  });
+
+  it("sets duplex=half when streaming async inserts in runtimes that support stream uploads", async function testAsyncInsertDuplexMode() {
+    const duplexValues: Array<RequestInit["duplex"] | undefined> = [];
+
+    class StreamUploadRequest {
+      readonly headers: Headers;
+
+      constructor(_input: string | URL | Request, init?: RequestInit & { duplex?: "half" }) {
+        if (init?.body instanceof ReadableStream && init.duplex !== "half") {
+          throw new TypeError("stream uploads require duplex=half in this runtime");
+        }
+        this.headers = new Headers(init?.headers);
+        duplexValues.push(init?.duplex);
+      }
+    }
+
+    globalThis.Request = StreamUploadRequest as unknown as typeof Request;
+    globalThis.fetch = mock(async (_input: string | URL | Request, _init?: RequestInit) => {
+      return new Response("", { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const db = clickhouseClient({
+      databaseUrl: "http://localhost:8123/demo_store",
+      schema: { users },
+    });
+
+    await db.insertJsonEachRow(
+      users,
+      (async function* rows() {
+        yield { id: 1, name: "alice" };
+      })(),
+      { query_id: "duplex_insert" },
+    );
+
+    expect(duplexValues).toContain("half");
+  });
+
   it("allows createTemporaryTableRaw definitions with semicolons inside string literals", async function testCreateTemporaryTableLiteralSemicolon() {
     const bodies: string[] = [];
 
@@ -847,8 +1222,8 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
       schema: { users },
     });
 
-    await db.runInSession(async (sessionDb) => {
-      await sessionDb.createTemporaryTableRaw("tmp_scope", "(note String DEFAULT ';')");
+    await db.runInSession(async (session) => {
+      await session.createTemporaryTableRaw("tmp_scope", "(note String DEFAULT ';')");
     });
 
     expect(bodies).toContain("CREATE TEMPORARY TABLE `tmp_scope` (note String DEFAULT ';')");
@@ -864,8 +1239,8 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
     });
 
     await expectRejectsWithClickhouseError(
-      db.runInSession(async (sessionDb) => {
-        await sessionDb.createTemporaryTableRaw("tmp_evil", "(id Int32); DROP TABLE users");
+      db.runInSession(async (session) => {
+        await session.createTemporaryTableRaw("tmp_evil", "(id Int32); DROP TABLE users");
       }),
       {
         kind: "client_validation",
@@ -893,8 +1268,8 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
     });
 
     await expectRejectsWithClickhouseError(
-      db.runInSession(async (sessionDb) => {
-        await sessionDb.createTemporaryTableRaw("evil`; DROP", "(id Int32)");
+      db.runInSession(async (session) => {
+        await session.createTemporaryTableRaw("evil`; DROP", "(id Int32)");
       }),
       {
         kind: "client_validation",
@@ -928,9 +1303,9 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
     const tmpB = chTable("tmp_b", { id: int32() });
 
     await expectRejectsWithClickhouseError(
-      db.runInSession(async (sessionDb) => {
-        await sessionDb.createTemporaryTable(tmpA);
-        await sessionDb.createTemporaryTable(tmpB);
+      db.runInSession(async (session) => {
+        await session.createTemporaryTable(tmpA);
+        await session.createTemporaryTable(tmpB);
       }),
       {
         kind: "session",
@@ -962,8 +1337,8 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
 
     await expect(
       db.runInSession(
-        async (sessionDb) => {
-          await sessionDb.createTemporaryTable(tmpHook);
+        async (session) => {
+          await session.createTemporaryTable(tmpHook);
           throw userError;
         },
         {

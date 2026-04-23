@@ -50,6 +50,8 @@ export {
   type ClickHouseOrmErrorKind,
   type ClickHouseOrmExecutionState,
   DecodeError,
+  isClickHouseOrmError,
+  isDecodeError,
 } from "./errors";
 export { fn, tableFn } from "./functions";
 export type {

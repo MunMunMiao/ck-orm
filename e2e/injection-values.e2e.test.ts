@@ -90,16 +90,16 @@ describeE2E("ck-orm e2e injection values", function describeInjectionValues() {
       name: string(),
     });
 
-    await db.runInSession(async (sessionDb) => {
-      await sessionDb.createTemporaryTable(patternScope);
-      await sessionDb.insertJsonEachRow(patternScope, [
+    await db.runInSession(async (session) => {
+      await session.createTemporaryTable(patternScope);
+      await session.insertJsonEachRow(patternScope, [
         { name: "price100%real" },
         { name: "price100Xreal" },
         { name: "tag_user_1" },
         { name: "tag_userA1" },
       ]);
 
-      const unescapedPercentRows = await sessionDb
+      const unescapedPercentRows = await session
         .select({
           name: patternScope.name,
         })
@@ -108,7 +108,7 @@ describeE2E("ck-orm e2e injection values", function describeInjectionValues() {
         .orderBy(patternScope.name);
       expect(unescapedPercentRows.map((row) => row.name)).toEqual(["price100%real", "price100Xreal"]);
 
-      const escapedPercentRows = await sessionDb
+      const escapedPercentRows = await session
         .select({
           name: patternScope.name,
         })
@@ -117,7 +117,7 @@ describeE2E("ck-orm e2e injection values", function describeInjectionValues() {
         .orderBy(patternScope.name);
       expect(escapedPercentRows.map((row) => row.name)).toEqual(["price100%real"]);
 
-      const unescapedUnderscoreRows = await sessionDb
+      const unescapedUnderscoreRows = await session
         .select({
           name: patternScope.name,
         })
@@ -126,7 +126,7 @@ describeE2E("ck-orm e2e injection values", function describeInjectionValues() {
         .orderBy(patternScope.name);
       expect(unescapedUnderscoreRows.map((row) => row.name)).toEqual(["tag_userA1", "tag_user_1"]);
 
-      const escapedUnderscoreRows = await sessionDb
+      const escapedUnderscoreRows = await session
         .select({
           name: patternScope.name,
         })

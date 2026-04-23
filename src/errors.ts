@@ -8,28 +8,66 @@ export type ClickHouseOrmErrorKind =
   | "aborted"
   | "session";
 
-type ClickHouseOrmErrorOptions = {
-  readonly kind: ClickHouseOrmErrorKind;
-  readonly executionState: ClickHouseOrmExecutionState;
-  readonly cause?: unknown;
-  readonly queryId?: string;
-  readonly sessionId?: string;
-  readonly httpStatus?: number;
-  readonly clickhouseCode?: number;
-  readonly clickhouseName?: string;
-  readonly responseText?: string;
-  readonly requestTimeoutMs?: number;
+type ClickHouseOrmErrorFields = {
+  kind: ClickHouseOrmErrorKind;
+  executionState: ClickHouseOrmExecutionState;
+  cause?: unknown;
+  queryId?: string;
+  sessionId?: string;
+  httpStatus?: number;
+  clickhouseCode?: number;
+  clickhouseName?: string;
+  responseText?: string;
+  requestTimeoutMs?: number;
 };
+
+type DecodeErrorFields = ClickHouseOrmErrorFields & {
+  readonly kind: "decode";
+  readonly executionState: "rejected";
+  readonly causeValue: unknown;
+  readonly path?: string;
+};
+
+type ClickHouseOrmErrorOptions = Readonly<ClickHouseOrmErrorFields>;
 
 type RequestFailedErrorOptions = Omit<ClickHouseOrmErrorOptions, "kind" | "executionState"> & {
   readonly executionState?: ClickHouseOrmExecutionState;
 };
 
+export type ClickHouseOrmError = Error & ClickHouseOrmErrorFields;
+
+export type DecodeError = ClickHouseOrmError & DecodeErrorFields;
+
 const CK_ORM_PREFIX = "[ck-orm] ";
+const UNKNOWN_EXECUTION_STATE_SUFFIX = "; execution state is unknown";
+
+const isRecord = (value: unknown): value is Record<string, unknown> => {
+  return typeof value === "object" && value !== null;
+};
+
 const withCkOrmPrefix = (message: string) =>
   message.startsWith(CK_ORM_PREFIX) ? message : `${CK_ORM_PREFIX}${message}`;
 
-const UNKNOWN_EXECUTION_STATE_SUFFIX = "; execution state is unknown";
+const createBaseError = <TError extends ClickHouseOrmError | DecodeError>(
+  name: "ClickHouseOrmError" | "DecodeError",
+  message: string,
+  fields: Record<string, unknown>,
+): TError => {
+  const error = new Error(message) as TError;
+  error.name = name;
+  Object.assign(error, fields);
+  return error;
+};
+
+const cloneError = <TError extends ClickHouseOrmError>(error: TError): TError => {
+  const cloned = new Error(error.message) as TError;
+  cloned.name = error.name;
+  if (error.stack) {
+    cloned.stack = error.stack;
+  }
+  Object.assign(cloned, error);
+  return cloned;
+};
 
 const make = (
   kind: ClickHouseOrmErrorKind,
@@ -45,7 +83,8 @@ const make = (
       ? `${message}${UNKNOWN_EXECUTION_STATE_SUFFIX}`
       : message,
   );
-  return new ClickHouseOrmError(finalMessage, {
+
+  return createBaseError<ClickHouseOrmError>("ClickHouseOrmError", finalMessage, {
     kind,
     executionState,
     ...rest,
@@ -57,57 +96,36 @@ const extractClickHouseName = (text: string) => {
   return matches.at(-1)?.[1];
 };
 
-export class ClickHouseOrmError extends Error {
-  kind: ClickHouseOrmErrorKind;
-  executionState: ClickHouseOrmExecutionState;
-  override cause?: unknown;
-  queryId?: string;
-  sessionId?: string;
-  httpStatus?: number;
-  clickhouseCode?: number;
-  clickhouseName?: string;
-  responseText?: string;
-  requestTimeoutMs?: number;
+export const isClickHouseOrmError = (error: unknown): error is ClickHouseOrmError => {
+  return (
+    error instanceof Error &&
+    isRecord(error) &&
+    typeof error.kind === "string" &&
+    typeof error.executionState === "string"
+  );
+};
 
-  constructor(message: string, options: ClickHouseOrmErrorOptions) {
-    super(message);
-    this.name = "ClickHouseOrmError";
-    this.kind = options.kind;
-    this.executionState = options.executionState;
-    this.cause = options.cause;
-    this.queryId = options.queryId;
-    this.sessionId = options.sessionId;
-    this.httpStatus = options.httpStatus;
-    this.clickhouseCode = options.clickhouseCode;
-    this.clickhouseName = options.clickhouseName;
-    this.responseText = options.responseText;
-    this.requestTimeoutMs = options.requestTimeoutMs;
-  }
+export const isDecodeError = (error: unknown): error is DecodeError => {
+  return isClickHouseOrmError(error) && error.kind === "decode" && "causeValue" in error;
+};
+
+export function ClickHouseOrmError() {
+  /* compatibility guard */
 }
+Object.defineProperty(ClickHouseOrmError, Symbol.hasInstance, {
+  value(value: unknown) {
+    return isClickHouseOrmError(value);
+  },
+});
 
-export class DecodeError extends ClickHouseOrmError {
-  readonly causeValue: unknown;
-  /** Dot/bracket-style path describing where decode failed inside a row, e.g. `items[2].user.email`. */
-  readonly path?: string;
-
-  constructor(
-    message: string,
-    causeValue: unknown,
-    options?: Omit<ClickHouseOrmErrorOptions, "kind" | "executionState" | "cause"> & {
-      readonly path?: string;
-    },
-  ) {
-    super(withCkOrmPrefix(options?.path ? `${message} (at ${options.path})` : message), {
-      kind: "decode",
-      executionState: "rejected",
-      cause: causeValue,
-      ...options,
-    });
-    this.name = "DecodeError";
-    this.causeValue = causeValue;
-    this.path = options?.path;
-  }
+export function DecodeError() {
+  /* compatibility guard */
 }
+Object.defineProperty(DecodeError, Symbol.hasInstance, {
+  value(value: unknown) {
+    return isDecodeError(value);
+  },
+});
 
 export const withClickHouseOrmErrorContext = <TError extends ClickHouseOrmError>(
   error: TError,
@@ -116,13 +134,16 @@ export const withClickHouseOrmErrorContext = <TError extends ClickHouseOrmError>
     readonly sessionId?: string;
   },
 ) => {
-  if (!error.queryId) {
-    error.queryId = context.queryId;
+  const nextQueryId = error.queryId ?? context.queryId;
+  const nextSessionId = error.sessionId ?? context.sessionId;
+  if (nextQueryId === error.queryId && nextSessionId === error.sessionId) {
+    return error;
   }
-  if (!error.sessionId) {
-    error.sessionId = context.sessionId;
-  }
-  return error;
+
+  const cloned = cloneError(error);
+  cloned.queryId = nextQueryId;
+  cloned.sessionId = nextSessionId;
+  return cloned;
 };
 
 export const createClientValidationError = (
@@ -136,7 +157,7 @@ export const createSessionError = (
 ) => make("session", "not_sent", message, options);
 
 /**
- * Constructs a {@link DecodeError} (a `ClickHouseOrmError` of kind `"decode"`)
+ * Constructs a `DecodeError` (a `ClickHouseOrmError` of kind `"decode"`)
  * for when a value coming back from ClickHouse cannot be coerced into its
  * TypeScript representation. Pass `path` for container columns so the message
  * pinpoints the failing field, e.g. `items[2].user.email`.
@@ -148,7 +169,21 @@ export const createDecodeError = (
     readonly path?: string;
   },
 ) => {
-  return new DecodeError(message, causeValue, options);
+  const finalMessage = withCkOrmPrefix(options?.path ? `${message} (at ${options.path})` : message);
+  return createBaseError<DecodeError>("DecodeError", finalMessage, {
+    kind: "decode",
+    executionState: "rejected",
+    cause: causeValue,
+    causeValue,
+    path: options?.path,
+    queryId: options?.queryId,
+    sessionId: options?.sessionId,
+    httpStatus: options?.httpStatus,
+    clickhouseCode: options?.clickhouseCode,
+    clickhouseName: options?.clickhouseName,
+    responseText: options?.responseText,
+    requestTimeoutMs: options?.requestTimeoutMs,
+  });
 };
 
 export const createRequestFailedError = (options: RequestFailedErrorOptions) => {
@@ -211,7 +246,7 @@ export const normalizeTransportError = (
     readonly sessionId?: string;
   },
 ) => {
-  if (error instanceof ClickHouseOrmError) {
+  if (isClickHouseOrmError(error)) {
     return withClickHouseOrmErrorContext(error, context);
   }
 

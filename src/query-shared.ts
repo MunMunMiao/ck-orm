@@ -1,4 +1,4 @@
-import { DecodeError } from "./errors";
+import { createDecodeError } from "./errors";
 import { allocParam, type BuildContext, inferPrimitiveType, isSqlFragment, type SQLFragment, sql } from "./sql";
 
 export { DecodeError } from "./errors";
@@ -165,9 +165,8 @@ export const decodeValue = <TData>(decoder: Decoder<TData>, value: unknown, colu
   try {
     return decoder(value);
   } catch (error) {
-    throw new DecodeError(`Failed to decode column: ${columnName}`, {
-      error,
-      value,
+    throw createDecodeError(`Failed to decode column: ${columnName}`, value, {
+      responseText: error instanceof Error ? error.message : String(error),
     });
   }
 };

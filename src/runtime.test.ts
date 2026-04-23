@@ -279,10 +279,10 @@ describe("ck-orm runtime", function describeClickHouseOrmRuntime() {
 
     await expect(
       db.runInSession(
-        async (sessionDb) => {
-          await sessionDb.createTemporaryTable(tmpScope);
-          sessionDb.registerTempTable("tmp_manual");
-          await sessionDb.command("select 1");
+        async (session) => {
+          await session.createTemporaryTable(tmpScope);
+          session.registerTempTable("tmp_manual");
+          await session.command("select 1");
           throw new Error("boom");
         },
         { session_id: "session_under_test" },

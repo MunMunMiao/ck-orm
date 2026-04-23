@@ -114,7 +114,7 @@ export interface Session<TSchema = unknown, TJoinUseNulls extends 0 | 1 = 1>
   createTemporaryTable(table: AnyTable, options?: CreateTemporaryTableOptions): Promise<void>;
   createTemporaryTableRaw(name: string, definition: string): Promise<void>;
   runInSession<TResult>(
-    callback: (db: Session<TSchema, TJoinUseNulls>) => Promise<TResult>,
+    callback: (session: Session<TSchema, TJoinUseNulls>) => Promise<TResult>,
     options?: SessionRunInSessionOptions,
   ): Promise<TResult>;
 }
@@ -196,8 +196,9 @@ export type ResolveJoinUseNulls<TSettings, TFallback extends 0 | 1> = TSettings 
 
 export interface SessionContext {
   readonly sessionId: string;
+  readonly ancestorSessionIds: readonly string[];
   readonly tempTables: string[];
-  queue: Promise<void>;
+  queueTail: Promise<void>;
 }
 
 export type RawQueryInput = string | SQLFragment;

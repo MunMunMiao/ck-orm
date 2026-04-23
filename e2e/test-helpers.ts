@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test";
-import { ClickHouseOrmError, eq, sql } from "./ck-orm";
+import { ClickHouseOrmError, eq, isClickHouseOrmError, isDecodeError, sql } from "./ck-orm";
 import { createAdminDb, createE2EDb, datasetCounts, hasE2EEnv, users } from "./shared";
 
 export const describeE2E = hasE2EEnv ? describe : describe.skip;
@@ -30,6 +30,8 @@ export const takeAsync = async <TValue>(iterable: AsyncIterable<TValue>, limit: 
 
 export const expectClickhouseError = (error: unknown, expected: Record<string, unknown>) => {
   expect(error).toBeInstanceOf(ClickHouseOrmError);
+  expect(isClickHouseOrmError(error)).toBe(true);
+  expect(isDecodeError(error)).toBe(expected.kind === "decode");
   for (const [key, value] of Object.entries(expected)) {
     expect((error as Record<string, unknown>)[key]).toEqual(value);
   }

@@ -33,6 +33,13 @@ describe("ck-orm public api", function describePublicApi() {
     // @ts-expect-error Grouping should remain private to clause internals
     expectType<RootApi.Grouping | undefined>(undefined);
   });
+
+  it("keeps error guards and compatibility exports available from the package root", function testRootErrorExports() {
+    expect("ClickHouseOrmError" in publicApi).toBe(true);
+    expect("DecodeError" in publicApi).toBe(true);
+    expect("isClickHouseOrmError" in publicApi).toBe(true);
+    expect("isDecodeError" in publicApi).toBe(true);
+  });
 });
 
 function expectType<TValue>(_value: TValue) {}

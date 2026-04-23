@@ -63,9 +63,9 @@ describeE2E(
     it("rejects multi-statement createTemporaryTableRaw() definitions and leaves base tables untouched", async function testCreateTemporaryTableDefinitionValidation() {
       const db = createE2EDb();
 
-      await db.runInSession(async (sessionDb) => {
+      await db.runInSession(async (session) => {
         await expectClientValidationNotSent(
-          sessionDb.createTemporaryTableRaw("tmp_evil", "(id Int32); DROP TABLE users"),
+          session.createTemporaryTableRaw("tmp_evil", "(id Int32); DROP TABLE users"),
           {
             message:
               "[ck-orm] createTemporaryTableRaw() definition must not contain multiple statements; use developer-controlled SQL only",
@@ -80,11 +80,11 @@ describeE2E(
       const db = createE2EDb();
       const tempTable = createTempTableName("tmp_literal_semicolon");
 
-      await db.runInSession(async (sessionDb) => {
-        await sessionDb.createTemporaryTableRaw(tempTable, "(id Int32, note String DEFAULT ';')");
-        await sessionDb.command(sql`INSERT INTO ${sql.identifier(tempTable)} (id) VALUES (${1})`);
+      await db.runInSession(async (session) => {
+        await session.createTemporaryTableRaw(tempTable, "(id Int32, note String DEFAULT ';')");
+        await session.command(sql`INSERT INTO ${sql.identifier(tempTable)} (id) VALUES (${1})`);
 
-        const rows = await sessionDb.execute(sql`
+        const rows = await session.execute(sql`
         select note
         from ${sql.identifier(tempTable)}
         where id = ${1}
@@ -118,12 +118,12 @@ describeE2E(
         expect(rows).toEqual([{ id: 1 }]);
 
         const sessionRows = await db.runInSession(
-          async (sessionDb) => {
+          async (session) => {
             const sessionTempTable = createTempTableName("tmp_run_in_session_opts");
             const sessionTempScope = chTable(sessionTempTable, { id: int32() });
-            await sessionDb.createTemporaryTable(sessionTempScope);
-            await sessionDb.command(sql`INSERT INTO ${sql.identifier(sessionTempTable)} (id) VALUES (${2})`);
-            return await sessionDb.execute(sql`SELECT id FROM ${sql.identifier(sessionTempTable)} ORDER BY id`);
+            await session.createTemporaryTable(sessionTempScope);
+            await session.command(sql`INSERT INTO ${sql.identifier(sessionTempTable)} (id) VALUES (${2})`);
+            return await session.execute(sql`SELECT id FROM ${sql.identifier(sessionTempTable)} ORDER BY id`);
           },
           {
             session_timeout: 30,
@@ -169,11 +169,11 @@ describeE2E(
         label: string().aliasExpr(sql`concat('n=', toString(base))`),
       });
 
-      await db.runInSession(async (sessionDb) => {
-        await sessionDb.createTemporaryTable(structuredScope);
-        await sessionDb.insertJsonEachRow(structuredScope, [{ base: 7 }]);
+      await db.runInSession(async (session) => {
+        await session.createTemporaryTable(structuredScope);
+        await session.insertJsonEachRow(structuredScope, [{ base: 7 }]);
 
-        const rows = await sessionDb
+        const rows = await session
           .select({
             base: structuredScope.base,
             note: structuredScope.note,

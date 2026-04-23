@@ -53,9 +53,9 @@ describeE2E("ck-orm e2e error contracts", function describeErrorContracts() {
     const tempScope = chTable(tempTable, { id: int32() });
 
     await db.runInSession(
-      async (sessionDb) => {
-        await sessionDb.createTemporaryTable(tempScope);
-        await sessionDb.insertJsonEachRow(tempScope, [{ id: 1 }]);
+      async (session) => {
+        await session.createTemporaryTable(tempScope);
+        await session.insertJsonEachRow(tempScope, [{ id: 1 }]);
       },
       { session_id: sessionId },
     );

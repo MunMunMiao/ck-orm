@@ -11,8 +11,8 @@ import {
   emitQuerySuccess,
   resolveSqlOperation,
 } from "../observability";
-import type { CompiledQuery } from "../query";
-import { createSessionId, decodeRow, QueryClient } from "../query";
+import type { CompiledQuery, QueryClient } from "../query";
+import { createQueryClient, createSessionId, decodeRow } from "../query";
 import type { QueryParams } from "../query-shared";
 import type { AnyTable } from "../schema";
 import { buildCreateTemporaryTableStatement } from "../schema-ddl";
@@ -37,83 +37,85 @@ import {
 } from "./config";
 import type { FetchClickHouseTransport } from "./transport";
 
-export class ClickHouseOrmClient<TSchema, TJoinUseNulls extends 0 | 1 = 1>
-  extends QueryClient<TSchema, TJoinUseNulls>
-  implements Session<TSchema, TJoinUseNulls>
-{
+export interface ClickHouseOrmClient<TSchema, TJoinUseNulls extends 0 | 1 = 1>
+  extends QueryClient<TSchema, TJoinUseNulls>,
+    Session<TSchema, TJoinUseNulls> {
   readonly $client: FetchClickHouseTransport;
-  readonly sessionId: string;
-  private readonly defaultOptions: ClickHouseBaseQueryOptions;
-  private readonly instrumentations: readonly ClickHouseOrmInstrumentation[];
-  private readonly sessionContext?: SessionContext;
+  executeCompiled<TResult extends Record<string, unknown>>(
+    compiled: CompiledQuery<TResult>,
+    options?: ClickHouseBaseQueryOptions,
+  ): Promise<TResult[]>;
+  iteratorCompiled<TResult extends Record<string, unknown>>(
+    compiled: CompiledQuery<TResult>,
+    options?: ClickHouseBaseQueryOptions,
+  ): AsyncGenerator<TResult, void, unknown>;
+}
 
-  constructor(config: {
-    schema: TSchema;
-    client: FetchClickHouseTransport;
-    defaultOptions?: ClickHouseBaseQueryOptions;
-    instrumentations?: readonly ClickHouseOrmInstrumentation[];
-    sessionContext?: SessionContext;
-    joinUseNulls?: TJoinUseNulls;
-    runner: {
-      execute<TResult extends Record<string, unknown>>(
-        compiled: CompiledQuery<TResult>,
-        options?: ClickHouseBaseQueryOptions,
-      ): Promise<TResult[]>;
-      iterator<TResult extends Record<string, unknown>>(
-        compiled: CompiledQuery<TResult>,
-        options?: ClickHouseBaseQueryOptions,
-      ): AsyncGenerator<TResult, void, unknown>;
-      command(compiled: CompiledQuery<Record<string, unknown>>, options?: ClickHouseBaseQueryOptions): Promise<void>;
-    };
-  }) {
-    super({
-      schema: config.schema,
-      runner: config.runner,
-      joinUseNulls: config.joinUseNulls,
-    });
-    this.$client = config.client;
-    this.defaultOptions = config.defaultOptions ?? {};
-    this.instrumentations = config.instrumentations ?? [];
-    this.sessionContext = config.sessionContext;
-    this.sessionId = config.defaultOptions?.session_id ?? "";
-  }
+type ClickHouseOrmClientConfig<TSchema, TJoinUseNulls extends 0 | 1> = {
+  schema: TSchema;
+  client: FetchClickHouseTransport;
+  defaultOptions?: ClickHouseBaseQueryOptions;
+  instrumentations?: readonly ClickHouseOrmInstrumentation[];
+  sessionContext?: SessionContext;
+  joinUseNulls?: TJoinUseNulls;
+};
 
-  private mergeOptions<TOptions extends ClickHouseBaseQueryOptions>(
+const createSessionContext = (sessionId: string, ancestorSessionIds: readonly string[]): SessionContext => ({
+  sessionId,
+  ancestorSessionIds,
+  tempTables: [],
+  queueTail: Promise.resolve(),
+});
+
+export const createClickHouseOrmClient = <TSchema, TJoinUseNulls extends 0 | 1 = 1>(
+  config: ClickHouseOrmClientConfig<TSchema, TJoinUseNulls>,
+): ClickHouseOrmClient<TSchema, TJoinUseNulls> => {
+  const defaultOptions = config.defaultOptions ?? {};
+  const instrumentations = config.instrumentations ?? [];
+  const sessionContext = config.sessionContext;
+  const joinUseNulls = (config.joinUseNulls ?? 1) as TJoinUseNulls;
+
+  let client!: ClickHouseOrmClient<TSchema, TJoinUseNulls>;
+  const runner = createOrmRunner(() => client);
+  const queryClient = createQueryClient<TSchema, TJoinUseNulls>({
+    schema: config.schema,
+    runner,
+    joinUseNulls,
+  });
+
+  const mergeOptions = <TOptions extends ClickHouseBaseQueryOptions>(
     options?: TOptions,
-  ): ClickHouseBaseQueryOptions & TOptions {
+  ): ClickHouseBaseQueryOptions & TOptions => {
     const queryParams = {
-      ...(this.defaultOptions.query_params ?? {}),
+      ...(defaultOptions.query_params ?? {}),
       ...(options?.query_params ?? {}),
     };
     mergeQueryParams(undefined, queryParams);
 
     return {
-      ...this.defaultOptions,
+      ...defaultOptions,
       ...options,
-      clickhouse_settings: mergeClickHouseSettings(
-        this.defaultOptions.clickhouse_settings,
-        options?.clickhouse_settings,
-      ),
+      clickhouse_settings: mergeClickHouseSettings(defaultOptions.clickhouse_settings, options?.clickhouse_settings),
       http_headers: {
-        ...(this.defaultOptions.http_headers ?? {}),
+        ...(defaultOptions.http_headers ?? {}),
         ...(options?.http_headers ?? {}),
       },
       query_params: queryParams,
     } as ClickHouseBaseQueryOptions & TOptions;
-  }
+  };
 
-  private async runSerial<TValue>(operation: () => Promise<TValue>): Promise<TValue> {
-    if (!this.sessionContext) {
+  const runSerial = async <TValue>(operation: () => Promise<TValue>): Promise<TValue> => {
+    if (!sessionContext) {
       return operation();
     }
 
-    const next = this.sessionContext.queue.then(operation, operation);
+    const next = sessionContext.queueTail.then(operation, operation);
     const clearQueue = () => undefined;
-    this.sessionContext.queue = next.then(clearQueue, clearQueue);
+    sessionContext.queueTail = next.then(clearQueue, clearQueue);
     return next;
-  }
+  };
 
-  private buildQueryEvent(input: {
+  const buildQueryEvent = (input: {
     mode: ClickHouseOrmQueryMode;
     queryKind: ClickHouseOrmQueryKind;
     statement: string;
@@ -121,7 +123,7 @@ export class ClickHouseOrmClient<TSchema, TJoinUseNulls extends 0 | 1 = 1>
     options: ClickHouseBaseQueryOptions;
     format?: ClickHouseQueryOptions["format"] | ClickHouseStreamOptions["format"];
     tableName?: string;
-  }) {
+  }) => {
     return createQueryEvent({
       mode: input.mode,
       queryKind: input.queryKind,
@@ -134,9 +136,9 @@ export class ClickHouseOrmClient<TSchema, TJoinUseNulls extends 0 | 1 = 1>
       startedAt: Date.now(),
       tableName: input.tableName,
     });
-  }
+  };
 
-  private async executeWithInstrumentation<TValue>(
+  const executeWithInstrumentation = async <TValue>(
     input: {
       mode: ClickHouseOrmQueryMode;
       queryKind: ClickHouseOrmQueryKind;
@@ -147,24 +149,24 @@ export class ClickHouseOrmClient<TSchema, TJoinUseNulls extends 0 | 1 = 1>
       operation?: string;
     },
     operation: () => Promise<{ value: TValue; rowCount?: number }>,
-  ): Promise<TValue> {
-    const event = this.buildQueryEvent(input);
-    await emitQueryStart(this.instrumentations, event);
+  ): Promise<TValue> => {
+    const event = buildQueryEvent(input);
+    await emitQueryStart(instrumentations, event);
 
     try {
       const result = await operation();
       await emitQuerySuccess(
-        this.instrumentations,
+        instrumentations,
         createQuerySuccessEvent(event, Date.now() - event.startedAt, result.rowCount),
       );
       return result.value;
     } catch (error) {
-      await emitQueryError(this.instrumentations, createQueryErrorEvent(event, error, Date.now() - event.startedAt));
+      await emitQueryError(instrumentations, createQueryErrorEvent(event, error, Date.now() - event.startedAt));
       throw error;
     }
-  }
+  };
 
-  private async *streamWithInstrumentation<TValue>(
+  const streamWithInstrumentation = async function* <TValue>(
     input: {
       mode: ClickHouseOrmQueryMode;
       queryKind: ClickHouseOrmQueryKind;
@@ -176,8 +178,8 @@ export class ClickHouseOrmClient<TSchema, TJoinUseNulls extends 0 | 1 = 1>
     },
     operation: () => AsyncGenerator<TValue, void, unknown>,
   ): AsyncGenerator<TValue, void, unknown> {
-    const event = this.buildQueryEvent(input);
-    await emitQueryStart(this.instrumentations, event);
+    const event = buildQueryEvent(input);
+    await emitQueryStart(instrumentations, event);
 
     let rowCount = 0;
     let caughtError: unknown;
@@ -193,28 +195,28 @@ export class ClickHouseOrmClient<TSchema, TJoinUseNulls extends 0 | 1 = 1>
     } finally {
       const durationMs = Date.now() - event.startedAt;
       if (caughtError === undefined) {
-        await emitQuerySuccess(this.instrumentations, createQuerySuccessEvent(event, durationMs, rowCount));
+        await emitQuerySuccess(instrumentations, createQuerySuccessEvent(event, durationMs, rowCount));
       } else {
-        await emitQueryError(this.instrumentations, createQueryErrorEvent(event, caughtError, durationMs, rowCount));
+        await emitQueryError(instrumentations, createQueryErrorEvent(event, caughtError, durationMs, rowCount));
       }
     }
-  }
+  };
 
-  private async *runLockedStream<TValue>(
+  const runLockedStream = async function* <TValue>(
     operation: () => AsyncGenerator<TValue, void, unknown>,
   ): AsyncGenerator<TValue, void, unknown> {
-    if (!this.sessionContext) {
+    if (!sessionContext) {
       yield* operation();
       return;
     }
 
-    const previous = this.sessionContext.queue;
+    const previous = sessionContext.queueTail;
     let release!: () => void;
     const next = new Promise<void>((resolve) => {
       release = resolve;
     });
     const continueWithNext = () => next;
-    this.sessionContext.queue = previous.then(continueWithNext, continueWithNext);
+    sessionContext.queueTail = previous.then(continueWithNext, continueWithNext);
     await previous;
 
     try {
@@ -222,24 +224,24 @@ export class ClickHouseOrmClient<TSchema, TJoinUseNulls extends 0 | 1 = 1>
     } finally {
       release();
     }
-  }
+  };
 
-  async executeCompiled<TResult extends Record<string, unknown>>(
+  const executeCompiled = async <TResult extends Record<string, unknown>>(
     compiled: CompiledQuery<TResult>,
     options?: ClickHouseBaseQueryOptions,
-  ): Promise<TResult[]> {
-    const baseOptions = this.mergeOptions(options);
+  ): Promise<TResult[]> => {
+    const baseOptions = mergeOptions(options);
     const mergedOptions = {
       ...baseOptions,
       clickhouse_settings: mergeClickHouseSettings(baseOptions.clickhouse_settings, compiled.forcedSettings),
     };
     const queryConfig = buildQueryParams(compiled, mergedOptions);
 
-    return this.runSerial(async () => {
+    return runSerial(async () => {
       const operation = resolveSqlOperation(queryConfig.query);
       const mode = compiled.mode === "command" ? (operation === "INSERT" ? "insert" : "command") : "query";
 
-      return this.executeWithInstrumentation(
+      return executeWithInstrumentation(
         {
           mode,
           queryKind: "typed",
@@ -250,11 +252,11 @@ export class ClickHouseOrmClient<TSchema, TJoinUseNulls extends 0 | 1 = 1>
         },
         async () => {
           if (compiled.mode === "command") {
-            await this.$client.command(queryConfig.query, mergedOptions, queryConfig.query_params);
+            await config.client.command(queryConfig.query, mergedOptions, queryConfig.query_params);
             return { value: [] as TResult[] };
           }
 
-          const rows = await this.$client.queryJSON<Record<string, unknown>>({
+          const rows = await config.client.queryJSON<Record<string, unknown>>({
             statement: queryConfig.query,
             query_params: queryConfig.query_params,
             options: mergedOptions,
@@ -275,42 +277,15 @@ export class ClickHouseOrmClient<TSchema, TJoinUseNulls extends 0 | 1 = 1>
         },
       );
     });
-  }
+  };
 
-  async *iteratorCompiled<TResult extends Record<string, unknown>>(
-    compiled: CompiledQuery<TResult>,
-    options?: ClickHouseBaseQueryOptions,
-  ): AsyncGenerator<TResult, void, unknown> {
-    const baseOptions = this.mergeOptions(options);
-    const mergedOptions = {
-      ...baseOptions,
-      clickhouse_settings: mergeClickHouseSettings(baseOptions.clickhouse_settings, compiled.forcedSettings),
-    };
-    const queryConfig = buildQueryParams(compiled, mergedOptions);
-    const operation = resolveSqlOperation(queryConfig.query);
-
-    yield* this.runLockedStream(() =>
-      this.streamWithInstrumentation(
-        {
-          mode: "stream",
-          queryKind: "typed",
-          statement: queryConfig.query,
-          options: mergedOptions,
-          format: "JSONEachRow",
-          operation,
-        },
-        () => this.createStreamGenerator(compiled, queryConfig.query, queryConfig.query_params, mergedOptions),
-      ),
-    );
-  }
-
-  private async *createStreamGenerator<TResult extends Record<string, unknown>>(
+  const createStreamGenerator = async function* <TResult extends Record<string, unknown>>(
     compiled: CompiledQuery<TResult>,
     query: string,
     queryParams: QueryParams,
     options: ClickHouseBaseQueryOptions,
   ): AsyncGenerator<TResult, void, unknown> {
-    for await (const row of this.$client.queryStream<Record<string, unknown>>({
+    for await (const row of config.client.queryStream<Record<string, unknown>>({
       statement: query,
       query_params: queryParams,
       options,
@@ -322,335 +297,356 @@ export class ClickHouseOrmClient<TSchema, TJoinUseNulls extends 0 | 1 = 1>
       }
       yield decodeRow<TResult>(row, compiled.selection);
     }
-  }
+  };
 
-  async execute(query: RawQueryInput, options?: ClickHouseQueryOptions) {
-    const mergedOptions = this.mergeOptions(options);
-    const normalized = normalizeRawQueryInput(query);
-    return this.runSerial(async () => {
-      return this.executeWithInstrumentation(
-        {
-          mode: "query",
-          queryKind: "raw",
-          statement: normalized.query,
-          options: mergedOptions,
-          format: "JSON",
-        },
-        async () => {
-          const rows = await this.$client.queryJSON<Record<string, unknown>>({
-            statement: normalized.query,
-            query_params: mergeQueryParams(normalized.params, mergedOptions.query_params),
-            options: mergedOptions,
-            format: mergedOptions.format ?? "JSON",
-          });
-          return {
-            value: rows,
-            rowCount: rows.length,
-          };
-        },
-      );
-    });
-  }
-
-  async *stream(
-    query: RawQueryInput,
-    options?: ClickHouseStreamOptions,
-  ): AsyncGenerator<Record<string, unknown>, void, unknown> {
-    const mergedOptions = this.mergeOptions(options);
-    const normalized = normalizeRawQueryInput(query);
-
-    const createGenerator = async function* (client: FetchClickHouseTransport) {
-      yield* client.queryStream<Record<string, unknown>>({
-        statement: normalized.query,
-        query_params: mergeQueryParams(normalized.params, mergedOptions.query_params),
-        options: mergedOptions,
-        format: mergedOptions.format ?? "JSONEachRow",
-      });
+  const iteratorCompiled = async function* <TResult extends Record<string, unknown>>(
+    compiled: CompiledQuery<TResult>,
+    options?: ClickHouseBaseQueryOptions,
+  ): AsyncGenerator<TResult, void, unknown> {
+    const baseOptions = mergeOptions(options);
+    const mergedOptions = {
+      ...baseOptions,
+      clickhouse_settings: mergeClickHouseSettings(baseOptions.clickhouse_settings, compiled.forcedSettings),
     };
+    const queryConfig = buildQueryParams(compiled, mergedOptions);
+    const operation = resolveSqlOperation(queryConfig.query);
 
-    yield* this.runLockedStream(() =>
-      this.streamWithInstrumentation(
+    yield* runLockedStream(() =>
+      streamWithInstrumentation(
         {
           mode: "stream",
-          queryKind: "raw",
-          statement: normalized.query,
-          options: mergedOptions,
-          format: mergedOptions.format ?? "JSONEachRow",
-        },
-        () => createGenerator(this.$client),
-      ),
-    );
-  }
-
-  async command(query: RawQueryInput, options?: ClickHouseBaseQueryOptions): Promise<void> {
-    const mergedOptions = this.mergeOptions(options);
-    const normalized = normalizeRawQueryInput(query);
-    await this.runSerial(async () => {
-      await this.executeWithInstrumentation(
-        {
-          mode: "command",
-          queryKind: "raw",
-          statement: normalized.query,
-          options: mergedOptions,
-        },
-        async () => {
-          await this.$client.command(
-            normalized.query,
-            mergedOptions,
-            mergeQueryParams(normalized.params, mergedOptions.query_params),
-          );
-          return { value: undefined };
-        },
-      );
-    });
-  }
-
-  async ping(options?: ClickHouseEndpointOptions): Promise<void> {
-    const mergedOptions = this.mergeOptions(options);
-    await this.runSerial(async () => {
-      await this.executeWithInstrumentation(
-        {
-          mode: "command",
-          queryKind: "raw",
-          statement: "GET /ping",
-          options: mergedOptions,
-          operation: "PING",
-        },
-        async () => {
-          await this.$client.endpoint("/ping", mergedOptions, "GET");
-          return { value: undefined };
-        },
-      );
-    });
-  }
-
-  async replicasStatus(options?: ClickHouseEndpointOptions): Promise<void> {
-    const mergedOptions = this.mergeOptions(options);
-    await this.runSerial(async () => {
-      await this.executeWithInstrumentation(
-        {
-          mode: "command",
-          queryKind: "raw",
-          statement: "GET /replicas_status",
-          options: mergedOptions,
-          operation: "REPLICAS_STATUS",
-        },
-        async () => {
-          await this.$client.endpoint("/replicas_status", mergedOptions, "GET");
-          return { value: undefined };
-        },
-      );
-    });
-  }
-
-  private createChild<TNextJoinUseNulls extends 0 | 1 = TJoinUseNulls>(
-    defaultOptions: ClickHouseBaseQueryOptions,
-    sessionContext?: SessionContext,
-    joinUseNulls?: TNextJoinUseNulls,
-  ) {
-    let child: ClickHouseOrmClient<TSchema, TNextJoinUseNulls>;
-    const runner = createOrmRunner(() => child);
-    child = new ClickHouseOrmClient<TSchema, TNextJoinUseNulls>({
-      client: this.$client,
-      defaultOptions,
-      instrumentations: this.instrumentations,
-      schema: this.schema,
-      sessionContext,
-      joinUseNulls: joinUseNulls ?? (this.joinUseNulls as unknown as TNextJoinUseNulls),
-      runner,
-    });
-    return child;
-  }
-
-  withSettings<TSettings extends Record<string, string | number | boolean>>(
-    settings: TSettings,
-  ): ClickHouseOrmClient<TSchema, ResolveJoinUseNulls<TSettings, TJoinUseNulls>> {
-    const nextJoinUseNulls = (
-      settings.join_use_nulls === 0 || settings.join_use_nulls === 1 ? settings.join_use_nulls : this.joinUseNulls
-    ) as ResolveJoinUseNulls<TSettings, TJoinUseNulls>;
-
-    return this.createChild(
-      {
-        ...this.defaultOptions,
-        clickhouse_settings: {
-          ...(this.defaultOptions.clickhouse_settings ?? {}),
-          ...settings,
-        },
-      },
-      this.sessionContext,
-      nextJoinUseNulls,
-    );
-  }
-
-  async insertJsonEachRow(
-    table: AnyTable | string,
-    rows: readonly Record<string, unknown>[] | AsyncIterable<Record<string, unknown>>,
-    options?: ClickHouseBaseQueryOptions,
-  ) {
-    const mergedOptions = this.mergeOptions(options);
-    const tableName = toClickHouseTableName(table);
-    const tableIdentifier = compileSql(sql.identifier({ table: tableName })).query;
-    return this.runSerial(async () => {
-      await this.executeWithInstrumentation(
-        {
-          mode: "insert",
-          queryKind: "raw",
-          statement: `INSERT INTO ${tableIdentifier} FORMAT JSONEachRow`,
+          queryKind: "typed",
+          statement: queryConfig.query,
           options: mergedOptions,
           format: "JSONEachRow",
-          operation: "INSERT",
-          tableName,
+          operation,
         },
-        async () => {
-          await this.$client.insertJsonEachRow(tableName, rows, mergedOptions);
-          return {
-            value: undefined,
-            rowCount: Array.isArray(rows) ? rows.length : undefined,
-          };
-        },
-      );
+        () => createStreamGenerator(compiled, queryConfig.query, queryConfig.query_params, mergedOptions),
+      ),
+    );
+  };
+
+  const createChild = <TNextJoinUseNulls extends 0 | 1 = TJoinUseNulls>(
+    nextDefaultOptions: ClickHouseBaseQueryOptions,
+    nextSessionContext?: SessionContext,
+    nextJoinUseNulls?: TNextJoinUseNulls,
+  ) => {
+    return createClickHouseOrmClient<TSchema, TNextJoinUseNulls>({
+      client: config.client,
+      defaultOptions: nextDefaultOptions,
+      instrumentations,
+      schema: config.schema,
+      sessionContext: nextSessionContext,
+      joinUseNulls: nextJoinUseNulls ?? (joinUseNulls as unknown as TNextJoinUseNulls),
     });
-  }
+  };
 
-  registerTempTable(name: string) {
-    if (!this.sessionContext) {
-      throw createSessionError("registerTempTable() requires runInSession()");
-    }
-    // Validate before mutating cleanup state so invalid names cannot mask the original error later.
-    this.renderTempTableIdentifier(name);
-    this.registerValidatedTempTable(name);
-  }
-
-  private renderTempTableIdentifier(name: string) {
+  const renderTempTableIdentifier = (name: string) => {
     return compileSql(sql.identifier({ table: name })).query;
-  }
+  };
 
-  private registerValidatedTempTable(name: string) {
-    if (!this.sessionContext) {
-      throw createSessionError("registerTempTable() requires runInSession()");
+  const registerValidatedTempTable = (name: string) => {
+    const tempTables = sessionContext?.tempTables ?? [];
+    if (!tempTables.includes(name)) {
+      tempTables.push(name);
     }
-    if (!this.sessionContext.tempTables.includes(name)) {
-      this.sessionContext.tempTables.push(name);
-    }
-  }
+  };
 
-  async createTemporaryTable(table: AnyTable, options?: CreateTemporaryTableOptions) {
-    if (!this.sessionContext) {
-      throw createSessionError("createTemporaryTable() requires runInSession()");
-    }
-    const statement = buildCreateTemporaryTableStatement(table, options?.mode);
-    this.registerValidatedTempTable(table.originalName);
-    await this.command(statement);
-  }
+  client = {
+    ...queryClient,
+    $client: config.client,
+    sessionId: defaultOptions.session_id ?? "",
 
-  /**
-   * Creates a CLICKHOUSE TEMPORARY TABLE inside the current session from a raw
-   * developer-controlled definition string.
-   *
-   * @param name Table name (validated via {@link sql.identifier}).
-   * @param definition Raw column/engine definition appended after the table identifier
-   *   (e.g. `"(id UInt64) ENGINE = Memory"`). This value is **embedded into the SQL
-   *   statement verbatim** — same trust model as {@link sql.raw}. **Never pass
-   *   user-controlled input here.** Only a single top-level statement is allowed;
-   *   trailing top-level `;` are stripped, but multiple statements are rejected.
-   *   This is not a substitute for treating the argument as developer-controlled.
-   */
-  async createTemporaryTableRaw(name: string, definition: string) {
-    if (!this.sessionContext) {
-      throw createSessionError("createTemporaryTableRaw() requires runInSession()");
-    }
-    const normalizedDefinition = normalizeSingleStatementSql(
-      definition,
-      "createTemporaryTableRaw() definition must not contain multiple statements; use developer-controlled SQL only",
-    );
-    const identifier = this.renderTempTableIdentifier(name);
-    this.registerValidatedTempTable(name);
-    await this.command(`CREATE TEMPORARY TABLE ${identifier} ${normalizedDefinition}`);
-  }
+    async execute(query: RawQueryInput, options?: ClickHouseQueryOptions) {
+      const mergedOptions = mergeOptions(options);
+      const normalized = normalizeRawQueryInput(query);
+      return runSerial(async () => {
+        return executeWithInstrumentation(
+          {
+            mode: "query",
+            queryKind: "raw",
+            statement: normalized.query,
+            options: mergedOptions,
+            format: "JSON",
+          },
+          async () => {
+            const rows = await config.client.queryJSON<Record<string, unknown>>({
+              statement: normalized.query,
+              query_params: mergeQueryParams(normalized.params, mergedOptions.query_params),
+              options: mergedOptions,
+              format: mergedOptions.format ?? "JSON",
+            });
+            return {
+              value: rows,
+              rowCount: rows.length,
+            };
+          },
+        );
+      });
+    },
 
-  async runInSession<TResult>(
-    callback: (db: Session<TSchema, TJoinUseNulls>) => Promise<TResult>,
-    options?: SessionRunInSessionOptions,
-  ): Promise<TResult> {
-    if (this.sessionContext) {
-      if (options?.session_id && options.session_id !== this.defaultOptions.session_id) {
-        throw createSessionError("Nested runInSession() cannot create a different session");
-      }
-      return callback(this);
-    }
+    async *stream(
+      query: RawQueryInput,
+      options?: ClickHouseStreamOptions,
+    ): AsyncGenerator<Record<string, unknown>, void, unknown> {
+      const mergedOptions = mergeOptions(options);
+      const normalized = normalizeRawQueryInput(query);
 
-    if (options?.session_check === 1 && !options.session_id) {
-      throw createClientValidationError(
-        "runInSession() requires an explicit session_id when session_check=1 because ClickHouse only validates existing sessions",
-      );
-    }
-
-    const sessionId = options?.session_id ?? createSessionId();
-    const sessionContext: SessionContext = {
-      sessionId,
-      tempTables: [],
-      queue: Promise.resolve(),
-    };
-    const sessionClient = this.createChild(
-      {
-        ...this.defaultOptions,
-        ...options,
-        session_id: sessionId,
-      },
-      sessionContext,
-    );
-
-    let userError: unknown;
-    let userErrored = false;
-    let result: TResult | undefined;
-    try {
-      result = await callback(sessionClient);
-    } catch (error) {
-      userError = error;
-      userErrored = true;
-    }
-
-    const cleanupErrors: unknown[] = [];
-    for (const tableName of [...sessionContext.tempTables].reverse()) {
-      try {
-        const identifier = this.renderTempTableIdentifier(tableName);
-        await sessionClient.command(`DROP TABLE IF EXISTS ${identifier}`, {
-          ignore_error_response: true,
+      const createGenerator = async function* () {
+        yield* config.client.queryStream<Record<string, unknown>>({
+          statement: normalized.query,
+          query_params: mergeQueryParams(normalized.params, mergedOptions.query_params),
+          options: mergedOptions,
+          format: mergedOptions.format ?? "JSONEachRow",
         });
-      } catch (error) {
-        cleanupErrors.push(error);
-      }
-    }
+      };
 
-    if (cleanupErrors.length > 0) {
-      if (options?.onCleanupError) {
-        try {
-          options.onCleanupError(cleanupErrors, { sessionId });
-        } catch {
-          // The user-provided hook must not be allowed to mask either the
-          // user's error or the act of returning the user's result.
-        }
-      } else if (!userErrored) {
-        const cause =
-          cleanupErrors.length === 1
-            ? cleanupErrors[0]
-            : new AggregateError(cleanupErrors, "Multiple temporary-table cleanups failed");
-        throw createSessionError(
-          `Failed to drop ${cleanupErrors.length} temporary table${cleanupErrors.length === 1 ? "" : "s"} for session ${sessionId}`,
-          { cause },
+      yield* runLockedStream(() =>
+        streamWithInstrumentation(
+          {
+            mode: "stream",
+            queryKind: "raw",
+            statement: normalized.query,
+            options: mergedOptions,
+            format: mergedOptions.format ?? "JSONEachRow",
+          },
+          createGenerator,
+        ),
+      );
+    },
+
+    async command(query: RawQueryInput, options?: ClickHouseBaseQueryOptions): Promise<void> {
+      const mergedOptions = mergeOptions(options);
+      const normalized = normalizeRawQueryInput(query);
+      await runSerial(async () => {
+        await executeWithInstrumentation(
+          {
+            mode: "command",
+            queryKind: "raw",
+            statement: normalized.query,
+            options: mergedOptions,
+          },
+          async () => {
+            await config.client.command(
+              normalized.query,
+              mergedOptions,
+              mergeQueryParams(normalized.params, mergedOptions.query_params),
+            );
+            return { value: undefined };
+          },
+        );
+      });
+    },
+
+    async ping(options?: ClickHouseEndpointOptions): Promise<void> {
+      const mergedOptions = mergeOptions(options);
+      await runSerial(async () => {
+        await executeWithInstrumentation(
+          {
+            mode: "command",
+            queryKind: "raw",
+            statement: "GET /ping",
+            options: mergedOptions,
+            operation: "PING",
+          },
+          async () => {
+            await config.client.endpoint("/ping", mergedOptions, "GET");
+            return { value: undefined };
+          },
+        );
+      });
+    },
+
+    async replicasStatus(options?: ClickHouseEndpointOptions): Promise<void> {
+      const mergedOptions = mergeOptions(options);
+      await runSerial(async () => {
+        await executeWithInstrumentation(
+          {
+            mode: "command",
+            queryKind: "raw",
+            statement: "GET /replicas_status",
+            options: mergedOptions,
+            operation: "REPLICAS_STATUS",
+          },
+          async () => {
+            await config.client.endpoint("/replicas_status", mergedOptions, "GET");
+            return { value: undefined };
+          },
+        );
+      });
+    },
+
+    withSettings<TSettings extends Record<string, string | number | boolean>>(
+      settings: TSettings,
+    ): ClickHouseOrmClient<TSchema, ResolveJoinUseNulls<TSettings, TJoinUseNulls>> {
+      const nextJoinUseNulls = (
+        settings.join_use_nulls === 0 || settings.join_use_nulls === 1 ? settings.join_use_nulls : joinUseNulls
+      ) as ResolveJoinUseNulls<TSettings, TJoinUseNulls>;
+
+      return createChild(
+        {
+          ...defaultOptions,
+          clickhouse_settings: {
+            ...(defaultOptions.clickhouse_settings ?? {}),
+            ...settings,
+          },
+        },
+        sessionContext,
+        nextJoinUseNulls,
+      );
+    },
+
+    async insertJsonEachRow(
+      table: AnyTable | string,
+      rows: readonly Record<string, unknown>[] | AsyncIterable<Record<string, unknown>>,
+      options?: ClickHouseBaseQueryOptions,
+    ) {
+      const mergedOptions = mergeOptions(options);
+      const tableName = toClickHouseTableName(table);
+      const tableIdentifier = compileSql(sql.identifier({ table: tableName })).query;
+      return runSerial(async () => {
+        await executeWithInstrumentation(
+          {
+            mode: "insert",
+            queryKind: "raw",
+            statement: `INSERT INTO ${tableIdentifier} FORMAT JSONEachRow`,
+            options: mergedOptions,
+            format: "JSONEachRow",
+            operation: "INSERT",
+            tableName,
+          },
+          async () => {
+            await config.client.insertJsonEachRow(tableName, rows, mergedOptions);
+            return {
+              value: undefined,
+              rowCount: Array.isArray(rows) ? rows.length : undefined,
+            };
+          },
+        );
+      });
+    },
+
+    registerTempTable(name: string) {
+      if (!sessionContext) {
+        throw createSessionError("registerTempTable() requires runInSession()");
+      }
+      renderTempTableIdentifier(name);
+      registerValidatedTempTable(name);
+    },
+
+    async createTemporaryTable(table: AnyTable, options?: CreateTemporaryTableOptions) {
+      if (!sessionContext) {
+        throw createSessionError("createTemporaryTable() requires runInSession()");
+      }
+      const statement = buildCreateTemporaryTableStatement(table, options?.mode);
+      registerValidatedTempTable(table.originalName);
+      await client.command(statement);
+    },
+
+    async createTemporaryTableRaw(name: string, definition: string) {
+      if (!sessionContext) {
+        throw createSessionError("createTemporaryTableRaw() requires runInSession()");
+      }
+      const normalizedDefinition = normalizeSingleStatementSql(
+        definition,
+        "createTemporaryTableRaw() definition must not contain multiple statements; use developer-controlled SQL only",
+      );
+      const identifier = renderTempTableIdentifier(name);
+      registerValidatedTempTable(name);
+      await client.command(`CREATE TEMPORARY TABLE ${identifier} ${normalizedDefinition}`);
+    },
+
+    async runInSession<TResult>(
+      callback: (session: Session<TSchema, TJoinUseNulls>) => Promise<TResult>,
+      options?: SessionRunInSessionOptions,
+    ): Promise<TResult> {
+      if (sessionContext && options?.session_check === 1) {
+        throw createClientValidationError(
+          "Nested runInSession() cannot use session_check=1 because child sessions are created by ck-orm",
         );
       }
-    }
 
-    if (userErrored) {
-      throw userError;
-    }
-    return result as TResult;
-  }
-}
+      if (!sessionContext && options?.session_check === 1 && !options.session_id) {
+        throw createClientValidationError(
+          "runInSession() requires an explicit session_id when session_check=1 because ClickHouse only validates existing sessions",
+        );
+      }
+
+      const ancestorSessionIds = sessionContext
+        ? [sessionContext.sessionId, ...sessionContext.ancestorSessionIds]
+        : ([] as string[]);
+      const sessionId = options?.session_id ?? createSessionId();
+      if (ancestorSessionIds.includes(sessionId)) {
+        throw createSessionError("Nested runInSession() cannot reuse an existing session_id");
+      }
+
+      const childSessionContext = createSessionContext(sessionId, ancestorSessionIds);
+      const sessionClient = createChild(
+        {
+          ...defaultOptions,
+          ...options,
+          session_id: sessionId,
+        },
+        childSessionContext,
+      );
+
+      let userError: unknown;
+      let userErrored = false;
+      let result: TResult | undefined;
+      try {
+        result = await callback(sessionClient);
+      } catch (error) {
+        userError = error;
+        userErrored = true;
+      }
+
+      const cleanupErrors: unknown[] = [];
+      for (const tableName of [...childSessionContext.tempTables].reverse()) {
+        try {
+          const identifier = renderTempTableIdentifier(tableName);
+          await sessionClient.command(`DROP TABLE IF EXISTS ${identifier}`, {
+            ignore_error_response: true,
+          });
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+      }
+
+      if (cleanupErrors.length > 0) {
+        if (options?.onCleanupError) {
+          try {
+            options.onCleanupError(cleanupErrors, { sessionId });
+          } catch {
+            // The user-provided hook must not be allowed to mask either the
+            // user's error or the act of returning the user's result.
+          }
+        } else if (!userErrored) {
+          const cause =
+            cleanupErrors.length === 1
+              ? cleanupErrors[0]
+              : new AggregateError(cleanupErrors, "Multiple temporary-table cleanups failed");
+          throw createSessionError(
+            `Failed to drop ${cleanupErrors.length} temporary table${cleanupErrors.length === 1 ? "" : "s"} for session ${sessionId}`,
+            { cause },
+          );
+        }
+      }
+
+      if (userErrored) {
+        throw userError;
+      }
+      return result as TResult;
+    },
+
+    executeCompiled,
+    iteratorCompiled,
+  } as ClickHouseOrmClient<TSchema, TJoinUseNulls>;
+
+  return client;
+};
 
 export const createOrmRunner = <TSchema, TJoinUseNulls extends 0 | 1>(
-  resolveClient: () => ClickHouseOrmClient<TSchema, TJoinUseNulls>,
+  resolveClient: () => Pick<ClickHouseOrmClient<TSchema, TJoinUseNulls>, "executeCompiled" | "iteratorCompiled">,
 ) => ({
   execute<TResult extends Record<string, unknown>>(
     compiled: CompiledQuery<TResult>,

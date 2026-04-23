@@ -6,6 +6,7 @@ import {
   asc,
   between,
   compileQuerySymbol,
+  compileWithContextSymbol,
   createSessionId,
   decodeRow,
   desc,
@@ -17,6 +18,7 @@ import {
   has,
   hasAll,
   hasAny,
+  InsertBuilder,
   ilike,
   inArray,
   like,
@@ -30,6 +32,7 @@ import {
   notLike,
   or,
   QueryClient,
+  SelectBuilder,
 } from "./query";
 import type { Predicate } from "./query-shared";
 import { chTable } from "./schema";
@@ -632,6 +635,201 @@ describe("ck-orm query extras", function describeClickHouseOrmQueryExtras() {
       orm_param1: 5,
       orm_param2: 1,
     });
+  });
+
+  it("keeps select builder chains immutable across factory facades", function testBuilderImmutability() {
+    const db = new QueryClient({
+      schema: { orders },
+    });
+
+    const base = db
+      .select({
+        id: orders.id,
+      })
+      .from(orders);
+    const filtered = base.where(eq(orders.id, 1));
+    const limited = filtered.limit(5);
+
+    expect(filtered).not.toBe(base);
+    expect(limited).not.toBe(filtered);
+    expect(limited).not.toBe(base);
+
+    const baseCompiled = buildCompiled(base[compileQuerySymbol]());
+    const filteredCompiled = buildCompiled(filtered[compileQuerySymbol]());
+    const limitedCompiled = buildCompiled(limited[compileQuerySymbol]());
+
+    expect(normalizeSql(baseCompiled.query)).not.toContain("where");
+    expect(normalizeSql(baseCompiled.query)).not.toContain("limit");
+    expect(baseCompiled.params).toEqual({});
+
+    expect(normalizeSql(filteredCompiled.query)).toContain("where `orders`.`id` = {orm_param1:Int32}");
+    expect(normalizeSql(filteredCompiled.query)).not.toContain("limit");
+    expect(filteredCompiled.params).toEqual({
+      orm_param1: 1,
+    });
+
+    expect(normalizeSql(limitedCompiled.query)).toContain("where `orders`.`id` = {orm_param1:Int32}");
+    expect(normalizeSql(limitedCompiled.query)).toContain("limit {orm_param2:Int64}");
+    expect(limitedCompiled.params).toEqual({
+      orm_param1: 1,
+      orm_param2: 5,
+    });
+  });
+
+  it("keeps derived query clients and queries from mutating their source", function testDerivedClientImmutability() {
+    const db = new QueryClient({
+      schema: { orders },
+    });
+    const baseQuery = db
+      .select({
+        id: orders.id,
+      })
+      .from(orders);
+    const totals = db.$with("totals").as(
+      db
+        .select({
+          id: orders.id,
+        })
+        .from(orders),
+    );
+    const cteDb = db.with(totals);
+    const flaggedTotals = db.$with("flagged_totals").as(
+      db
+        .select({
+          id: orders.id,
+        })
+        .from(orders)
+        .where(gt(orders.amount, 10)),
+    );
+    const extendedDb = cteDb.with(flaggedTotals);
+
+    const baseCompiled = buildCompiled(baseQuery[compileQuerySymbol]());
+    const cteCompiled = buildCompiled(
+      cteDb
+        .select({
+          id: totals.id,
+        })
+        .from(totals)
+        [compileQuerySymbol](),
+    );
+    const extendedCompiled = buildCompiled(
+      extendedDb
+        .select({
+          id: totals.id,
+        })
+        .from(totals)
+        [compileQuerySymbol](),
+    );
+
+    expect(db.ctes).toEqual([]);
+    expect(cteDb.ctes).toHaveLength(1);
+    expect(extendedDb.ctes).toHaveLength(2);
+
+    expect(normalizeSql(baseCompiled.query)).not.toContain("with `totals`");
+    expect(baseCompiled.params).toEqual({});
+
+    expect(normalizeSql(cteCompiled.query)).toContain("with `totals` as");
+    expect(normalizeSql(cteCompiled.query)).not.toContain("`flagged_totals`");
+    expect(cteCompiled.params).toEqual({});
+
+    expect(normalizeSql(extendedCompiled.query)).toContain("with `totals` as");
+    expect(normalizeSql(extendedCompiled.query)).toContain("`flagged_totals`");
+    expect(extendedCompiled.params).toEqual({
+      orm_param1: 10,
+    });
+  });
+
+  it("covers compatibility factories and runner boundary errors", async function testCompatibilityFactoriesAndRunnerBoundaries() {
+    const selectBuilder = SelectBuilder<{ id: number }>({
+      selection: {
+        id: orders.id,
+      },
+    }).from(orders);
+    expect(() => selectBuilder.execute()).toThrow(
+      "execute() requires a clickhouseClient-backed query runner. Attach one with clickhouseClient(...).select(...) or clickhouseClient(...).from(table).",
+    );
+
+    const insertBuilder = InsertBuilder(orders).values({
+      id: 1,
+    });
+    expect(() => insertBuilder.execute()).toThrow(
+      "execute() requires a clickhouseClient-backed query runner. Attach one with clickhouseClient(...).select(...) or clickhouseClient(...).from(table).",
+    );
+
+    const countDb = new QueryClient({
+      schema: { orders },
+      runner: {
+        async execute() {
+          return [];
+        },
+        async *iterator() {},
+        async command() {
+          return undefined;
+        },
+      },
+    });
+
+    await expect(countDb.count(orders).execute()).rejects.toThrow("count() query did not return a result row");
+  });
+
+  it("covers join-only metadata, insert DEFAULT rendering and array-function raw expressions", function testMetadataDefaultsAndArrayArgs() {
+    const db = new QueryClient({
+      schema: { orders, taggedOrders },
+    });
+
+    const joinOnlyCompiled = db
+      .select({
+        id: taggedOrders.id,
+      })
+      .leftJoin(taggedOrders, expr(sql.raw("1"), { sqlType: "Bool", decoder: (value) => Boolean(value) }))
+      [compileWithContextSymbol]({
+        params: {},
+        nextParamIndex: 0,
+      });
+    expect(joinOnlyCompiled.metadata).toEqual({
+      joinCount: 1,
+    });
+
+    const defaultInsert = buildCompiled(
+      InsertBuilder(orders)
+        .values({
+          id: 3,
+        })
+        [compileQuerySymbol](),
+    );
+    expect(defaultInsert.query).toContain("values ({orm_param1:Int32}, DEFAULT, DEFAULT)");
+    expect(defaultInsert.params).toEqual({
+      orm_param1: 3,
+    });
+
+    const rawArrayPredicate = buildCompiled(
+      db
+        .select({
+          id: taggedOrders.id,
+        })
+        .from(taggedOrders)
+        .where(hasAny(taggedOrders.tags, expr(sql.raw("['vip','pro']"))))
+        [compileQuerySymbol](),
+    );
+    expect(normalizeSql(rawArrayPredicate.query)).toContain("hasAny(`tagged_orders`.`tags`, ['vip','pro'])");
+  });
+
+  it("keeps decodeRow resilient to unsupported nested selection paths", function testDecodeRowUnsupportedNestedPath() {
+    const decoded = decodeRow<Record<string, unknown>>(
+      {
+        root: "value",
+      },
+      [
+        {
+          key: "root.deep.leaf",
+          sqlAlias: "root",
+          decoder: (value) => value,
+          path: ["root", "deep", "leaf"] as unknown as [string, string],
+        },
+      ],
+    );
+
+    expect(decoded).toEqual({});
   });
 
   it("covers thenable helper catch/finally paths and invalid count decoding", async function testThenableCatchAndFinally() {

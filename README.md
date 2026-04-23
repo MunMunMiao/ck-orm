@@ -959,15 +959,15 @@ const tmpScope = chTable("tmp_scope", {
   user_id: string(),
 });
 
-await db.runInSession(async (sessionDb) => {
+await db.runInSession(async (session) => {
   // Temporary tables live only inside this Session and are cleaned up automatically.
-  await sessionDb.createTemporaryTable(tmpScope);
-  await sessionDb.insertJsonEachRow(tmpScope, [
+  await session.createTemporaryTable(tmpScope);
+  await session.insertJsonEachRow(tmpScope, [
     { user_id: "user_100" },
     { user_id: "user_200" },
   ]);
 
-  return sessionDb.execute(`
+  return session.execute(`
     SELECT user_id
     FROM order_reward_log
     WHERE user_id IN (SELECT user_id FROM tmp_scope)
@@ -982,8 +982,9 @@ await db.runInSession(async (sessionDb) => {
 - `createTemporaryTable()` consumes schema objects; temporary-table lifecycle stays on `Session`, not on the schema itself
 - `createTemporaryTableRaw()` is the trusted-only raw SQL escape hatch and rejects multi-statement definitions
 - `runInSession()` drops registered temporary tables when the callback finishes
-- nested `runInSession()` calls may reuse the same session
-- nested calls may not switch to a different `session_id`
+- nested `runInSession()` calls always create a new child session
+- nested calls may not reuse any active ancestor `session_id`
+- nested child sessions do not share temp tables or request queues with their parent
 
 ## Runtime methods
 

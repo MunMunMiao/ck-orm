@@ -122,11 +122,11 @@ describeE2E("ck-orm e2e count and dynamic filters", function describeCountAndDyn
       }),
     );
 
-    const result = await db.runInSession(async (sessionDb) => {
-      await sessionDb.createTemporaryTable(tempScope);
-      await sessionDb.insertJsonEachRow(tempScope, [{ user_id: 1 }, { user_id: 2 }, { user_id: 3 }]);
+    const result = await db.runInSession(async (session) => {
+      await session.createTemporaryTable(tempScope);
+      await session.insertJsonEachRow(tempScope, [{ user_id: 1 }, { user_id: 2 }, { user_id: 3 }]);
 
-      const scopedTempUsers = sessionDb
+      const scopedTempUsers = session
         .select({
           userId: tempScope.user_id,
         })
@@ -134,7 +134,7 @@ describeE2E("ck-orm e2e count and dynamic filters", function describeCountAndDyn
         .where(gt(tempScope.user_id, 1))
         .as("scoped_temp_users");
 
-      const activeRewards = sessionDb
+      const activeRewards = session
         .select({
           userId: rewardEvents.user_id,
         })
@@ -145,9 +145,9 @@ describeE2E("ck-orm e2e count and dynamic filters", function describeCountAndDyn
         .as("active_rewards");
 
       return {
-        tempTotal: await sessionDb.count(tempScope),
-        scopedTotal: await sessionDb.count(scopedTempUsers),
-        rewardTotal: await sessionDb.count(activeRewards),
+        tempTotal: await session.count(tempScope),
+        scopedTotal: await session.count(scopedTempUsers),
+        rewardTotal: await session.count(activeRewards),
       };
     });
 

@@ -271,11 +271,7 @@ const pushCompileState = (ctx: BuildContext, state: CompileState): void => {
 };
 
 const popCompileState = (ctx: BuildContext): void => {
-  const stack = compileStateStackStore.get(ctx);
-  if (!stack) {
-    return;
-  }
-
+  const stack = compileStateStackStore.get(ctx) ?? [];
   stack.pop();
   if (stack.length === 0) {
     compileStateStackStore.delete(ctx);
@@ -291,11 +287,7 @@ const collectForcedSettings = (ctx: BuildContext, settings: ForcedSettings | und
     return;
   }
 
-  const state = getActiveCompileState(ctx);
-  if (!state) {
-    return;
-  }
-
+  const state: CompileState = getActiveCompileState(ctx) ?? {};
   state.forcedSettings = mergeForcedSettings(state.forcedSettings, settings);
 };
 
@@ -470,14 +462,11 @@ const countDecoder: Decoder<number> = (value) => {
   const nextValue =
     typeof value === "number" ? value : typeof value === "bigint" ? Number(value) : Number(String(value));
 
-  if (Number.isNaN(nextValue)) {
-    throw createClientValidationError(
-      `Failed to decode count() result: ${String(value)}. Expected a numeric value or numeric string from ClickHouse; verify the count() query was not aliased to a non-numeric expression.`,
-      { cause: value },
-    );
-  }
-
-  return nextValue;
+  if (!Number.isNaN(nextValue)) return nextValue;
+  throw createClientValidationError(
+    `Failed to decode count() result: ${String(value)}. Expected a numeric value or numeric string from ClickHouse; verify the count() query was not aliased to a non-numeric expression.`,
+    { cause: value },
+  );
 };
 
 const buildLogicalPredicate = (operator: "and" | "or", predicates: readonly SqlPredicate[]): SqlPredicate => {
@@ -672,69 +661,154 @@ interface SelectBuilderConfig<_TResult extends Record<string, unknown>> {
   joinUseNulls?: JoinUseNulls;
 }
 
-export class SelectBuilder<
+type SelectBuilderState<
+  _TResult extends Record<string, unknown> = Record<string, unknown>,
+  TSelection extends SelectionRecord | undefined = SelectionRecord | undefined,
+  _TRootSource extends KnownQuerySource | undefined = KnownQuerySource | undefined,
+  _TJoinedSources extends JoinedSources = NoJoinedSources,
+  TJoinUseNulls extends JoinUseNulls = 1,
+> = {
+  readonly ctes: AnyCte[];
+  readonly runner?: PreparedRunner;
+  readonly selection?: TSelection;
+  readonly fromSource?: QuerySource;
+  readonly joins: JoinClause[];
+  readonly whereClause?: SqlPredicate;
+  readonly groupByItems: SqlSelection[];
+  readonly havingClause?: SqlPredicate;
+  readonly orderByItems: SqlOrder[];
+  readonly limitValue?: PrimitiveValue | Selection<unknown>;
+  readonly offsetValue?: PrimitiveValue | Selection<unknown>;
+  readonly limitByValue?: {
+    readonly columns: SqlSelection[];
+    readonly limit: PrimitiveValue | Selection<unknown>;
+  };
+  readonly useFinal: boolean;
+  readonly joinUseNulls: TJoinUseNulls;
+};
+
+const normalizeSelectBuilderState = <
+  TResult extends Record<string, unknown>,
+  TSelection extends SelectionRecord | undefined,
+  TJoinUseNulls extends JoinUseNulls,
+>(
+  config?: SelectBuilderConfig<TResult> & { selection?: TSelection },
+): SelectBuilderState<TResult, TSelection, KnownQuerySource | undefined, JoinedSources, TJoinUseNulls> => {
+  return {
+    ctes: config?.ctes ?? [],
+    runner: config?.runner,
+    selection: config?.selection,
+    fromSource: config?.fromSource,
+    joins: config?.joins ?? [],
+    whereClause: config?.whereClause,
+    groupByItems: config?.groupByItems ?? [],
+    havingClause: config?.havingClause,
+    orderByItems: config?.orderByItems ?? [],
+    limitValue: config?.limitValue,
+    offsetValue: config?.offsetValue,
+    limitByValue: config?.limitByValue,
+    useFinal: config?.useFinal ?? false,
+    joinUseNulls: (config?.joinUseNulls ?? 1) as TJoinUseNulls,
+  };
+};
+
+export interface SelectBuilder<
   TResult extends Record<string, unknown> = Record<string, unknown>,
   TSelection extends SelectionRecord | undefined = SelectionRecord | undefined,
   TRootSource extends KnownQuerySource | undefined = KnownQuerySource | undefined,
   TJoinedSources extends JoinedSources = NoJoinedSources,
   TJoinUseNulls extends JoinUseNulls = 1,
-> implements PromiseLike<TResult[]>
-{
-  private readonly ctes: AnyCte[];
-  private readonly runner?: PreparedRunner;
-  private readonly selection?: TSelection;
-  private fromSource?: QuerySource;
-  private readonly joins: JoinClause[];
-  private whereClause?: SqlPredicate;
-  private readonly groupByItems: SqlSelection[];
-  private havingClause?: SqlPredicate;
-  private readonly orderByItems: SqlOrder[];
-  private limitValue?: PrimitiveValue | Selection<unknown>;
-  private offsetValue?: PrimitiveValue | Selection<unknown>;
-  private limitByValue?: {
-    readonly columns: SqlSelection[];
-    readonly limit: PrimitiveValue | Selection<unknown>;
-  };
-  private useFinal: boolean;
-  private readonly joinUseNulls: TJoinUseNulls;
+> extends PromiseLike<TResult[]> {
+  execute(options?: ClickHouseBaseQueryOptions): Promise<TResult[]>;
+  iterator(options?: ClickHouseBaseQueryOptions): AsyncGenerator<TResult, void, unknown>;
+  catch<TResult2 = never>(onrejected?: CatchHandler<TResult2>): Promise<TResult[] | TResult2>;
+  finally(onfinally?: (() => void) | null): Promise<TResult[]>;
+  buildSelectionItems(): SelectionItem[];
+  from<TSource extends QuerySource>(
+    source: TSource,
+  ): SelectBuilder<
+    TSelection extends SelectionRecord
+      ? InferSelectionResult<
+          TSelection,
+          NullableSourceMap<TSource extends KnownQuerySource ? TSource : undefined, NoJoinedSources>
+        >
+      : TSource extends KnownQuerySource
+        ? DefaultJoinedResult<TSource, NoJoinedSources>
+        : Record<string, unknown>,
+    TSelection,
+    TSource extends KnownQuerySource ? TSource : undefined,
+    NoJoinedSources,
+    TJoinUseNulls
+  >;
+  innerJoin<TSource extends KnownQuerySource>(
+    source: TSource,
+    on: Predicate,
+  ): SelectBuilder<
+    InferJoinResult<TSelection, TResult, TRootSource, AddJoinedSource<TJoinedSources, TSource, false>>,
+    TSelection,
+    TRootSource,
+    AddJoinedSource<TJoinedSources, TSource, false>,
+    TJoinUseNulls
+  >;
+  leftJoin<TSource extends KnownQuerySource>(
+    source: TSource,
+    on: Predicate,
+  ): SelectBuilder<
+    InferJoinResult<
+      TSelection,
+      TResult,
+      TRootSource,
+      AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>
+    >,
+    TSelection,
+    TRootSource,
+    AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>,
+    TJoinUseNulls
+  >;
+  where(
+    ...predicates: PredicateInput[]
+  ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>;
+  groupBy(
+    ...expressions: Selection<unknown>[]
+  ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>;
+  having(condition?: Predicate): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>;
+  orderBy(
+    ...expressions: Array<Order | Selection<unknown>>
+  ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>;
+  limit(
+    value: PrimitiveValue | Selection<unknown>,
+  ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>;
+  offset(
+    value: PrimitiveValue | Selection<unknown>,
+  ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>;
+  final(): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>;
+  limitBy(
+    columns: Selection<unknown>[],
+    limit: PrimitiveValue | Selection<unknown>,
+  ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>;
+  [compileWithContextSymbol](ctx: BuildContext): CompiledQuery<TResult>;
+  [compileQuerySymbol](): CompiledQuery<TResult>;
+  as<TAlias extends string>(alias: TAlias): Subquery<TResult, TAlias>;
+}
 
-  constructor(config?: SelectBuilderConfig<TResult> & { selection?: TSelection }) {
-    this.ctes = config?.ctes ?? [];
-    this.runner = config?.runner;
-    this.selection = config?.selection;
-    this.fromSource = config?.fromSource;
-    this.joins = config?.joins ?? [];
-    this.whereClause = config?.whereClause;
-    this.groupByItems = config?.groupByItems ?? [];
-    this.havingClause = config?.havingClause;
-    this.orderByItems = config?.orderByItems ?? [];
-    this.limitValue = config?.limitValue;
-    this.offsetValue = config?.offsetValue;
-    this.limitByValue = config?.limitByValue;
-    this.useFinal = config?.useFinal ?? false;
-    this.joinUseNulls = (config?.joinUseNulls ?? 1) as TJoinUseNulls;
-  }
+export const createSelectBuilder = <
+  TResult extends Record<string, unknown> = Record<string, unknown>,
+  TSelection extends SelectionRecord | undefined = SelectionRecord | undefined,
+  TRootSource extends KnownQuerySource | undefined = KnownQuerySource | undefined,
+  TJoinedSources extends JoinedSources = NoJoinedSources,
+  TJoinUseNulls extends JoinUseNulls = 1,
+>(
+  config?: SelectBuilderConfig<TResult> & { selection?: TSelection },
+): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> => {
+  const state = normalizeSelectBuilderState<TResult, TSelection, TJoinUseNulls>(config) as SelectBuilderState<
+    TResult,
+    TSelection,
+    TRootSource,
+    TJoinedSources,
+    TJoinUseNulls
+  >;
 
-  private snapshotConfig(): SelectBuilderConfig<TResult> & { selection?: TSelection } {
-    return {
-      ctes: this.ctes,
-      runner: this.runner,
-      selection: this.selection,
-      fromSource: this.fromSource,
-      joins: this.joins,
-      whereClause: this.whereClause,
-      groupByItems: this.groupByItems,
-      havingClause: this.havingClause,
-      orderByItems: this.orderByItems,
-      limitValue: this.limitValue,
-      offsetValue: this.offsetValue,
-      limitByValue: this.limitByValue,
-      useFinal: this.useFinal,
-      joinUseNulls: this.joinUseNulls,
-    };
-  }
-
-  private clone<
+  const clone = <
     TNextResult extends Record<string, unknown> = TResult,
     TNextRoot extends KnownQuerySource | undefined = TRootSource,
     TNextJoined extends JoinedSources = TJoinedSources,
@@ -742,55 +816,23 @@ export class SelectBuilder<
     overrides: Partial<SelectBuilderConfig<TNextResult>> & {
       selection?: TSelection;
     },
-  ): SelectBuilder<TNextResult, TSelection, TNextRoot, TNextJoined, TJoinUseNulls> {
-    return new SelectBuilder<TNextResult, TSelection, TNextRoot, TNextJoined, TJoinUseNulls>({
-      ...(this.snapshotConfig() as SelectBuilderConfig<TNextResult> & { selection?: TSelection }),
+  ): SelectBuilder<TNextResult, TSelection, TNextRoot, TNextJoined, TJoinUseNulls> => {
+    return createSelectBuilder<TNextResult, TSelection, TNextRoot, TNextJoined, TJoinUseNulls>({
+      ...(state as SelectBuilderConfig<TNextResult> & { selection?: TSelection }),
       ...overrides,
     });
-  }
+  };
 
-  execute(options?: ClickHouseBaseQueryOptions): Promise<TResult[]> {
-    const runner = ensureRunner(this.runner, "execute");
-    return runner.execute(this[compileQuerySymbol](), options);
-  }
+  const isNullableJoinEnabled = (): boolean => {
+    return state.joinUseNulls === 1;
+  };
 
-  iterator(options?: ClickHouseBaseQueryOptions): AsyncGenerator<TResult, void, unknown> {
-    const runner = ensureRunner(this.runner, "iterator");
-    return runner.iterator(this[compileQuerySymbol](), options);
-  }
-
-  /**
-   * Builders are intentionally re-entrant: each `await builder` triggers a fresh
-   * `execute()` and a new ClickHouse request. To memoize the result, capture the promise
-   * once: `const pending = builder.execute()`. This matches Drizzle/Kysely semantics and
-   * lets callers refresh data simply by awaiting the builder again.
-   */
-  // biome-ignore lint/suspicious/noThenProperty: builders are intentionally thenable so await builder matches Drizzle-style usage.
-  then<TResult1 = TResult[], TResult2 = never>(
-    onfulfilled?: ThenHandler<TResult[], TResult1>,
-    onrejected?: CatchHandler<TResult2>,
-  ): PromiseLike<TResult1 | TResult2> {
-    return this.execute().then(onfulfilled, onrejected);
-  }
-
-  catch<TResult2 = never>(onrejected?: CatchHandler<TResult2>): Promise<TResult[] | TResult2> {
-    return this.execute().catch(onrejected);
-  }
-
-  finally(onfinally?: (() => void) | null): Promise<TResult[]> {
-    return this.execute().finally(onfinally ?? undefined);
-  }
-
-  private isNullableJoinEnabled(): boolean {
-    return this.joinUseNulls === 1;
-  }
-
-  private getNullableSources(): Set<string> {
+  const getNullableSources = (): Set<string> => {
     const result = new Set<string>();
-    if (!this.isNullableJoinEnabled()) {
+    if (!isNullableJoinEnabled()) {
       return result;
     }
-    for (const join of this.joins) {
+    for (const join of state.joins) {
       if (join.type !== "left") {
         continue;
       }
@@ -800,21 +842,21 @@ export class SelectBuilder<
       }
     }
     return result;
-  }
+  };
 
-  buildSelectionItems(): SelectionItem[] {
-    if (this.selection) {
-      return normalizeSelectionRecord(this.selection, this.getNullableSources());
+  const buildSelectionItems = (): SelectionItem[] => {
+    if (state.selection) {
+      return normalizeSelectionRecord(state.selection, getNullableSources());
     }
 
-    if (!this.fromSource) {
+    if (!state.fromSource) {
       throw createClientValidationError(
         "select() without explicit selection requires from() first. Call .from(table) before .select(), or pass an explicit selection object to select({...}).",
       );
     }
 
-    const rootSourceKey = getSourceKey(this.fromSource);
-    const rootSourceColumns = getSourceColumns(this.fromSource);
+    const rootSourceKey = getSourceKey(state.fromSource);
+    const rootSourceColumns = getSourceColumns(state.fromSource);
     if (!rootSourceColumns || !rootSourceKey) {
       throw createClientValidationError(
         "select() without explicit selection requires a source with known columns. Use a defined table()/subquery()/cte() source, or pass an explicit selection object to select({...}).",
@@ -822,8 +864,8 @@ export class SelectBuilder<
     }
 
     const selectionItems: SelectionItem[] = [];
-    const hasJoins = this.joins.some((join) => getSourceColumns(join.source));
-    const nullableJoinEnabled = this.isNullableJoinEnabled();
+    const hasJoins = state.joins.some((join) => getSourceColumns(join.source));
+    const nullableJoinEnabled = isNullableJoinEnabled();
     let nextIndex = 0;
 
     const appendSourceColumns = (sourceKey: string, sourceColumns: SourceColumns, groupNullable: boolean) => {
@@ -846,7 +888,7 @@ export class SelectBuilder<
       return selectionItems;
     }
 
-    for (const join of this.joins) {
+    for (const join of state.joins) {
       const joinSourceKey = getSourceKey(join.source);
       const joinSourceColumns = getSourceColumns(join.source);
       if (!joinSourceKey || !joinSourceColumns) {
@@ -856,25 +898,42 @@ export class SelectBuilder<
     }
 
     return selectionItems;
-  }
+  };
 
-  from<TSource extends QuerySource>(
-    source: TSource,
-  ): SelectBuilder<
-    TSelection extends SelectionRecord
-      ? InferSelectionResult<
-          TSelection,
-          NullableSourceMap<TSource extends KnownQuerySource ? TSource : undefined, NoJoinedSources>
-        >
-      : TSource extends KnownQuerySource
-        ? DefaultJoinedResult<TSource, NoJoinedSources>
-        : Record<string, unknown>,
-    TSelection,
-    TSource extends KnownQuerySource ? TSource : undefined,
-    NoJoinedSources,
-    TJoinUseNulls
-  > {
-    return this.clone<
+  const builder = {
+    execute(options?: ClickHouseBaseQueryOptions): Promise<TResult[]> {
+      const runner = ensureRunner(state.runner, "execute");
+      return runner.execute(builder[compileQuerySymbol](), options);
+    },
+
+    iterator(options?: ClickHouseBaseQueryOptions): AsyncGenerator<TResult, void, unknown> {
+      const runner = ensureRunner(state.runner, "iterator");
+      return runner.iterator(builder[compileQuerySymbol](), options);
+    },
+
+    // biome-ignore lint/suspicious/noThenProperty: builders are intentionally thenable so await builder matches Drizzle-style usage.
+    then<TResult1 = TResult[], TResult2 = never>(
+      onfulfilled?: ThenHandler<TResult[], TResult1>,
+      onrejected?: CatchHandler<TResult2>,
+    ): PromiseLike<TResult1 | TResult2> {
+      return builder.execute().then(onfulfilled, onrejected);
+    },
+
+    catch<TResult2 = never>(onrejected?: CatchHandler<TResult2>): Promise<TResult[] | TResult2> {
+      return builder.execute().catch(onrejected);
+    },
+
+    finally(onfinally?: (() => void) | null): Promise<TResult[]> {
+      return builder.execute().finally(onfinally ?? undefined);
+    },
+
+    buildSelectionItems(): SelectionItem[] {
+      return buildSelectionItems();
+    },
+
+    from<TSource extends QuerySource>(
+      source: TSource,
+    ): SelectBuilder<
       TSelection extends SelectionRecord
         ? InferSelectionResult<
             TSelection,
@@ -883,348 +942,381 @@ export class SelectBuilder<
         : TSource extends KnownQuerySource
           ? DefaultJoinedResult<TSource, NoJoinedSources>
           : Record<string, unknown>,
-      TSource extends KnownQuerySource ? TSource : undefined,
-      NoJoinedSources
-    >({
-      fromSource: source,
-    });
-  }
-
-  innerJoin<TSource extends KnownQuerySource>(
-    source: TSource,
-    on: Predicate,
-  ): SelectBuilder<
-    InferJoinResult<TSelection, TResult, TRootSource, AddJoinedSource<TJoinedSources, TSource, false>>,
-    TSelection,
-    TRootSource,
-    AddJoinedSource<TJoinedSources, TSource, false>,
-    TJoinUseNulls
-  > {
-    return this.clone<
-      InferJoinResult<TSelection, TResult, TRootSource, AddJoinedSource<TJoinedSources, TSource, false>>,
-      TRootSource,
-      AddJoinedSource<TJoinedSources, TSource, false>
-    >({
-      joins: [...this.joins, { type: "inner", source, on: on as SqlPredicate }],
-    });
-  }
-
-  leftJoin<TSource extends KnownQuerySource>(
-    source: TSource,
-    on: Predicate,
-  ): SelectBuilder<
-    InferJoinResult<
       TSelection,
-      TResult,
+      TSource extends KnownQuerySource ? TSource : undefined,
+      NoJoinedSources,
+      TJoinUseNulls
+    > {
+      return clone<
+        TSelection extends SelectionRecord
+          ? InferSelectionResult<
+              TSelection,
+              NullableSourceMap<TSource extends KnownQuerySource ? TSource : undefined, NoJoinedSources>
+            >
+          : TSource extends KnownQuerySource
+            ? DefaultJoinedResult<TSource, NoJoinedSources>
+            : Record<string, unknown>,
+        TSource extends KnownQuerySource ? TSource : undefined,
+        NoJoinedSources
+      >({
+        fromSource: source,
+      });
+    },
+
+    innerJoin<TSource extends KnownQuerySource>(
+      source: TSource,
+      on: Predicate,
+    ): SelectBuilder<
+      InferJoinResult<TSelection, TResult, TRootSource, AddJoinedSource<TJoinedSources, TSource, false>>,
+      TSelection,
       TRootSource,
-      AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>
-    >,
-    TSelection,
-    TRootSource,
-    AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>,
-    TJoinUseNulls
-  > {
-    return this.clone<
+      AddJoinedSource<TJoinedSources, TSource, false>,
+      TJoinUseNulls
+    > {
+      return clone<
+        InferJoinResult<TSelection, TResult, TRootSource, AddJoinedSource<TJoinedSources, TSource, false>>,
+        TRootSource,
+        AddJoinedSource<TJoinedSources, TSource, false>
+      >({
+        joins: [...state.joins, { type: "inner", source, on: on as SqlPredicate }],
+      });
+    },
+
+    leftJoin<TSource extends KnownQuerySource>(
+      source: TSource,
+      on: Predicate,
+    ): SelectBuilder<
       InferJoinResult<
         TSelection,
         TResult,
         TRootSource,
         AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>
       >,
+      TSelection,
       TRootSource,
-      AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>
-    >({
-      joins: [...this.joins, { type: "left", source, on: on as SqlPredicate }],
-    });
-  }
+      AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>,
+      TJoinUseNulls
+    > {
+      return clone<
+        InferJoinResult<
+          TSelection,
+          TResult,
+          TRootSource,
+          AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>
+        >,
+        TRootSource,
+        AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>
+      >({
+        joins: [...state.joins, { type: "left", source, on: on as SqlPredicate }],
+      });
+    },
 
-  where(
-    ...predicates: PredicateInput[]
-  ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
-    return this.clone({
-      whereClause: normalizePredicateGroup("and", predicates),
-    });
-  }
+    where(
+      ...predicates: PredicateInput[]
+    ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
+      return clone({
+        whereClause: normalizePredicateGroup("and", predicates),
+      });
+    },
 
-  groupBy(
-    ...expressions: Selection<unknown>[]
-  ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
-    return this.clone({
-      groupByItems: [...this.groupByItems, ...expressions.map((expression) => ensureExpression(expression))],
-    });
-  }
+    groupBy(
+      ...expressions: Selection<unknown>[]
+    ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
+      return clone({
+        groupByItems: [...state.groupByItems, ...expressions.map((expression) => ensureExpression(expression))],
+      });
+    },
 
-  having(condition?: Predicate): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
-    return this.clone({
-      havingClause: condition as SqlPredicate | undefined,
-    });
-  }
+    having(condition?: Predicate): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
+      return clone({
+        havingClause: condition as SqlPredicate | undefined,
+      });
+    },
 
-  orderBy(
-    ...expressions: Array<Order | Selection<unknown>>
-  ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
-    const nextOrderItems = expressions.map((expression): SqlOrder => {
-      if ("direction" in expression && "expression" in expression) {
+    orderBy(
+      ...expressions: Array<Order | Selection<unknown>>
+    ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
+      const nextOrderItems = expressions.map((expression): SqlOrder => {
+        if ("direction" in expression && "expression" in expression) {
+          return {
+            direction: expression.direction,
+            expression: ensureExpression(expression.expression),
+          };
+        }
         return {
-          direction: expression.direction,
-          expression: ensureExpression(expression.expression),
+          direction: "asc",
+          expression: ensureExpression(expression),
         };
-      }
-      return {
-        direction: "asc",
-        expression: ensureExpression(expression),
-      };
-    });
-    return this.clone({
-      orderByItems: [...this.orderByItems, ...nextOrderItems],
-    });
-  }
+      });
+      return clone({
+        orderByItems: [...state.orderByItems, ...nextOrderItems],
+      });
+    },
 
-  limit(
-    value: PrimitiveValue | Selection<unknown>,
-  ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
-    return this.clone({
-      limitValue: value,
-    });
-  }
+    limit(
+      value: PrimitiveValue | Selection<unknown>,
+    ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
+      return clone({
+        limitValue: value,
+      });
+    },
 
-  offset(
-    value: PrimitiveValue | Selection<unknown>,
-  ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
-    return this.clone({
-      offsetValue: value,
-    });
-  }
+    offset(
+      value: PrimitiveValue | Selection<unknown>,
+    ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
+      return clone({
+        offsetValue: value,
+      });
+    },
 
-  final(): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
-    return this.clone({
-      useFinal: true,
-    });
-  }
+    final(): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
+      return clone({
+        useFinal: true,
+      });
+    },
 
-  limitBy(
-    columns: Selection<unknown>[],
-    limit: PrimitiveValue | Selection<unknown>,
-  ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
-    return this.clone({
-      limitByValue: {
-        columns: columns.map((column) => ensureExpression(column)),
-        limit,
-      },
-    });
-  }
+    limitBy(
+      columns: Selection<unknown>[],
+      limit: PrimitiveValue | Selection<unknown>,
+    ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
+      return clone({
+        limitByValue: {
+          columns: columns.map((column) => ensureExpression(column)),
+          limit,
+        },
+      });
+    },
 
-  [compileWithContextSymbol](ctx: BuildContext): CompiledQuery<TResult> {
-    const { result, forcedSettings: nestedForcedSettings } = withCompileState(ctx, () => {
-      const selectionItems = this.buildSelectionItems();
-      const queryParts: SQLFragment[] = [];
-      const cteFragment = renderCtes(this.ctes, ctx);
-      if (cteFragment) {
-        queryParts.push(cteFragment);
-      }
+    [compileWithContextSymbol](ctx: BuildContext): CompiledQuery<TResult> {
+      const { result, forcedSettings: nestedForcedSettings } = withCompileState(ctx, () => {
+        const selectionItems = buildSelectionItems();
+        const queryParts: SQLFragment[] = [];
+        const cteFragment = renderCtes(state.ctes, ctx);
+        if (cteFragment) {
+          queryParts.push(cteFragment);
+        }
 
-      queryParts.push(sql`${sql.raw("select ")}${renderSelection(selectionItems, ctx)}`);
+        queryParts.push(sql`${sql.raw("select ")}${renderSelection(selectionItems, ctx)}`);
 
-      if (this.fromSource) {
-        const fromSource = renderSource(this.fromSource, ctx);
-        const finalSuffix = this.useFinal ? sql.raw(" final") : sql.raw("");
-        queryParts.push(sql`${sql.raw("from ")}${fromSource}${finalSuffix}`);
-      }
+        if (state.fromSource) {
+          const fromSource = renderSource(state.fromSource, ctx);
+          const finalSuffix = state.useFinal ? sql.raw(" final") : sql.raw("");
+          queryParts.push(sql`${sql.raw("from ")}${fromSource}${finalSuffix}`);
+        }
 
-      if (this.joins.length > 0) {
-        for (const join of this.joins) {
-          const joinKeyword = join.type === "inner" ? "inner join" : "left join";
+        if (state.joins.length > 0) {
+          for (const join of state.joins) {
+            const joinKeyword = join.type === "inner" ? "inner join" : "left join";
+            queryParts.push(
+              sql`${sql.raw(`${joinKeyword} `)}${renderSource(join.source, ctx)}${sql.raw(" on ")}${join.on.compile(ctx)}`,
+            );
+          }
+        }
+
+        if (state.whereClause) {
+          queryParts.push(sql`${sql.raw("where ")}${state.whereClause.compile(ctx)}`);
+        }
+
+        if (state.groupByItems.length > 0) {
           queryParts.push(
-            sql`${sql.raw(`${joinKeyword} `)}${renderSource(join.source, ctx)}${sql.raw(" on ")}${join.on.compile(ctx)}`,
+            sql`${sql.raw("group by ")}${joinSqlParts(
+              state.groupByItems.map((item) => item.compile(ctx)),
+              ", ",
+            )}`,
           );
         }
-      }
 
-      if (this.whereClause) {
-        queryParts.push(sql`${sql.raw("where ")}${this.whereClause.compile(ctx)}`);
-      }
+        if (state.havingClause) {
+          queryParts.push(sql`${sql.raw("having ")}${state.havingClause.compile(ctx)}`);
+        }
 
-      if (this.groupByItems.length > 0) {
-        queryParts.push(
-          sql`${sql.raw("group by ")}${joinSqlParts(
-            this.groupByItems.map((item) => item.compile(ctx)),
-            ", ",
-          )}`,
-        );
-      }
+        if (state.orderByItems.length > 0) {
+          const orderByParts = state.orderByItems.map((item) => {
+            return sql`${item.expression.compile(ctx)}${sql.raw(` ${item.direction.toUpperCase()}`)}`;
+          });
+          queryParts.push(sql`${sql.raw("order by ")}${joinSqlParts(orderByParts, ", ")}`);
+        }
 
-      if (this.havingClause) {
-        queryParts.push(sql`${sql.raw("having ")}${this.havingClause.compile(ctx)}`);
-      }
+        if (state.limitByValue) {
+          queryParts.push(
+            sql`${sql.raw("limit ")}${normalizeLimitValue(state.limitByValue.limit, ctx)}${sql.raw(" by ")}${joinSqlParts(
+              state.limitByValue.columns.map((column) => column.compile(ctx)),
+              ", ",
+            )}`,
+          );
+        }
 
-      if (this.orderByItems.length > 0) {
-        const orderByParts = this.orderByItems.map((item) => {
-          return sql`${item.expression.compile(ctx)}${sql.raw(` ${item.direction.toUpperCase()}`)}`;
-        });
-        queryParts.push(sql`${sql.raw("order by ")}${joinSqlParts(orderByParts, ", ")}`);
-      }
+        if (state.limitValue !== undefined) {
+          queryParts.push(sql`${sql.raw("limit ")}${normalizeLimitValue(state.limitValue, ctx)}`);
+        }
 
-      if (this.limitByValue) {
-        queryParts.push(
-          sql`${sql.raw("limit ")}${normalizeLimitValue(this.limitByValue.limit, ctx)}${sql.raw(" by ")}${joinSqlParts(
-            this.limitByValue.columns.map((column) => column.compile(ctx)),
-            ", ",
-          )}`,
-        );
-      }
+        if (state.offsetValue !== undefined) {
+          queryParts.push(sql`${sql.raw("offset ")}${normalizeLimitValue(state.offsetValue, ctx)}`);
+        }
 
-      if (this.limitValue !== undefined) {
-        queryParts.push(sql`${sql.raw("limit ")}${normalizeLimitValue(this.limitValue, ctx)}`);
-      }
+        const statement = sql`${joinSqlParts(queryParts, " ")}`;
+        const compiled = compileSql(statement, ctx);
+        const selection = selectionItems.map((item) => ({
+          key: item.key,
+          sqlAlias: item.sqlAlias,
+          decoder: item.expression.decoder,
+          path: item.path,
+          nullable: item.nullable,
+          groupNullable: item.groupNullable,
+        }));
 
-      if (this.offsetValue !== undefined) {
-        queryParts.push(sql`${sql.raw("offset ")}${normalizeLimitValue(this.offsetValue, ctx)}`);
-      }
+        const localForcedSettings =
+          isNullableJoinEnabled() && state.joins.some((join) => join.type === "left")
+            ? { join_use_nulls: 1 }
+            : undefined;
 
-      const statement = sql`${joinSqlParts(queryParts, " ")}`;
-      const compiled = compileSql(statement, ctx);
-      const selection = selectionItems.map((item) => ({
-        key: item.key,
-        sqlAlias: item.sqlAlias,
-        decoder: item.expression.decoder,
-        path: item.path,
-        nullable: item.nullable,
-        groupNullable: item.groupNullable,
-      }));
+        const metadata: CompiledQueryMetadata | undefined = state.fromSource
+          ? {
+              rootSourceName: getSourceKey(state.fromSource),
+              joinCount: state.joins.length,
+            }
+          : state.joins.length > 0
+            ? { joinCount: state.joins.length }
+            : undefined;
 
-      const localForcedSettings =
-        this.isNullableJoinEnabled() && this.joins.some((join) => join.type === "left")
-          ? { join_use_nulls: 1 }
-          : undefined;
+        return {
+          compiled,
+          selection,
+          localForcedSettings,
+          metadata,
+        };
+      });
 
-      const metadata: CompiledQueryMetadata | undefined = this.fromSource
-        ? {
-            rootSourceName: getSourceKey(this.fromSource),
-            joinCount: this.joins.length,
-          }
-        : this.joins.length > 0
-          ? { joinCount: this.joins.length }
-          : undefined;
+      const forcedSettings = mergeForcedSettings(
+        mergeForcedSettings(undefined, nestedForcedSettings),
+        result.localForcedSettings,
+      );
 
-      return {
-        compiled,
-        selection,
-        localForcedSettings,
-        metadata,
+      return createCompiledQuery<TResult>(
+        result.compiled.query,
+        result.selection,
+        "query",
+        { ...result.compiled.params },
+        forcedSettings,
+        result.metadata,
+      );
+    },
+
+    [compileQuerySymbol](): CompiledQuery<TResult> {
+      return builder[compileWithContextSymbol]({
+        params: {},
+        nextParamIndex: 0,
+      });
+    },
+
+    as<TAlias extends string>(alias: TAlias): Subquery<TResult, TAlias> {
+      const selectionItems = buildSelectionItems();
+      const columns = buildReferenceColumns<TResult>(alias, selectionItems);
+      const subquery = {
+        kind: "subquery" as const,
+        alias,
+        query: builder as AnySelectBuilder<TResult>,
+        columns,
       };
-    });
 
-    const forcedSettings = mergeForcedSettings(
-      mergeForcedSettings(undefined, nestedForcedSettings),
-      result.localForcedSettings,
-    );
+      return Object.assign(subquery, columns) as Subquery<TResult, TAlias>;
+    },
+  } as SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>;
 
-    return createCompiledQuery<TResult>(
-      result.compiled.query,
-      result.selection,
-      "query",
-      { ...result.compiled.params },
-      forcedSettings,
-      result.metadata,
-    );
-  }
+  return builder;
+};
 
-  [compileQuerySymbol](): CompiledQuery<TResult> {
-    return this[compileWithContextSymbol]({
-      params: {},
-      nextParamIndex: 0,
-    });
-  }
-
-  as<TAlias extends string>(alias: TAlias): Subquery<TResult, TAlias> {
-    const selectionItems = this.buildSelectionItems();
-    const columns = buildReferenceColumns<TResult>(alias, selectionItems);
-    const subquery = {
-      kind: "subquery" as const,
-      alias,
-      query: this as AnySelectBuilder<TResult>,
-      columns,
-    };
-
-    return Object.assign(subquery, columns) as Subquery<TResult, TAlias>;
-  }
+export function SelectBuilder<
+  TResult extends Record<string, unknown> = Record<string, unknown>,
+  TSelection extends SelectionRecord | undefined = SelectionRecord | undefined,
+  TRootSource extends KnownQuerySource | undefined = KnownQuerySource | undefined,
+  TJoinedSources extends JoinedSources = NoJoinedSources,
+  TJoinUseNulls extends JoinUseNulls = 1,
+>(
+  config?: SelectBuilderConfig<TResult> & { selection?: TSelection },
+): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
+  return createSelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>(config);
 }
 
-export class InsertBuilder<TTable extends AnyTable> implements PromiseLike<undefined> {
-  private readonly table: TTable;
-  private readonly runner?: PreparedRunner;
-  private rows: InsertRowInput<TTable>[] = [];
+export interface InsertBuilder<TTable extends AnyTable> extends PromiseLike<undefined> {
+  values(values: InsertRowInput<TTable> | readonly InsertRowInput<TTable>[]): InsertBuilder<TTable>;
+  execute(options?: ClickHouseBaseQueryOptions): Promise<undefined>;
+  catch<TResult2 = never>(onrejected?: CatchHandler<TResult2>): Promise<undefined | TResult2>;
+  finally(onfinally?: (() => void) | null): Promise<undefined>;
+  [compileQuerySymbol](): CompiledQuery<never>;
+}
 
-  constructor(table: TTable, runner?: PreparedRunner) {
-    this.table = table;
-    this.runner = runner;
-  }
+export const createInsertBuilder = <TTable extends AnyTable>(
+  table: TTable,
+  runner?: PreparedRunner,
+  rows: InsertRowInput<TTable>[] = [],
+): InsertBuilder<TTable> => {
+  const builder = {
+    values(values: InsertRowInput<TTable> | readonly InsertRowInput<TTable>[]): InsertBuilder<TTable> {
+      return createInsertBuilder(table, runner, normalizeInsertRows(table, values));
+    },
 
-  values(values: InsertRowInput<TTable> | readonly InsertRowInput<TTable>[]): InsertBuilder<TTable> {
-    const next = new InsertBuilder(this.table, this.runner);
-    next.rows = normalizeInsertRows(this.table, values);
-    return next;
-  }
+    execute(options?: ClickHouseBaseQueryOptions): Promise<undefined> {
+      const preparedRunner = ensureRunner(runner, "execute");
+      return preparedRunner
+        .command(builder[compileQuerySymbol]() as unknown as CompiledQuery<Record<string, unknown>>, options)
+        .then(() => undefined);
+    },
 
-  execute(options?: ClickHouseBaseQueryOptions): Promise<undefined> {
-    const runner = ensureRunner(this.runner, "execute");
-    return runner
-      .command(this[compileQuerySymbol]() as unknown as CompiledQuery<Record<string, unknown>>, options)
-      .then(() => undefined);
-  }
+    // biome-ignore lint/suspicious/noThenProperty: insert builders are intentionally thenable so await builder matches Drizzle-style usage.
+    then<TResult1 = undefined, TResult2 = never>(
+      onfulfilled?: ThenHandler<undefined, TResult1>,
+      onrejected?: CatchHandler<TResult2>,
+    ): PromiseLike<TResult1 | TResult2> {
+      return builder.execute().then(onfulfilled, onrejected);
+    },
 
-  /**
-   * Insert builders are intentionally re-entrant: each `await builder` triggers a fresh
-   * `execute()` and a new INSERT request. To memoize the result, capture the promise
-   * once: `const pending = builder.execute()`. This matches Drizzle/Kysely semantics.
-   */
-  // biome-ignore lint/suspicious/noThenProperty: insert builders are intentionally thenable so await builder matches Drizzle-style usage.
-  then<TResult1 = undefined, TResult2 = never>(
-    onfulfilled?: ThenHandler<undefined, TResult1>,
-    onrejected?: CatchHandler<TResult2>,
-  ): PromiseLike<TResult1 | TResult2> {
-    return this.execute().then(onfulfilled, onrejected);
-  }
+    catch<TResult2 = never>(onrejected?: CatchHandler<TResult2>): Promise<undefined | TResult2> {
+      return builder.execute().catch(onrejected);
+    },
 
-  catch<TResult2 = never>(onrejected?: CatchHandler<TResult2>): Promise<undefined | TResult2> {
-    return this.execute().catch(onrejected);
-  }
+    finally(onfinally?: (() => void) | null): Promise<undefined> {
+      return builder.execute().finally(onfinally ?? undefined);
+    },
 
-  finally(onfinally?: (() => void) | null): Promise<undefined> {
-    return this.execute().finally(onfinally ?? undefined);
-  }
+    [compileQuerySymbol](): CompiledQuery<never> {
+      const columnEntries = Object.entries(table.columns);
+      const columnNames = columnEntries.map(([name]) => name);
+      const columnTypes = columnEntries.map(([, column]) => column.sqlType);
+      const ctx: BuildContext = {
+        params: {},
+        nextParamIndex: 0,
+      };
+      const valueRows = rows.map(
+        (row) =>
+          sql`(${joinSqlParts(
+            columnEntries.map(([columnName, column], index) => {
+              const value = (row as Record<string, unknown>)[columnName];
+              if (value === undefined) {
+                return sql.raw("DEFAULT");
+              }
+              return compileValue(column.mapToDriverValue(value as never), ctx, columnTypes[index]);
+            }),
+            ", ",
+          )})`,
+      );
+      const statement = sql`insert into ${renderTableIdentifier(table)} (${joinSqlParts(
+        columnNames.map((columnName) => sql.identifier(columnName)),
+        ", ",
+      )}) values ${joinSqlParts(valueRows, ", ")}`;
+      const compiled = compileSql(statement, ctx);
 
-  [compileQuerySymbol](): CompiledQuery<never> {
-    const columnEntries = Object.entries(this.table.columns);
-    const columnNames = columnEntries.map(([name]) => name);
-    const columnTypes = columnEntries.map(([, column]) => column.sqlType);
-    const ctx: BuildContext = {
-      params: {},
-      nextParamIndex: 0,
-    };
-    const valueRows = this.rows.map(
-      (row) =>
-        sql`(${joinSqlParts(
-          columnEntries.map(([columnName, column], index) => {
-            const value = (row as Record<string, unknown>)[columnName];
-            if (value === undefined) {
-              return sql.raw("DEFAULT");
-            }
-            return compileValue(column.mapToDriverValue(value as never), ctx, columnTypes[index]);
-          }),
-          ", ",
-        )})`,
-    );
-    const statement = sql`insert into ${renderTableIdentifier(this.table)} (${joinSqlParts(
-      columnNames.map((columnName) => sql.identifier(columnName)),
-      ", ",
-    )}) values ${joinSqlParts(valueRows, ", ")}`;
-    const compiled = compileSql(statement, ctx);
+      return createCompiledQuery(compiled.query, [], "command", {
+        ...compiled.params,
+      });
+    },
+  } as InsertBuilder<TTable>;
 
-    return createCompiledQuery(compiled.query, [], "command", {
-      ...compiled.params,
-    });
-  }
+  return builder;
+};
+
+export function InsertBuilder<TTable extends AnyTable>(table: TTable, runner?: PreparedRunner): InsertBuilder<TTable> {
+  return createInsertBuilder(table, runner);
 }
 
 export type Subquery<
@@ -1258,24 +1350,9 @@ type AnyCte = {
   readonly columns: SourceColumns;
 };
 
-export class QueryClient<TSchema = unknown, TJoinUseNulls extends JoinUseNulls = 1> {
+export interface QueryClient<TSchema = unknown, TJoinUseNulls extends JoinUseNulls = 1> {
   readonly schema: TSchema;
   readonly ctes: AnyCte[];
-  private readonly runner?: PreparedRunner;
-  protected readonly joinUseNulls: TJoinUseNulls;
-
-  constructor(config: {
-    schema: TSchema;
-    ctes?: AnyCte[];
-    runner?: PreparedRunner;
-    joinUseNulls?: TJoinUseNulls;
-  }) {
-    this.schema = config.schema;
-    this.ctes = config.ctes ?? [];
-    this.runner = config.runner;
-    this.joinUseNulls = (config.joinUseNulls ?? 1) as TJoinUseNulls;
-  }
-
   select<TSelection extends SelectionRecord | undefined = undefined>(
     selection?: TSelection,
   ): SelectBuilder<
@@ -1284,58 +1361,105 @@ export class QueryClient<TSchema = unknown, TJoinUseNulls extends JoinUseNulls =
     undefined,
     NoJoinedSources,
     TJoinUseNulls
-  > {
-    return new SelectBuilder<
+  >;
+  count(source: CountSource, ...predicates: PredicateInput[]): CountQuery<number>;
+  insert<TTable extends AnyTable>(table: TTable): InsertBuilder<TTable>;
+  $with<TName extends string>(
+    name: TName,
+  ): {
+    as: <TResult extends Record<string, unknown>>(query: AnySelectBuilder<TResult>) => Cte<TResult, TName>;
+  };
+  with(...ctes: AnyCte[]): QueryClient<TSchema, TJoinUseNulls>;
+}
+
+export const createQueryClient = <TSchema, TJoinUseNulls extends JoinUseNulls = 1>(config: {
+  schema: TSchema;
+  ctes?: AnyCte[];
+  runner?: PreparedRunner;
+  joinUseNulls?: TJoinUseNulls;
+}): QueryClient<TSchema, TJoinUseNulls> => {
+  const state = {
+    schema: config.schema,
+    ctes: config.ctes ?? [],
+    runner: config.runner,
+    joinUseNulls: (config.joinUseNulls ?? 1) as TJoinUseNulls,
+  };
+
+  const client = {
+    schema: state.schema,
+    ctes: state.ctes,
+    select<TSelection extends SelectionRecord | undefined = undefined>(
+      selection?: TSelection,
+    ): SelectBuilder<
       TSelection extends SelectionRecord ? InferSelectionResult<TSelection> : Record<string, unknown>,
       TSelection,
       undefined,
       NoJoinedSources,
       TJoinUseNulls
-    >({
-      ctes: this.ctes,
-      runner: this.runner,
-      selection,
-      joinUseNulls: this.joinUseNulls,
-    });
-  }
+    > {
+      return createSelectBuilder<
+        TSelection extends SelectionRecord ? InferSelectionResult<TSelection> : Record<string, unknown>,
+        TSelection,
+        undefined,
+        NoJoinedSources,
+        TJoinUseNulls
+      >({
+        ctes: state.ctes,
+        runner: state.runner,
+        selection,
+        joinUseNulls: state.joinUseNulls,
+      });
+    },
 
-  count(source: CountSource, ...predicates: PredicateInput[]): CountQuery<number> {
-    return createCountQuery({
-      ctes: this.ctes,
-      runner: this.runner,
-      source,
-      predicates,
-    });
-  }
+    count(source: CountSource, ...predicates: PredicateInput[]): CountQuery<number> {
+      return createCountQuery({
+        ctes: state.ctes,
+        runner: state.runner,
+        source,
+        predicates,
+      });
+    },
 
-  insert<TTable extends AnyTable>(table: TTable): InsertBuilder<TTable> {
-    return new InsertBuilder(table, this.runner);
-  }
+    insert<TTable extends AnyTable>(table: TTable): InsertBuilder<TTable> {
+      return createInsertBuilder(table, state.runner);
+    },
 
-  $with<TName extends string>(name: TName) {
-    return {
-      as: <TResult extends Record<string, unknown>>(query: AnySelectBuilder<TResult>): Cte<TResult, TName> => {
-        const selectionItems = query.buildSelectionItems();
-        const columns = buildReferenceColumns<TResult>(name, selectionItems);
-        const cte = {
-          kind: "cte" as const,
-          name,
-          query,
-          columns,
-        };
-        return Object.assign(cte, columns) as Cte<TResult, TName>;
-      },
-    };
-  }
+    $with<TName extends string>(name: TName) {
+      return {
+        as: <TResult extends Record<string, unknown>>(query: AnySelectBuilder<TResult>): Cte<TResult, TName> => {
+          const selectionItems = query.buildSelectionItems();
+          const columns = buildReferenceColumns<TResult>(name, selectionItems);
+          const cte = {
+            kind: "cte" as const,
+            name,
+            query,
+            columns,
+          };
+          return Object.assign(cte, columns) as Cte<TResult, TName>;
+        },
+      };
+    },
 
-  with(...ctes: AnyCte[]): QueryClient<TSchema, TJoinUseNulls> {
-    return new QueryClient<TSchema, TJoinUseNulls>({
-      schema: this.schema,
-      ctes: [...this.ctes, ...ctes],
-      runner: this.runner,
-      joinUseNulls: this.joinUseNulls,
-    });
-  }
+    with(...ctes: AnyCte[]): QueryClient<TSchema, TJoinUseNulls> {
+      return createQueryClient<TSchema, TJoinUseNulls>({
+        schema: state.schema,
+        ctes: [...state.ctes, ...ctes],
+        runner: state.runner,
+        joinUseNulls: state.joinUseNulls,
+      });
+    },
+  } as QueryClient<TSchema, TJoinUseNulls>;
+
+  return client;
+};
+
+export function QueryClient<TSchema, TJoinUseNulls extends JoinUseNulls = 1>(config: {
+  schema: TSchema;
+  ctes?: AnyCte[];
+  runner?: PreparedRunner;
+  joinUseNulls?: TJoinUseNulls;
+}): QueryClient<TSchema, TJoinUseNulls> {
+  return createQueryClient<TSchema, TJoinUseNulls>(config);
 }
 
 const ensureComparableExpression = (value: unknown): SqlSelection<unknown> => {

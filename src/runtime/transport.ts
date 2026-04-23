@@ -34,24 +34,38 @@ import {
   readValidatedResponseText,
 } from "./json-stream";
 
-export class FetchClickHouseTransport {
-  constructor(private readonly config: NormalizedClientConfig) {}
+export interface FetchClickHouseTransport {
+  queryJSON<T = Record<string, unknown>>(input: TransportQueryInput): Promise<T[]>;
+  queryStream<T = Record<string, unknown>>(input: TransportQueryInput): AsyncGenerator<T, void, unknown>;
+  command(
+    statement: string,
+    options?: ClickHouseBaseQueryOptions,
+    query_params?: Record<string, unknown>,
+  ): Promise<void>;
+  insertJsonEachRow(
+    tableName: string,
+    rows: readonly Record<string, unknown>[] | AsyncIterable<Record<string, unknown>>,
+    options?: ClickHouseBaseQueryOptions,
+  ): Promise<void>;
+  endpoint(path: string, options?: ClickHouseEndpointOptions, method?: "GET" | "POST"): Promise<void>;
+}
 
-  private mergeOptions<TOptions extends ClickHouseBaseQueryOptions>(
+export const createFetchClickHouseTransport = (config: NormalizedClientConfig): FetchClickHouseTransport => {
+  const mergeOptions = <TOptions extends ClickHouseBaseQueryOptions>(
     options?: TOptions,
-  ): ClickHouseBaseQueryOptions & TOptions {
+  ): ClickHouseBaseQueryOptions & TOptions => {
     return {
       ...options,
-      clickhouse_settings: mergeClickHouseSettings(this.config.clickhouse_settings, options?.clickhouse_settings),
+      clickhouse_settings: mergeClickHouseSettings(config.clickhouse_settings, options?.clickhouse_settings),
       http_headers: {
         ...(options?.http_headers ?? {}),
       },
-      session_id: options?.session_id ?? this.config.session_id,
-      role: options?.role ?? this.config.role,
+      session_id: options?.session_id ?? config.session_id,
+      role: options?.role ?? config.role,
     } as ClickHouseBaseQueryOptions & TOptions;
-  }
+  };
 
-  private async send(input: {
+  const send = async (input: {
     readonly statement: string;
     readonly options?: ClickHouseBaseQueryOptions;
     readonly query_params?: Record<string, unknown>;
@@ -61,18 +75,18 @@ export class FetchClickHouseTransport {
     readonly duplex?: "half";
     readonly sendQueryInBody: boolean;
     readonly ignoreErrorResponse?: boolean;
-  }): Promise<RequestHandle> {
-    const mergedOptions = this.mergeOptions(input.options);
+  }): Promise<RequestHandle> => {
+    const mergedOptions = mergeOptions(input.options);
     const queryId = mergedOptions.query_id ?? createUuid();
     assertValidQueryId(queryId);
     if (mergedOptions.session_id) {
       assertValidSessionId(mergedOptions.session_id);
     }
-    const auth = mergedOptions.auth ?? this.config.auth;
+    const auth = mergedOptions.auth ?? config.auth;
     const clickhouseSettings = normalizeTransportSettings({
       settings: mergeClickHouseSettings(
         mergedOptions.clickhouse_settings,
-        this.config.compression.response ? { enable_http_compression: 1 } : undefined,
+        config.compression.response ? { enable_http_compression: 1 } : undefined,
       ),
       parseMode: input.parseMode,
     });
@@ -87,7 +101,7 @@ export class FetchClickHouseTransport {
       input.query_params !== undefined && Object.keys(input.query_params).length > 0 && input.sendQueryInBody;
 
     const searchParams = buildSearchParams({
-      database: this.config.database,
+      database: config.database,
       clickhouse_settings: clickhouseSettings,
       query: input.sendQueryInBody || useMultipart ? undefined : normalizedStatement,
       query_id: queryId,
@@ -113,18 +127,13 @@ export class FetchClickHouseTransport {
     }
 
     const headers = createHeaders({
-      config: this.config,
+      config,
       options: mergedOptions,
       auth,
     });
 
-    const { signal, cleanup } = createAbortController(this.config.request_timeout, mergedOptions.abort_signal);
-    let finalized = false;
+    const { signal, cleanup } = createAbortController(config.request_timeout, mergedOptions.abort_signal);
     const finalize = () => {
-      if (finalized) {
-        return;
-      }
-      finalized = true;
       cleanup();
     };
 
@@ -139,7 +148,7 @@ export class FetchClickHouseTransport {
         init.duplex = "half";
       }
 
-      const response = await fetch(buildRequestUrl(this.config.url, searchParams), init);
+      const response = await fetch(buildRequestUrl(config.url, searchParams), init);
       const ignoreErrorResponse = mergedOptions.ignore_error_response ?? false;
       return {
         response,
@@ -161,137 +170,141 @@ export class FetchClickHouseTransport {
         sessionId: mergedOptions.session_id,
       });
     }
-  }
+  };
 
-  async queryJSON<T = Record<string, unknown>>(input: TransportQueryInput): Promise<T[]> {
-    const format = input.format ?? "JSON";
-    validateFormat("query", format);
-    const request = await this.send({
-      statement: input.statement,
-      query_params: input.query_params,
-      options: input.options,
-      format,
-      parseMode: "json",
-      sendQueryInBody: true,
-    });
-    try {
-      const result = await parseValidatedResponseJson<{ data?: T[] }>({
-        response: request.response,
-        queryId: request.queryId,
-        sessionId: request.options.session_id,
-        json: this.config.json,
-        ignoreErrorResponse: request.options.ignore_error_response ?? false,
+  const transport: FetchClickHouseTransport = {
+    async queryJSON<T = Record<string, unknown>>(input: TransportQueryInput): Promise<T[]> {
+      const format = input.format ?? "JSON";
+      validateFormat("query", format);
+      const request = await send({
+        statement: input.statement,
+        query_params: input.query_params,
+        options: input.options,
+        format,
+        parseMode: "json",
+        sendQueryInBody: true,
       });
-      return result.data ?? [];
-    } finally {
-      request.finalize();
-    }
-  }
-
-  async *queryStream<T = Record<string, unknown>>(input: TransportQueryInput): AsyncGenerator<T, void, unknown> {
-    const format = input.format ?? "JSONEachRow";
-    validateFormat("stream", format);
-    const request = await this.send({
-      statement: input.statement,
-      query_params: input.query_params,
-      options: input.options,
-      format,
-      parseMode: "json_each_row",
-      sendQueryInBody: true,
-    });
-    try {
-      if (!request.response.ok) {
-        await request.readValidatedText();
-        return;
-      }
-      for await (const line of createLineStream(request.response)) {
-        yield parseJsonEachRowLine({
-          line,
+      try {
+        const result = await parseValidatedResponseJson<{ data?: T[] }>({
           response: request.response,
           queryId: request.queryId,
           sessionId: request.options.session_id,
-          json: this.config.json,
-        }) as T;
+          json: config.json,
+          ignoreErrorResponse: request.options.ignore_error_response ?? false,
+        });
+        return result.data ?? [];
+      } finally {
+        request.finalize();
       }
-    } catch (error) {
-      throw normalizeTransportError(error, {
-        queryId: request.queryId,
-        sessionId: request.options.session_id,
-      });
-    } finally {
-      request.finalize();
-    }
-  }
+    },
 
-  async command(statement: string, options?: ClickHouseBaseQueryOptions, query_params?: Record<string, unknown>) {
-    const request = await this.send({
-      statement,
-      query_params,
-      options,
-      parseMode: "text",
-      sendQueryInBody: true,
-      ignoreErrorResponse: options?.ignore_error_response,
-    });
-    try {
-      await request.readValidatedText();
-    } finally {
-      request.finalize();
-    }
-  }
-
-  async insertJsonEachRow(
-    tableName: string,
-    rows: readonly Record<string, unknown>[] | AsyncIterable<Record<string, unknown>>,
-    options?: ClickHouseBaseQueryOptions,
-  ) {
-    const requestBody = await createJsonEachRowBody(rows, this.config.json);
-    const tableIdentifier = compileSql(sql.identifier({ table: tableName })).query;
-    const statement = `INSERT INTO ${tableIdentifier} FORMAT JSONEachRow`;
-    const request = await this.send({
-      statement,
-      options,
-      body: requestBody.body,
-      duplex: requestBody.duplex,
-      parseMode: "text",
-      sendQueryInBody: false,
-    });
-    try {
-      await request.readValidatedText();
-    } finally {
-      request.finalize();
-    }
-  }
-
-  async endpoint(path: string, options?: ClickHouseEndpointOptions, method: "GET" | "POST" = "GET") {
-    const mergedOptions = this.mergeOptions(options);
-    const auth = mergedOptions.auth ?? this.config.auth;
-    const queryId = createUuid();
-    const headers = createHeaders({
-      config: this.config,
-      options: mergedOptions,
-      auth,
-    });
-    const { signal, cleanup } = createAbortController(this.config.request_timeout, mergedOptions.abort_signal);
-
-    try {
-      const response = await fetch(buildEndpointUrl(this.config.url, path), {
-        method,
-        headers,
-        signal,
+    async *queryStream<T = Record<string, unknown>>(input: TransportQueryInput): AsyncGenerator<T, void, unknown> {
+      const format = input.format ?? "JSONEachRow";
+      validateFormat("stream", format);
+      const request = await send({
+        statement: input.statement,
+        query_params: input.query_params,
+        options: input.options,
+        format,
+        parseMode: "json_each_row",
+        sendQueryInBody: true,
       });
-      await readValidatedResponseText({
-        response,
-        queryId,
-        sessionId: mergedOptions.session_id,
-        ignoreErrorResponse: false,
+      try {
+        if (!request.response.ok) {
+          await request.readValidatedText();
+          return;
+        }
+        for await (const line of createLineStream(request.response)) {
+          yield parseJsonEachRowLine({
+            line,
+            response: request.response,
+            queryId: request.queryId,
+            sessionId: request.options.session_id,
+            json: config.json,
+          }) as T;
+        }
+      } catch (error) {
+        throw normalizeTransportError(error, {
+          queryId: request.queryId,
+          sessionId: request.options.session_id,
+        });
+      } finally {
+        request.finalize();
+      }
+    },
+
+    async command(statement: string, options?: ClickHouseBaseQueryOptions, query_params?: Record<string, unknown>) {
+      const request = await send({
+        statement,
+        query_params,
+        options,
+        parseMode: "text",
+        sendQueryInBody: true,
+        ignoreErrorResponse: options?.ignore_error_response,
       });
-    } catch (error) {
-      throw normalizeTransportError(error, {
-        queryId,
-        sessionId: mergedOptions.session_id,
+      try {
+        await request.readValidatedText();
+      } finally {
+        request.finalize();
+      }
+    },
+
+    async insertJsonEachRow(
+      tableName: string,
+      rows: readonly Record<string, unknown>[] | AsyncIterable<Record<string, unknown>>,
+      options?: ClickHouseBaseQueryOptions,
+    ) {
+      const requestBody = await createJsonEachRowBody(rows, config.json);
+      const tableIdentifier = compileSql(sql.identifier({ table: tableName })).query;
+      const statement = `INSERT INTO ${tableIdentifier} FORMAT JSONEachRow`;
+      const request = await send({
+        statement,
+        options,
+        body: requestBody.body,
+        duplex: requestBody.duplex,
+        parseMode: "text",
+        sendQueryInBody: false,
       });
-    } finally {
-      cleanup();
-    }
-  }
-}
+      try {
+        await request.readValidatedText();
+      } finally {
+        request.finalize();
+      }
+    },
+
+    async endpoint(path: string, options?: ClickHouseEndpointOptions, method: "GET" | "POST" = "GET") {
+      const mergedOptions = mergeOptions(options);
+      const auth = mergedOptions.auth ?? config.auth;
+      const queryId = createUuid();
+      const headers = createHeaders({
+        config,
+        options: mergedOptions,
+        auth,
+      });
+      const { signal, cleanup } = createAbortController(config.request_timeout, mergedOptions.abort_signal);
+
+      try {
+        const response = await fetch(buildEndpointUrl(config.url, path), {
+          method,
+          headers,
+          signal,
+        });
+        await readValidatedResponseText({
+          response,
+          queryId,
+          sessionId: mergedOptions.session_id,
+          ignoreErrorResponse: false,
+        });
+      } catch (error) {
+        throw normalizeTransportError(error, {
+          queryId,
+          sessionId: mergedOptions.session_id,
+        });
+      } finally {
+        cleanup();
+      }
+    },
+  };
+
+  return transport;
+};
