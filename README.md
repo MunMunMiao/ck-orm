@@ -19,6 +19,7 @@ The design goal is straightforward: make everyday ClickHouse access easier to st
 ## Contents
 
 - [Installation](#installation)
+- [1.0 migration](#10-migration)
 - [Runtime requirements](#runtime-requirements)
 - [Repository map](#repository-map)
 - [Local verification and workflows](#local-verification-and-workflows)
@@ -48,6 +49,23 @@ npm install ck-orm
 ```
 
 `@opentelemetry/api` is a peer dependency and is automatically installed by modern package managers (bun, npm 7+, pnpm). If you use a manager that does not auto-install peer dependencies, add it explicitly: `npm install @opentelemetry/api`.
+
+## 1.0 migration
+
+`ck-orm` 1.0 removes the last runtime compatibility shims from the pre-1.0 API.
+
+If you are upgrading from `0.x`, make these changes:
+
+- error checks: replace `instanceof ClickHouseOrmError` / `instanceof DecodeError` with `isClickHouseOrmError(error)` / `isDecodeError(error)`
+- error imports: switch runtime imports to type-only imports
+  - before: `import { fn, ClickHouseOrmError } from "ck-orm"`
+  - after: `import { isClickHouseOrmError, type ClickHouseOrmError } from "ck-orm"`
+- deep-import query helpers: replace removed runtime factories
+  - `QueryClient(...)` -> `createQueryClient(...)`
+  - `SelectBuilder(...)` -> `createSelectBuilder(...)`
+  - `InsertBuilder(...)` -> `createInsertBuilder(...)`
+
+`clickhouseClient()` and the fluent query API are unchanged.
 
 ## Runtime requirements
 
@@ -114,16 +132,7 @@ The examples below use a single table so the main flow stays easy to follow.
 
 ```ts
 import {
-  chTable,
-  dateTime64,
-  decimal,
-  int16,
-  int32,
-  int64,
-  string,
-  uint8,
-  uint64,
-} from "ck-orm";
+  chTable, dateTime64, decimal, int16, int32, int64, string, uint8, uint64 } from "ck-orm";
 
 export const orderRewardLog = chTable(
   "order_reward_log",
@@ -158,35 +167,25 @@ import { clickhouseClient } from "ck-orm";
 import { commerceSchema } from "./schema";
 
 export const db = clickhouseClient({
-  host: "http://127.0.0.1:8123",
-  database: "demo_store",
-  username: "default",
-  password: "<password>",
-  schema: commerceSchema,
-  clickhouse_settings: {
-    max_execution_time: 10,
-  },
-});
+  host: "http://127.0.0.1:8123", database: "demo_store", username: "default", password: "<password>", schema: commerceSchema, clickhouse_settings: {
+    max_execution_time: 10, }, });
 ```
 
 ### 3. Query data
 
 ```ts
-import { desc, eq, fn } from "ck-orm";
+import { ck, fn } from "ck-orm";
 import { db } from "./db";
 import { orderRewardLog } from "./schema";
 
 const query = db
   .select({
-    userId: orderRewardLog.user_id,
-    totalRewardPoints: fn.sum(orderRewardLog.reward_points).as(
-      "total_reward_points",
-    ),
-  })
+    userId: orderRewardLog.user_id, totalRewardPoints: fn.sum(orderRewardLog.reward_points).as(
+      "total_reward_points", ), })
   .from(orderRewardLog)
-  .where(eq(orderRewardLog.status, 1))
+  .where(ck.eq(orderRewardLog.status, 1))
   .groupBy(orderRewardLog.user_id)
-  .orderBy(desc(fn.sum(orderRewardLog.reward_points)))
+  .orderBy(ck.desc(fn.sum(orderRewardLog.reward_points)))
   .limit(20);
 
 const rows = await query;
@@ -220,27 +219,16 @@ Use `chTable(name, columns, options?)` to define a table.
 
 ```ts
 const orderRewardLog = chTable("order_reward_log", {
-  id: int32(),
-  user_id: string(),
-  reward_points: decimal(20, 5),
-});
+  id: int32(), user_id: string(), reward_points: decimal(20, 5), });
 ```
 
 The third argument can be a plain object or a factory function:
 
 ```ts
 const orderRewardLog = chTable(
-  "order_reward_log",
-  {
-    id: int32(),
-    user_id: string(),
-    reward_points: decimal(20, 5),
-  },
-  (table) => ({
-    engine: "ReplacingMergeTree",
-    orderBy: [table.user_id, table.id],
-  }),
-);
+  "order_reward_log", {
+    id: int32(), user_id: string(), reward_points: decimal(20, 5), }, (table) => ({
+    engine: "ReplacingMergeTree", orderBy: [table.user_id, table.id], }), );
 ```
 
 Public table options:
@@ -268,20 +256,9 @@ Example:
 
 ```ts
 const orderRewardLog = chTable(
-  "order_reward_log",
-  {
-    id: int32(),
-    created_at: dateTime(),
-    shard_day: date().materialized(sql`toDate(created_at)`),
-    note: string().default(sql`'pending'`),
-  },
-  (table) => ({
-    engine: "ReplacingMergeTree",
-    partitionBy: sql`toYYYYMM(created_at)`,
-    orderBy: [table.id],
-    versionColumn: table.created_at,
-  }),
-);
+  "order_reward_log", {
+    id: int32(), created_at: dateTime(), shard_day: date().materialized(ck.sql`toDate(created_at)`), note: string().default(ck.sql`'pending'`), }, (table) => ({
+    engine: "ReplacingMergeTree", partitionBy: ck.sql`toYYYYMM(created_at)`, orderBy: [table.id], versionColumn: table.created_at, }), );
 ```
 
 ### Type inference
@@ -305,10 +282,7 @@ For generic helpers, use:
 
 ```ts
 import type {
-  InferInsertModel,
-  InferSelectModel,
-  InferSelectSchema,
-} from "ck-orm";
+  InferInsertModel, InferSelectModel, InferSelectSchema } from "ck-orm";
 
 type RewardLogRow = InferSelectModel<typeof orderRewardLog>;
 type RewardLogInsert = InferInsertModel<typeof orderRewardLog>;
@@ -320,7 +294,7 @@ type CommerceRows = InferSelectSchema<typeof commerceSchema>;
 Use `alias()` when the same table needs to appear more than once in a query.
 
 ```ts
-import { alias } from "ck-orm";
+import { fn, ck, alias } from "ck-orm";
 
 const rewardLog = alias(orderRewardLog, "reward_log");
 ```
@@ -450,7 +424,7 @@ const rows = await db
   .limit(10);
 ```
 
-Projection objects are built from public `Selection` values or columns. In practice that means table columns, `fn.*(...)`, and `expr(...)` outputs all compose the same way inside `select({ ... })`.
+Projection objects are built from public `Selection` values or columns. In practice that means table columns, `fn.*(...)`, and `ck.expr(...)` outputs all compose the same way inside `select({ ... })`.
 
 Implicit selection returns the full table model when there are no joins:
 
@@ -463,7 +437,7 @@ With joins, implicit selection groups fields by source and returns nested object
 ### `from()`, `innerJoin()`, `leftJoin()`
 
 ```ts
-import { alias, eq } from "ck-orm";
+import { alias, ck } from "ck-orm";
 
 const rewardLog = alias(orderRewardLog, "reward_log");
 const matchedRewardLog = alias(orderRewardLog, "matched_reward_log");
@@ -477,7 +451,7 @@ const rows = await db
   .from(rewardLog)
   .leftJoin(
     matchedRewardLog,
-    eq(rewardLog.user_id, matchedRewardLog.user_id),
+    ck.eq(rewardLog.user_id, matchedRewardLog.user_id),
   );
 ```
 
@@ -485,33 +459,33 @@ const rows = await db
 
 Public condition helpers:
 
-- `and`
-- `or`
-- `not`
-- `eq`
-- `ne`
-- `gt`
-- `gte`
-- `lt`
-- `lte`
-- `between`
-- `has`
-- `hasAll`
-- `hasAny`
-- `like`
-- `notLike`
-- `ilike`
-- `notIlike`
-- `escapeLike`
-- `inArray`
-- `notInArray`
-- `exists`
-- `notExists`
+- `ck.and`
+- `ck.or`
+- `ck.not`
+- `ck.eq`
+- `ck.ne`
+- `ck.gt`
+- `ck.gte`
+- `ck.lt`
+- `ck.lte`
+- `ck.between`
+- `ck.has`
+- `ck.hasAll`
+- `ck.hasAny`
+- `ck.like`
+- `ck.notLike`
+- `ck.ilike`
+- `ck.notIlike`
+- `ck.escapeLike`
+- `ck.inArray`
+- `ck.notInArray`
+- `ck.exists`
+- `ck.notExists`
 
-`.where(...predicates)` is a variadic `AND` entrypoint. It ignores `undefined`, so you can either pass multiple predicates directly or build grouped predicates with `and(...)` and `or(...)`.
+`.where(...predicates)` is a variadic `AND` entrypoint. It ignores `undefined`, so you can either pass multiple predicates directly or build grouped predicates with `ck.and(...)` and `ck.or(...)`.
 
 ```ts
-import { between, eq, inArray } from "ck-orm";
+import { ck } from "ck-orm";
 
 const query = db
   .select({
@@ -520,16 +494,16 @@ const query = db
   })
   .from(orderRewardLog)
   .where(
-    eq(orderRewardLog.status, 1),
-    inArray(orderRewardLog.campaign_id, [10, 20, 30]),
-    between(orderRewardLog.created_at, 1710000000, 1719999999),
+    ck.eq(orderRewardLog.status, 1),
+    ck.inArray(orderRewardLog.campaign_id, [10, 20, 30]),
+    ck.between(orderRewardLog.created_at, 1710000000, 1719999999),
   );
 ```
 
-`and(...)` skips `undefined`, which makes inline dynamic filters easy to assemble:
+`ck.and(...)` skips `undefined`, which makes inline dynamic filters easy to assemble:
 
 ```ts
-import { and, eq, gt, or } from "ck-orm";
+import { ck } from "ck-orm";
 
 const query = db
   .select({
@@ -538,10 +512,10 @@ const query = db
   })
   .from(orderRewardLog)
   .where(
-    and(
-      minId !== undefined ? gt(orderRewardLog.id, minId) : undefined,
+    ck.and(
+      minId !== undefined ? ck.gt(orderRewardLog.id, minId) : undefined,
       status !== undefined
-        ? or(eq(orderRewardLog.status, status), eq(orderRewardLog.status, 9))
+        ? ck.or(ck.eq(orderRewardLog.status, status), ck.eq(orderRewardLog.status, 9))
         : undefined,
     ),
   );
@@ -550,16 +524,16 @@ const query = db
 For larger runtime-built filters, prefer `Predicate[]` plus variadic `.where(...predicates)`:
 
 ```ts
-import { eq, gt, or, type Predicate } from "ck-orm";
+import { ck, type Predicate } from "ck-orm";
 
 const predicates: Predicate[] = [];
 
 if (minId !== undefined) {
-  predicates.push(gt(orderRewardLog.id, minId));
+  predicates.push(ck.gt(orderRewardLog.id, minId));
 }
 
 if (status !== undefined) {
-  predicates.push(or(eq(orderRewardLog.status, status), eq(orderRewardLog.status, 9)));
+  predicates.push(ck.or(ck.eq(orderRewardLog.status, status), ck.eq(orderRewardLog.status, 9)));
 }
 
 const query = db
@@ -571,31 +545,31 @@ const query = db
   .where(...predicates);
 ```
 
-`Predicate` is the public name for reusable boolean SQL clauses. You can use the same predicate objects in `where`, `having`, join `on` clauses, and boolean-aware helpers such as `exists(...)`.
+`Predicate` is the public name for reusable boolean SQL clauses. You can use the same predicate objects in `where`, `having`, join `on` clauses, and boolean-aware helpers such as `ck.exists(...)`.
 
-`Selection` is the public name for reusable computed builder values such as `fn.sum(...)`, `fn.toString(...)`, and `expr(sql...)`. Use `.as(...)` to alias them and `.mapWith(...)` to override decoding. `Order` is the clause object returned by `asc(...)` and `desc(...)`.
+`Selection` is the public name for reusable computed builder values such as `fn.sum(...)`, `fn.toString(...)`, and `ck.expr(ck.sql...)`. Use `.as(...)` to alias them and `.mapWith(...)` to override decoding. `Order` is the clause object returned by `ck.asc(...)` and `ck.desc(...)`.
 
-`has(...)`, `hasAll(...)`, and `hasAny(...)` map directly to the native ClickHouse functions and keep ClickHouse's array, map, and JSON semantics.
+`ck.has(...)`, `ck.hasAll(...)`, and `ck.hasAny(...)` map directly to the native ClickHouse functions and keep ClickHouse's array, map, and JSON semantics.
 
-`where(...)` is variadic, while `having(...)` takes a single predicate. For multi-clause `having`, compose the predicate first with `and(...)` or `or(...)`.
+`where(...)` is variadic, while `having(...)` takes a single predicate. For multi-clause `having`, compose the predicate first with `ck.and(...)` or `ck.or(...)`.
 
-When you need to match literal `%` or `_` characters, escape the pattern before passing it to `like(...)`:
+When you need to match literal `%` or `_` characters, escape the pattern before passing it to `ck.like(...)`:
 
 ```ts
-import { escapeLike, like } from "ck-orm";
+import { ck } from "ck-orm";
 
 const rows = await db
   .select({
     userId: orderRewardLog.user_id,
   })
   .from(orderRewardLog)
-  .where(like(orderRewardLog.user_id, escapeLike("user_100%")));
+  .where(ck.like(orderRewardLog.user_id, ck.escapeLike("user_100%")));
 ```
 
 ### `groupBy()`, `having()`, `orderBy()`, `limit()`, `offset()`
 
 ```ts
-import { desc, fn, gt } from "ck-orm";
+import { ck, fn } from "ck-orm";
 
 const totalRewardPoints = fn.sum(orderRewardLog.reward_points).as(
   "total_reward_points",
@@ -608,18 +582,18 @@ const query = db
   })
   .from(orderRewardLog)
   .groupBy(orderRewardLog.user_id)
-  .having(gt(fn.sum(orderRewardLog.reward_points), "100.00000"))
-  .orderBy(desc(orderRewardLog.created_at))
+  .having(ck.gt(fn.sum(orderRewardLog.reward_points), "100.00000"))
+  .orderBy(ck.desc(orderRewardLog.created_at))
   .limit(20)
   .offset(0);
 ```
 
-`groupBy()` and `limitBy([...])` accept columns and computed `Selection` values from helpers like `fn.*(...)` or `expr(...)`.
+`groupBy()` and `limitBy([...])` accept columns and computed `Selection` values from helpers like `fn.*(...)` or `ck.expr(...)`.
 
 `orderBy()` accepts:
 
-- `desc(selection)`
-- `asc(selection)`
+- `ck.desc(selection)`
+- `ck.asc(selection)`
 - a column directly
 
 ### `final()`
@@ -635,7 +609,7 @@ const query = db.select().from(orderRewardLog).final();
 Use ClickHouse `LIMIT ... BY ...`:
 
 ```ts
-import { desc } from "ck-orm";
+import { ck } from "ck-orm";
 
 const query = db
   .select({
@@ -643,7 +617,7 @@ const query = db
     createdAt: orderRewardLog.created_at,
   })
   .from(orderRewardLog)
-  .orderBy(desc(orderRewardLog.created_at))
+  .orderBy(ck.desc(orderRewardLog.created_at))
   .limitBy([orderRewardLog.user_id], 1);
 ```
 
@@ -673,7 +647,7 @@ const latestRewardEvent = db
     createdAt: orderRewardLog.created_at,
   })
   .from(orderRewardLog)
-  .orderBy(desc(orderRewardLog.created_at))
+  .orderBy(ck.desc(orderRewardLog.created_at))
   .limit(10)
   .as("latest_reward_event");
 ```
@@ -681,7 +655,7 @@ const latestRewardEvent = db
 Use `$with()` and `with()` for CTEs:
 
 ```ts
-import { fn } from "ck-orm";
+import { ck, fn } from "ck-orm";
 
 const rankedUsers = db.$with("ranked_users").as(
   db
@@ -709,12 +683,12 @@ const rows = await db
 Use `db.count(source, ...predicates)` for a Drizzle-style count helper. It follows the same predicate semantics as `.where(...predicates)`: multiple predicates are combined with `AND`, and `undefined` values are ignored.
 
 ```ts
-import { eq, gt } from "ck-orm";
+import { ck } from "ck-orm";
 
 const total = await db.count(
   orderRewardLog,
-  eq(orderRewardLog.status, 1),
-  gt(orderRewardLog.id, 1000),
+  ck.eq(orderRewardLog.status, 1),
+  ck.gt(orderRewardLog.id, 1000),
 );
 ```
 
@@ -726,7 +700,7 @@ const activeUsers = db
     userId: orderRewardLog.user_id,
   })
   .from(orderRewardLog)
-  .where(eq(orderRewardLog.status, 1))
+  .where(ck.eq(orderRewardLog.status, 1))
   .as("active_users");
 
 const total = await db.count(activeUsers);
@@ -751,7 +725,7 @@ const rawDefaultDb = db.withSettings({
 });
 ```
 
-The forced `join_use_nulls = 1` setting is preserved when a joined query is reused as a subquery, CTE, `exists(...)`, or `inArray(...)` source, so builder types stay aligned with runtime behavior.
+The forced `join_use_nulls = 1` setting is preserved when a joined query is reused as a subquery, CTE, `ck.exists(...)`, or `ck.inArray(...)` source, so builder types stay aligned with runtime behavior.
 
 ## Writes
 
@@ -798,12 +772,12 @@ It accepts:
 
 `ck-orm` includes its own SQL template API. Use it when builder syntax would be less direct than the SQL you already want to write.
 
-### `sql\`...\``
+### `ck.sql\`...\``
 
 ```ts
-import { fn, sql } from "ck-orm";
+import { ck, fn } from "ck-orm";
 
-const rows = await db.execute(sql`
+const rows = await db.execute(ck.sql`
   select
     ${orderRewardLog.user_id},
     ${fn.sum(orderRewardLog.reward_points)} as total_reward_points
@@ -813,35 +787,35 @@ const rows = await db.execute(sql`
 `);
 ```
 
-### Plain strings and `sql("...")`
+### Plain strings and `ck.sql("...")`
 
 ```ts
-import { sql } from "ck-orm";
+import { ck } from "ck-orm";
 
 const rows = await db.execute("SELECT 1 AS one");
-const sameRows = await db.execute(sql("SELECT 1 AS one"));
+const sameRows = await db.execute(ck.sql("SELECT 1 AS one"));
 ```
 
-### `sql.raw()`, `sql.join()`, `sql.identifier()`
+### `ck.sql.raw()`, `ck.sql.join()`, `ck.sql.identifier()`
 
 ```ts
-const fields = sql.join(
-  [sql.identifier("user_id"), sql.identifier("reward_points")],
+const fields = ck.sql.join(
+  [ck.sql.identifier("user_id"), ck.sql.identifier("reward_points")],
   ", ",
 );
 
 const rows = await db.execute(
-  sql`${sql.raw("select ")}${fields}${sql.raw(" from ")}${sql.identifier("order_reward_log")}`,
+  ck.sql`${ck.sql.raw("select ")}${fields}${ck.sql.raw(" from ")}${ck.sql.identifier("order_reward_log")}`,
 );
 ```
 
 ### Raw SQL with `query_params`
 
 ```ts
-import { sql } from "ck-orm";
+import { ck } from "ck-orm";
 
 const rows = await db.execute(
-  sql`select user_id, reward_points from order_reward_log where user_id = {user_id:String} limit {limit:Int64}`,
+  ck.sql`select user_id, reward_points from order_reward_log where user_id = {user_id:String} limit {limit:Int64}`,
   {
     query_params: {
       user_id: "user_100",
@@ -853,17 +827,17 @@ const rows = await db.execute(
 
 Parameter transport is chosen automatically. You do not need to configure multipart handling for `query_params`.
 
-`query_params` keys that start with `orm_param` are rejected. That prefix is reserved for parameters generated internally by `sql\`...\``.
+`query_params` keys that start with `orm_param` are rejected. That prefix is reserved for parameters generated internally by `ck.sql\`...\``.
 
-### `expr()`
+### `ck.expr()`
 
-Use `expr()` to wrap a raw SQL fragment as a reusable `Selection`:
+Use `ck.expr()` to wrap a raw SQL fragment as a reusable `Selection`:
 
 ```ts
-import { expr, sql } from "ck-orm";
+import { ck } from "ck-orm";
 
 const query = db.select({
-  constantOne: expr(sql.raw("1")).as("constant_one"),
+  constantOne: ck.expr(ck.sql.raw("1")).as("constant_one"),
 });
 ```
 
@@ -915,7 +889,7 @@ Common helpers include:
 `fn.call(name, ...)` and `fn.withParams(name, ...)` validate `name` as a SQL identifier before compilation.
 
 ```ts
-import { fn } from "ck-orm";
+import { ck, fn } from "ck-orm";
 
 const query = db
   .select({
@@ -927,12 +901,12 @@ const query = db
   .from(orderRewardLog);
 ```
 
-### `tableFn`
+### `fn.table`
 
 ```ts
-import { fn, tableFn } from "ck-orm";
+import { fn } from "ck-orm";
 
-const numbers = tableFn.call("numbers", 10).as("n");
+const numbers = fn.table.call("numbers", 10).as("n");
 
 const query = db
   .select({
@@ -1094,16 +1068,11 @@ const db = clickhouseClient({
 ### Tracing
 
 ```ts
-import { trace } from "@opentelemetry/api";
+import { fn, ck, trace } from "@opentelemetry/api";
 
 const db = clickhouseClient({
-  databaseUrl: "http://127.0.0.1:8123/demo_store",
-  schema: commerceSchema,
-  tracing: {
-    tracer: trace.getTracer("ck-orm-example"),
-    dbName: "demo_store",
-  },
-});
+  databaseUrl: "http://127.0.0.1:8123/demo_store", schema: commerceSchema, tracing: {
+    tracer: trace.getTracer("ck-orm-example"), dbName: "demo_store", }, });
 ```
 
 ### Custom instrumentation
@@ -1140,10 +1109,15 @@ Public event types:
 
 ## Error model
 
-Public error types:
+Public error types (type-only exports):
 
 - `ClickHouseOrmError`
 - `DecodeError`
+
+Runtime error checks:
+
+- `isClickHouseOrmError(error)`
+- `isDecodeError(error)`
 
 `ClickHouseOrmError` preserves as much context as possible, including:
 
@@ -1172,7 +1146,7 @@ Current public `kind` values:
 
 The built-in protections include:
 
-- identifiers passed to `sql.identifier()` are validated and quoted
+- identifiers passed to `ck.sql.identifier()` are validated and quoted
 - function names used by `fn.call(...)`, `fn.withParams(...)`, `aggregateFunction(...)`, `simpleAggregateFunction(...)`, and `nested({...})` keys are validated
 - values interpolated into `sql\`...\`` become ClickHouse named parameters rather than raw SQL text
 - `query_params` keys that start with `orm_param` are rejected because that prefix is reserved for internal SQL-template parameters
@@ -1185,12 +1159,12 @@ The built-in protections include:
 
 Treat the following APIs like `eval`: only pass developer-controlled strings, never user-derived input.
 
-- `sql.raw(value)`
+- `ck.sql.raw(value)`
 - `db.createTemporaryTableRaw(name, definition)`
 
 `fn.call(name, ...)` and `fn.withParams(name, ...)` validate `name`, but you should still treat dynamically chosen function names as developer-controlled input rather than end-user input.
 
-`sql.identifier(...)` validates on the compile/execute boundary. Constructing the fragment is cheap; the error appears when the fragment is compiled into a query.
+`ck.sql.identifier(...)` validates on the compile/execute boundary. Constructing the fragment is cheap; the error appears when the fragment is compiled into a query.
 
 ### Tracing data exposure
 

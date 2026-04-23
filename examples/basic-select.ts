@@ -1,4 +1,4 @@
-import { alias, and, clickhouseClient, desc, eq, fn, inArray } from "./ck-orm";
+import { alias, ck, clickhouseClient, fn } from "./ck-orm";
 import { commerceSchema, orderRewardLog } from "./schema/commerce";
 
 const createCommerceDb = () => {
@@ -25,8 +25,8 @@ export const buildRewardLeaderboardExample = () => {
       activeUsers: fn.uniqExact(rewardLog.user_id),
     })
     .from(rewardLog)
-    .where(and(eq(rewardLog.user_id, "user_100"), inArray(rewardLog.channel, [1, 2])))
-    .orderBy(desc(rewardLog.created_at))
+    .where(ck.and(ck.eq(rewardLog.user_id, "user_100"), ck.inArray(rewardLog.channel, [1, 2])))
+    .orderBy(ck.desc(rewardLog.created_at))
     .limit(20)
     .offset(0)
     .final();

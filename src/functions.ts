@@ -222,16 +222,17 @@ const tableFns = {
  * ClickHouse SQL function helpers.
  *
  * Grouped internally by category but exposed as a single `fn` object so that
- * `fn.sum(...)`, `fn.coalesce(...)`, `Object.keys(fn)` and dynamic access
- * (`fn[name]`) all keep working.
+ * `fn.sum(...)`, `fn.coalesce(...)`, `fn.table.call(...)`, `Object.keys(fn)`
+ * and dynamic access (`fn[name]`) all keep working.
  */
 export const fn = {
   ...scalarFns,
   ...aggregateFns,
+  table: tableFns,
 };
 
 /**
- * Table function helpers (e.g. `tableFn.call("numbers", 100)`).
+ * Low-level table function helpers shared by internals and `fn.table`.
  */
 export const tableFn = {
   ...tableFns,

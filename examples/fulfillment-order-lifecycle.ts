@@ -1,4 +1,4 @@
-import { clickhouseClient, desc, eq, fn } from "./ck-orm";
+import { ck, clickhouseClient, fn } from "./ck-orm";
 import { fulfillmentSchema, shipmentEvent, shipmentOrder } from "./schema/fulfillment";
 
 const createFulfillmentDb = () => {
@@ -29,8 +29,8 @@ export const createFulfillmentLifecycleQuery = () => {
         orderStatus: shipmentOrder.status,
       })
       .from(shipmentOrder)
-      .where(eq(shipmentOrder._peerdb_is_deleted, 0))
-      .orderBy(desc(shipmentOrder.created_at))
+      .where(ck.eq(shipmentOrder._peerdb_is_deleted, 0))
+      .orderBy(ck.desc(shipmentOrder.created_at))
       .limitBy([shipmentOrder.shipment_id], 1)
       .final(),
   );
@@ -48,8 +48,8 @@ export const createFulfillmentLifecycleQuery = () => {
         eventStatus: shipmentEvent.status,
       })
       .from(shipmentEvent)
-      .where(eq(shipmentEvent._peerdb_is_deleted, 0))
-      .orderBy(desc(shipmentEvent.processed_at))
+      .where(ck.eq(shipmentEvent._peerdb_is_deleted, 0))
+      .orderBy(ck.desc(shipmentEvent.processed_at))
       .limitBy([shipmentEvent.shipment_id], 1)
       .final(),
   );
@@ -69,8 +69,8 @@ export const createFulfillmentLifecycleQuery = () => {
       effectiveStatus: fn.coalesce(latestEvents.eventStatus, latestOrders.orderStatus).as("effective_status"),
     })
     .from(latestOrders)
-    .leftJoin(latestEvents, eq(latestOrders.shipmentId, latestEvents.shipmentId))
-    .orderBy(desc(latestOrders.createdAt));
+    .leftJoin(latestEvents, ck.eq(latestOrders.shipmentId, latestEvents.shipmentId))
+    .orderBy(ck.desc(latestOrders.createdAt));
 };
 
 export const loadFulfillmentLifecycleSnapshot = async () => {

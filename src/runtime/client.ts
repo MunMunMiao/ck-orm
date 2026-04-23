@@ -31,7 +31,6 @@ import {
   type RawQueryInput,
   type ResolveJoinUseNulls,
   type Session,
-  type SessionContext,
   type SessionRunInSessionOptions,
   toClickHouseTableName,
 } from "./config";
@@ -56,23 +55,76 @@ type ClickHouseOrmClientConfig<TSchema, TJoinUseNulls extends 0 | 1> = {
   client: FetchClickHouseTransport;
   defaultOptions?: ClickHouseBaseQueryOptions;
   instrumentations?: readonly ClickHouseOrmInstrumentation[];
-  sessionContext?: SessionContext;
+  sessionController?: SessionController;
   joinUseNulls?: TJoinUseNulls;
 };
 
-const createSessionContext = (sessionId: string, ancestorSessionIds: readonly string[]): SessionContext => ({
-  sessionId,
-  ancestorSessionIds,
-  tempTables: [],
-  queueTail: Promise.resolve(),
-});
+type SessionController = {
+  readonly sessionId: string;
+  readonly ancestorSessionIds: readonly string[];
+  runSerial<TValue>(operation: () => Promise<TValue>): Promise<TValue>;
+  runLockedStream<TValue>(
+    operation: () => AsyncGenerator<TValue, void, unknown>,
+  ): AsyncGenerator<TValue, void, unknown>;
+  registerTempTable(name: string): void;
+  listTempTablesForCleanup(): readonly string[];
+  createChildSessionController(sessionId: string): SessionController;
+};
+
+const createSessionController = (sessionId: string, ancestorSessionIds: readonly string[]): SessionController => {
+  let queueTail: Promise<void> = Promise.resolve();
+  const tempTables: string[] = [];
+
+  return {
+    sessionId,
+    ancestorSessionIds,
+    async runSerial<TValue>(operation: () => Promise<TValue>): Promise<TValue> {
+      const next = queueTail.then(operation, operation);
+      const clearQueue = () => undefined;
+      queueTail = next.then(clearQueue, clearQueue);
+      return next;
+    },
+    async *runLockedStream<TValue>(
+      operation: () => AsyncGenerator<TValue, void, unknown>,
+    ): AsyncGenerator<TValue, void, unknown> {
+      const previous = queueTail;
+      let release!: () => void;
+      const next = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const continueWithNext = () => next;
+      queueTail = previous.then(continueWithNext, continueWithNext);
+      await previous;
+
+      try {
+        yield* operation();
+      } finally {
+        release();
+      }
+    },
+    registerTempTable(name: string) {
+      if (!tempTables.includes(name)) {
+        tempTables.push(name);
+      }
+    },
+    listTempTablesForCleanup() {
+      return [...tempTables].reverse();
+    },
+    createChildSessionController(childSessionId: string): SessionController {
+      if ([sessionId, ...ancestorSessionIds].includes(childSessionId)) {
+        throw createSessionError("Nested runInSession() cannot reuse an existing session_id");
+      }
+      return createSessionController(childSessionId, [sessionId, ...ancestorSessionIds]);
+    },
+  };
+};
 
 export const createClickHouseOrmClient = <TSchema, TJoinUseNulls extends 0 | 1 = 1>(
   config: ClickHouseOrmClientConfig<TSchema, TJoinUseNulls>,
 ): ClickHouseOrmClient<TSchema, TJoinUseNulls> => {
   const defaultOptions = config.defaultOptions ?? {};
   const instrumentations = config.instrumentations ?? [];
-  const sessionContext = config.sessionContext;
+  const sessionController = config.sessionController;
   const joinUseNulls = (config.joinUseNulls ?? 1) as TJoinUseNulls;
 
   let client!: ClickHouseOrmClient<TSchema, TJoinUseNulls>;
@@ -105,14 +157,10 @@ export const createClickHouseOrmClient = <TSchema, TJoinUseNulls extends 0 | 1 =
   };
 
   const runSerial = async <TValue>(operation: () => Promise<TValue>): Promise<TValue> => {
-    if (!sessionContext) {
+    if (!sessionController) {
       return operation();
     }
-
-    const next = sessionContext.queueTail.then(operation, operation);
-    const clearQueue = () => undefined;
-    sessionContext.queueTail = next.then(clearQueue, clearQueue);
-    return next;
+    return sessionController.runSerial(operation);
   };
 
   const buildQueryEvent = (input: {
@@ -205,25 +253,11 @@ export const createClickHouseOrmClient = <TSchema, TJoinUseNulls extends 0 | 1 =
   const runLockedStream = async function* <TValue>(
     operation: () => AsyncGenerator<TValue, void, unknown>,
   ): AsyncGenerator<TValue, void, unknown> {
-    if (!sessionContext) {
+    if (!sessionController) {
       yield* operation();
       return;
     }
-
-    const previous = sessionContext.queueTail;
-    let release!: () => void;
-    const next = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const continueWithNext = () => next;
-    sessionContext.queueTail = previous.then(continueWithNext, continueWithNext);
-    await previous;
-
-    try {
-      yield* operation();
-    } finally {
-      release();
-    }
+    yield* sessionController.runLockedStream(operation);
   };
 
   const executeCompiled = async <TResult extends Record<string, unknown>>(
@@ -328,7 +362,7 @@ export const createClickHouseOrmClient = <TSchema, TJoinUseNulls extends 0 | 1 =
 
   const createChild = <TNextJoinUseNulls extends 0 | 1 = TJoinUseNulls>(
     nextDefaultOptions: ClickHouseBaseQueryOptions,
-    nextSessionContext?: SessionContext,
+    nextSessionController?: SessionController,
     nextJoinUseNulls?: TNextJoinUseNulls,
   ) => {
     return createClickHouseOrmClient<TSchema, TNextJoinUseNulls>({
@@ -336,7 +370,7 @@ export const createClickHouseOrmClient = <TSchema, TJoinUseNulls extends 0 | 1 =
       defaultOptions: nextDefaultOptions,
       instrumentations,
       schema: config.schema,
-      sessionContext: nextSessionContext,
+      sessionController: nextSessionController,
       joinUseNulls: nextJoinUseNulls ?? (joinUseNulls as unknown as TNextJoinUseNulls),
     });
   };
@@ -346,16 +380,13 @@ export const createClickHouseOrmClient = <TSchema, TJoinUseNulls extends 0 | 1 =
   };
 
   const registerValidatedTempTable = (name: string) => {
-    const tempTables = sessionContext?.tempTables ?? [];
-    if (!tempTables.includes(name)) {
-      tempTables.push(name);
-    }
+    sessionController?.registerTempTable(name);
   };
 
   client = {
     ...queryClient,
     $client: config.client,
-    sessionId: defaultOptions.session_id ?? "",
+    sessionId: sessionController?.sessionId ?? defaultOptions.session_id ?? "",
 
     async execute(query: RawQueryInput, options?: ClickHouseQueryOptions) {
       const mergedOptions = mergeOptions(options);
@@ -491,7 +522,7 @@ export const createClickHouseOrmClient = <TSchema, TJoinUseNulls extends 0 | 1 =
             ...settings,
           },
         },
-        sessionContext,
+        sessionController,
         nextJoinUseNulls,
       );
     },
@@ -527,7 +558,7 @@ export const createClickHouseOrmClient = <TSchema, TJoinUseNulls extends 0 | 1 =
     },
 
     registerTempTable(name: string) {
-      if (!sessionContext) {
+      if (!sessionController) {
         throw createSessionError("registerTempTable() requires runInSession()");
       }
       renderTempTableIdentifier(name);
@@ -535,7 +566,7 @@ export const createClickHouseOrmClient = <TSchema, TJoinUseNulls extends 0 | 1 =
     },
 
     async createTemporaryTable(table: AnyTable, options?: CreateTemporaryTableOptions) {
-      if (!sessionContext) {
+      if (!sessionController) {
         throw createSessionError("createTemporaryTable() requires runInSession()");
       }
       const statement = buildCreateTemporaryTableStatement(table, options?.mode);
@@ -544,7 +575,7 @@ export const createClickHouseOrmClient = <TSchema, TJoinUseNulls extends 0 | 1 =
     },
 
     async createTemporaryTableRaw(name: string, definition: string) {
-      if (!sessionContext) {
+      if (!sessionController) {
         throw createSessionError("createTemporaryTableRaw() requires runInSession()");
       }
       const normalizedDefinition = normalizeSingleStatementSql(
@@ -560,34 +591,29 @@ export const createClickHouseOrmClient = <TSchema, TJoinUseNulls extends 0 | 1 =
       callback: (session: Session<TSchema, TJoinUseNulls>) => Promise<TResult>,
       options?: SessionRunInSessionOptions,
     ): Promise<TResult> {
-      if (sessionContext && options?.session_check === 1) {
+      if (sessionController && options?.session_check === 1) {
         throw createClientValidationError(
           "Nested runInSession() cannot use session_check=1 because child sessions are created by ck-orm",
         );
       }
 
-      if (!sessionContext && options?.session_check === 1 && !options.session_id) {
+      if (!sessionController && options?.session_check === 1 && !options.session_id) {
         throw createClientValidationError(
           "runInSession() requires an explicit session_id when session_check=1 because ClickHouse only validates existing sessions",
         );
       }
 
-      const ancestorSessionIds = sessionContext
-        ? [sessionContext.sessionId, ...sessionContext.ancestorSessionIds]
-        : ([] as string[]);
       const sessionId = options?.session_id ?? createSessionId();
-      if (ancestorSessionIds.includes(sessionId)) {
-        throw createSessionError("Nested runInSession() cannot reuse an existing session_id");
-      }
-
-      const childSessionContext = createSessionContext(sessionId, ancestorSessionIds);
+      const childSessionController = sessionController
+        ? sessionController.createChildSessionController(sessionId)
+        : createSessionController(sessionId, []);
       const sessionClient = createChild(
         {
           ...defaultOptions,
           ...options,
           session_id: sessionId,
         },
-        childSessionContext,
+        childSessionController,
       );
 
       let userError: unknown;
@@ -601,7 +627,7 @@ export const createClickHouseOrmClient = <TSchema, TJoinUseNulls extends 0 | 1 =
       }
 
       const cleanupErrors: unknown[] = [];
-      for (const tableName of [...childSessionContext.tempTables].reverse()) {
+      for (const tableName of childSessionController.listTempTablesForCleanup()) {
         try {
           const identifier = renderTempTableIdentifier(tableName);
           await sessionClient.command(`DROP TABLE IF EXISTS ${identifier}`, {

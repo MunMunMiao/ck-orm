@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { alias, sql } from "./ck-orm";
+import { alias, ck } from "./ck-orm";
 import { createE2EDb, schemaAggregates, schemaCompound, schemaGeo, schemaPrimitives, users } from "./shared";
 import { describeE2E, expectDate, expectPresent } from "./test-helpers";
 
@@ -64,7 +64,7 @@ describeE2E("ck-orm e2e schema roundtrip", function describeSchemaRoundtrip() {
     const [aggregateRow] = await db
       .select({
         id: schemaAggregates.id,
-        aggValue: sql<number>`finalizeAggregation(${schemaAggregates.agg_sum_state})`
+        aggValue: ck.sql<number>`finalizeAggregation(${schemaAggregates.agg_sum_state})`
           .mapWith((value) => Number(value))
           .as("agg_value"),
         simpleValue: schemaAggregates.simple_sum_value,
@@ -127,7 +127,7 @@ describeE2E("ck-orm e2e schema roundtrip", function describeSchemaRoundtrip() {
   it("supports alias interpolation for schema sources", async function testAliasRoundtrip() {
     const db = createE2EDb();
     const aliasedUsers = alias(users, "u");
-    const rows = await db.execute(sql`
+    const rows = await db.execute(ck.sql`
       select ${aliasedUsers.id} as id, ${aliasedUsers.name} as name
       from ${aliasedUsers}
       where ${aliasedUsers.id} = ${1}

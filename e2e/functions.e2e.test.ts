@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { eq, expr, fn, sql, tableFn } from "./ck-orm";
+import { ck, fn } from "./ck-orm";
 import { createE2EDb, users, webEvents } from "./shared";
 import { describeE2E, expectDate, expectPresent } from "./test-helpers";
 
@@ -18,7 +18,7 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
         createdAtTime: fn.toDateTime(users.created_at).as("created_at_time"),
       })
       .from(users)
-      .where(eq(users.id, 1));
+      .where(ck.eq(users.id, 1));
 
     const presentRow = expectPresent(row, "conversion row");
     expect(presentRow).toEqual({
@@ -50,9 +50,9 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
     const [row] = await db
       .select({
         eventCount: fn.count(webEvents.event_id).as("event_count"),
-        usEventCount: fn.countIf(eq(webEvents.country, "US")).as("us_event_count"),
+        usEventCount: fn.countIf(ck.eq(webEvents.country, "US")).as("us_event_count"),
         totalRevenue: fn.sum(webEvents.revenue).as("total_revenue"),
-        totalRevenueUs: fn.sumIf(webEvents.revenue, eq(webEvents.country, "US")).as("total_revenue_us"),
+        totalRevenueUs: fn.sumIf(webEvents.revenue, ck.eq(webEvents.country, "US")).as("total_revenue_us"),
         avgRevenue: fn.avg(webEvents.event_id).as("avg_event_id"),
         minEventId: fn.min(webEvents.event_id).as("min_event_id"),
         maxEventId: fn.max(webEvents.event_id).as("max_event_id"),
@@ -95,14 +95,14 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
 
     const [row] = await db
       .select({
-        safeTier: fn.coalesce(users.tier, sql.raw(`'missing'`)).as("safe_tier"),
+        safeTier: fn.coalesce(users.tier, ck.sql.raw(`'missing'`)).as("safe_tier"),
         tupleValue: fn.tuple(users.id, users.name).as("tuple_value"),
         zippedTags: fn.arrayZip(webEvents.tags, webEvents.tag_scores).as("zipped_tags"),
-        isNotVip: fn.not(eq(users.tier, "vip")).as("is_not_vip"),
+        isNotVip: fn.not(ck.eq(users.tier, "vip")).as("is_not_vip"),
       })
       .from(users)
-      .innerJoin(webEvents, eq(users.id, webEvents.user_id))
-      .where(eq(users.id, 1))
+      .innerJoin(webEvents, ck.eq(users.id, webEvents.user_id))
+      .where(ck.eq(users.id, 1))
       .orderBy(webEvents.event_id)
       .limit(1);
 
@@ -118,14 +118,14 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
 
   it("supports tableFn.call against the numbers table function", async function testTableFunction() {
     const db = createE2EDb();
-    const numbers = tableFn.call("numbers", 5).as("n");
+    const numbers = fn.table.call("numbers", 5).as("n");
 
     const rows = await db
       .select({
-        value: expr(sql<bigint>`number`.mapWith((value) => BigInt(String(value)))),
+        value: ck.expr(ck.sql<bigint>`number`.mapWith((value) => BigInt(String(value)))),
       })
       .from(numbers)
-      .orderBy(expr(sql`number`));
+      .orderBy(ck.expr(ck.sql`number`));
 
     expect(rows).toEqual([{ value: 0 }, { value: 1 }, { value: 2 }, { value: 3 }, { value: 4 }]);
   });

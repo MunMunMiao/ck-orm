@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { chTable, int32, sql } from "./ck-orm";
+import { chTable, ck, int32 } from "./ck-orm";
 import { createE2EDb, createTempTableName } from "./shared";
 import { describeE2E, expectRejectsWithClickhouseError } from "./test-helpers";
 
@@ -107,7 +107,7 @@ describeE2E("ck-orm e2e session security", function describeSessionSecurity() {
     await db.runInSession(
       async (session) => {
         const error = await expectRejectsWithClickhouseError(
-          session.execute(sql`select * from ${sql.identifier(isolatedTable)}`),
+          session.execute(ck.sql`select * from ${ck.sql.identifier(isolatedTable)}`),
           {
             kind: "request_failed",
             executionState: "rejected",
@@ -133,12 +133,14 @@ describeE2E("ck-orm e2e session security", function describeSessionSecurity() {
         await session.createTemporaryTable(outerScope);
         await session.insertJsonEachRow(outerScope, [{ id: 1 }]);
         expect(
-          Number((await session.execute(sql`select count() as total from ${sql.identifier(outerTable)}`))[0]?.total),
+          Number(
+            (await session.execute(ck.sql`select count() as total from ${ck.sql.identifier(outerTable)}`))[0]?.total,
+          ),
         ).toBe(1);
 
         await session.runInSession(async (childOne) => {
           const missingOuter = await expectRejectsWithClickhouseError(
-            childOne.execute(sql`select count() as total from ${sql.identifier(outerTable)}`),
+            childOne.execute(ck.sql`select count() as total from ${ck.sql.identifier(outerTable)}`),
             {
               kind: "request_failed",
               executionState: "rejected",
@@ -150,13 +152,14 @@ describeE2E("ck-orm e2e session security", function describeSessionSecurity() {
           await childOne.insertJsonEachRow(childOneScope, [{ id: 11 }]);
           expect(
             Number(
-              (await childOne.execute(sql`select count() as total from ${sql.identifier(childOneTable)}`))[0]?.total,
+              (await childOne.execute(ck.sql`select count() as total from ${ck.sql.identifier(childOneTable)}`))[0]
+                ?.total,
             ),
           ).toBe(1);
         });
 
         const missingChildOneFromOuter = await expectRejectsWithClickhouseError(
-          session.execute(sql`select count() as total from ${sql.identifier(childOneTable)}`),
+          session.execute(ck.sql`select count() as total from ${ck.sql.identifier(childOneTable)}`),
           {
             kind: "request_failed",
             executionState: "rejected",
@@ -164,12 +167,14 @@ describeE2E("ck-orm e2e session security", function describeSessionSecurity() {
         );
         expect(missingChildOneFromOuter.message).toMatch(new RegExp(childOneTable, "i"));
         expect(
-          Number((await session.execute(sql`select count() as total from ${sql.identifier(outerTable)}`))[0]?.total),
+          Number(
+            (await session.execute(ck.sql`select count() as total from ${ck.sql.identifier(outerTable)}`))[0]?.total,
+          ),
         ).toBe(1);
 
         await session.runInSession(async (childTwo) => {
           const missingOuter = await expectRejectsWithClickhouseError(
-            childTwo.execute(sql`select count() as total from ${sql.identifier(outerTable)}`),
+            childTwo.execute(ck.sql`select count() as total from ${ck.sql.identifier(outerTable)}`),
             {
               kind: "request_failed",
               executionState: "rejected",
@@ -178,7 +183,7 @@ describeE2E("ck-orm e2e session security", function describeSessionSecurity() {
           expect(missingOuter.message).toMatch(new RegExp(outerTable, "i"));
 
           const missingChildOne = await expectRejectsWithClickhouseError(
-            childTwo.execute(sql`select count() as total from ${sql.identifier(childOneTable)}`),
+            childTwo.execute(ck.sql`select count() as total from ${ck.sql.identifier(childOneTable)}`),
             {
               kind: "request_failed",
               executionState: "rejected",
@@ -190,13 +195,16 @@ describeE2E("ck-orm e2e session security", function describeSessionSecurity() {
           await childTwo.insertJsonEachRow(childTwoScope, [{ id: 21 }]);
           expect(
             Number(
-              (await childTwo.execute(sql`select count() as total from ${sql.identifier(childTwoTable)}`))[0]?.total,
+              (await childTwo.execute(ck.sql`select count() as total from ${ck.sql.identifier(childTwoTable)}`))[0]
+                ?.total,
             ),
           ).toBe(1);
         });
 
         expect(
-          Number((await session.execute(sql`select count() as total from ${sql.identifier(outerTable)}`))[0]?.total),
+          Number(
+            (await session.execute(ck.sql`select count() as total from ${ck.sql.identifier(outerTable)}`))[0]?.total,
+          ),
         ).toBe(1);
       },
       { session_id: `test_sibling_${Date.now()}` },
@@ -214,14 +222,16 @@ describeE2E("ck-orm e2e session security", function describeSessionSecurity() {
         await session.createTemporaryTable(cleanupScope);
         await session.insertJsonEachRow(cleanupScope, [{ id: 1 }]);
         expect(
-          Number((await session.execute(sql`select count() as total from ${sql.identifier(cleanupTable)}`))[0]?.total),
+          Number(
+            (await session.execute(ck.sql`select count() as total from ${ck.sql.identifier(cleanupTable)}`))[0]?.total,
+          ),
         ).toBe(1);
       },
       { session_id: sessionId },
     );
 
     const error = await expectRejectsWithClickhouseError(
-      db.execute(sql`select count() as total from ${sql.identifier(cleanupTable)}`, {
+      db.execute(ck.sql`select count() as total from ${ck.sql.identifier(cleanupTable)}`, {
         session_id: sessionId,
       }),
       {

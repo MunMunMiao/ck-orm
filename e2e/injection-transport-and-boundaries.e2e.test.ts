@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { chTable, int32, sql, string } from "./ck-orm";
+import { chTable, ck, int32, string } from "./ck-orm";
 import { createE2EDb, createTempTableName, users } from "./shared";
 import { describeE2E, expectClientValidationNotSent, expectNoMutationAfterRejectedInjection } from "./test-helpers";
 
@@ -10,14 +10,14 @@ describeE2E(
       const db = createE2EDb();
 
       await expectClientValidationNotSent(
-        db.execute(sql`SELECT * FROM ${users} WHERE id = ${1}`, {
+        db.execute(ck.sql`SELECT * FROM ${users} WHERE id = ${1}`, {
           query_params: {
             orm_param1: 999,
           },
         }),
         {
           message:
-            '[ck-orm] query_params key "orm_param1" uses reserved internal prefix "orm_param". This prefix is reserved for sql`...` generated parameters.',
+            '[ck-orm] query_params key "orm_param1" uses reserved internal prefix "orm_param". This prefix is reserved for ck.sql`...` generated parameters.',
         },
       );
     });
@@ -82,11 +82,11 @@ describeE2E(
 
       await db.runInSession(async (session) => {
         await session.createTemporaryTableRaw(tempTable, "(id Int32, note String DEFAULT ';')");
-        await session.command(sql`INSERT INTO ${sql.identifier(tempTable)} (id) VALUES (${1})`);
+        await session.command(ck.sql`INSERT INTO ${ck.sql.identifier(tempTable)} (id) VALUES (${1})`);
 
-        const rows = await session.execute(sql`
+        const rows = await session.execute(ck.sql`
         select note
-        from ${sql.identifier(tempTable)}
+        from ${ck.sql.identifier(tempTable)}
         where id = ${1}
       `);
 
@@ -100,17 +100,17 @@ describeE2E(
       const tempTable = createTempTableName("tmp_session_opts");
 
       try {
-        await db.command(sql`CREATE TEMPORARY TABLE ${sql.identifier(tempTable)} (id Int32)`, {
+        await db.command(ck.sql`CREATE TEMPORARY TABLE ${ck.sql.identifier(tempTable)} (id Int32)`, {
           session_id: sessionId,
           session_timeout: 30,
         });
-        await db.command(sql`INSERT INTO ${sql.identifier(tempTable)} (id) VALUES (${1})`, {
+        await db.command(ck.sql`INSERT INTO ${ck.sql.identifier(tempTable)} (id) VALUES (${1})`, {
           session_id: sessionId,
           session_timeout: 30,
           session_check: 1,
         });
 
-        const rows = await db.execute(sql`SELECT id FROM ${sql.identifier(tempTable)} ORDER BY id`, {
+        const rows = await db.execute(ck.sql`SELECT id FROM ${ck.sql.identifier(tempTable)} ORDER BY id`, {
           session_id: sessionId,
           session_timeout: 30,
           session_check: 1,
@@ -122,8 +122,8 @@ describeE2E(
             const sessionTempTable = createTempTableName("tmp_run_in_session_opts");
             const sessionTempScope = chTable(sessionTempTable, { id: int32() });
             await session.createTemporaryTable(sessionTempScope);
-            await session.command(sql`INSERT INTO ${sql.identifier(sessionTempTable)} (id) VALUES (${2})`);
-            return await session.execute(sql`SELECT id FROM ${sql.identifier(sessionTempTable)} ORDER BY id`);
+            await session.command(ck.sql`INSERT INTO ${ck.sql.identifier(sessionTempTable)} (id) VALUES (${2})`);
+            return await session.execute(ck.sql`SELECT id FROM ${ck.sql.identifier(sessionTempTable)} ORDER BY id`);
           },
           {
             session_timeout: 30,
@@ -131,7 +131,7 @@ describeE2E(
         );
         expect(sessionRows).toEqual([{ id: 2 }]);
       } finally {
-        await db.command(sql`DROP TABLE IF EXISTS ${sql.identifier(tempTable)}`, {
+        await db.command(ck.sql`DROP TABLE IF EXISTS ${ck.sql.identifier(tempTable)}`, {
           session_id: sessionId,
           session_timeout: 30,
           session_check: 1,
@@ -140,7 +140,7 @@ describeE2E(
       }
     });
 
-    it("rejects dangerous sql.join() separator patterns before a request is sent", async function testJoinSeparatorValidation() {
+    it("rejects dangerous ck.sql.join() separator patterns before a request is sent", async function testJoinSeparatorValidation() {
       const db = createE2EDb();
       const evilSeparator = "`) UNION ALL SELECT password FROM users; -- ";
 
@@ -148,14 +148,14 @@ describeE2E(
         db
           .select()
           .from(users)
-          .orderBy(sql.join([sql.identifier("a")], evilSeparator)),
+          .orderBy(ck.sql.join([ck.sql.identifier("a")], evilSeparator)),
       ).toThrow("Invalid SQL join separator");
 
       expect(() =>
         db
           .select()
           .from(users)
-          .orderBy(sql.join([sql.identifier("a")], "a;b")),
+          .orderBy(ck.sql.join([ck.sql.identifier("a")], "a;b")),
       ).toThrow("Invalid SQL join separator");
     });
 
@@ -164,9 +164,9 @@ describeE2E(
       const tempTable = createTempTableName("tmp_structured_schema");
       const structuredScope = chTable(tempTable, {
         base: int32(),
-        note: string().default(sql`'auto'`),
-        doubled: int32().materialized(sql`base * 2`),
-        label: string().aliasExpr(sql`concat('n=', toString(base))`),
+        note: string().default(ck.sql`'auto'`),
+        doubled: int32().materialized(ck.sql`base * 2`),
+        label: string().aliasExpr(ck.sql`concat('n=', toString(base))`),
       });
 
       await db.runInSession(async (session) => {

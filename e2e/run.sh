@@ -35,5 +35,5 @@ if [[ "$healthy" != "1" ]]; then
 fi
 
 docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" run --rm --build seed
-docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" run --rm --build e2e bun test e2e/dataset-smoke.e2e.test.ts
-docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" run --rm --build e2e
+docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" run --rm --no-deps --build e2e bun test e2e/dataset-smoke.e2e.test.ts
+docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" run --rm --no-deps --build e2e

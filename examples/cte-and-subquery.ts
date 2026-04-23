@@ -1,4 +1,4 @@
-import { clickhouseClient, desc, eq, fn } from "./ck-orm";
+import { ck, clickhouseClient, fn } from "./ck-orm";
 import { commerceSchema, orderRewardLog } from "./schema/commerce";
 
 const createCommerceDb = () => {
@@ -33,7 +33,7 @@ export const buildRewardSummaryWithLatestEventExample = () => {
       createdAt: orderRewardLog.created_at,
     })
     .from(orderRewardLog)
-    .orderBy(desc(orderRewardLog.created_at))
+    .orderBy(ck.desc(orderRewardLog.created_at))
     .limit(10)
     .as("latest_reward_event");
 
@@ -45,7 +45,7 @@ export const buildRewardSummaryWithLatestEventExample = () => {
       latestCreatedAt: latestRewardEvent.createdAt,
     })
     .from(rankedUsers)
-    .leftJoin(latestRewardEvent, eq(rankedUsers.userId, latestRewardEvent.userId));
+    .leftJoin(latestRewardEvent, ck.eq(rankedUsers.userId, latestRewardEvent.userId));
 
   return {
     query,

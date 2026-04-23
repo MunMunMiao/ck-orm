@@ -1,4 +1,4 @@
-import { alias, and, asc, clickhouseClient, desc, eq, fn } from "./ck-orm";
+import { alias, ck, clickhouseClient, fn } from "./ck-orm";
 import { commerceSchema, orderRewardLog } from "./schema/commerce";
 
 const createCommerceDb = () => {
@@ -28,7 +28,7 @@ export const createMonthlyRewardSummaryQuery = () => {
         rewardPoints: rewardLog.reward_points,
       })
       .from(rewardLog)
-      .where(and(eq(rewardLog._peerdb_is_deleted, 0), eq(rewardLog.channel, 1)))
+      .where(ck.and(ck.eq(rewardLog._peerdb_is_deleted, 0), ck.eq(rewardLog.channel, 1)))
       .final(),
   );
 
@@ -44,7 +44,7 @@ export const createMonthlyRewardSummaryQuery = () => {
     })
     .from(recentRewardEvents)
     .groupBy(recentRewardEvents.month, recentRewardEvents.userId, recentRewardEvents.campaignId)
-    .orderBy(desc(recentRewardEvents.month), asc(recentRewardEvents.userId));
+    .orderBy(ck.desc(recentRewardEvents.month), ck.asc(recentRewardEvents.userId));
 };
 
 export const streamMonthlyRewardSummary = () => {

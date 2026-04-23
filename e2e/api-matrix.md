@@ -20,38 +20,38 @@ This matrix records coverage from the real ClickHouse E2E suite only. It does no
 | `runInSession` | `session-cdc-stream.e2e.test.ts`, `injection-transport-and-boundaries.e2e.test.ts` |
 | `registerTempTable` | `session-cdc-stream.e2e.test.ts` |
 | `createTemporaryTable` | `session-cdc-stream.e2e.test.ts`, `injection-identifiers.e2e.test.ts`, `injection-transport-and-boundaries.e2e.test.ts` |
-| `createSessionId` | `query-basics.e2e.test.ts`, `session-cdc-stream.e2e.test.ts` |
-| `decodeRow` | `query-basics.e2e.test.ts` |
-| `expr` | `operators.e2e.test.ts`, `session-cdc-stream.e2e.test.ts` |
+| `ck.createSessionId` | `query-basics.e2e.test.ts`, `session-cdc-stream.e2e.test.ts` |
+| `ck.decodeRow` | `query-basics.e2e.test.ts` |
+| `ck.expr` | `operators.e2e.test.ts`, `session-cdc-stream.e2e.test.ts` |
 
 ## Query operators and builder
 
 | API | Coverage location |
 | --- | --- |
-| `and` | `operators.e2e.test.ts` |
-| `or` | `operators.e2e.test.ts` |
-| `not` | `operators.e2e.test.ts` |
-| `eq` | `operators.e2e.test.ts`, `builder-analytics.e2e.test.ts`, `session-cdc-stream.e2e.test.ts` |
-| `ne` | `operators.e2e.test.ts` |
-| `gt` | `query-basics.e2e.test.ts`, `operators.e2e.test.ts` |
-| `gte` | `operators.e2e.test.ts` |
-| `has` | `operators.e2e.test.ts` |
-| `hasAll` | `operators.e2e.test.ts` |
-| `hasAny` | `operators.e2e.test.ts` |
-| `lt` | `operators.e2e.test.ts`, `builder-analytics.e2e.test.ts` |
-| `lte` | `operators.e2e.test.ts` |
-| `like` | `injection-values.e2e.test.ts` |
-| `notLike` | `injection-values.e2e.test.ts` |
-| `ilike` | `injection-values.e2e.test.ts` |
-| `notIlike` | `injection-values.e2e.test.ts` |
-| `escapeLike` | `injection-values.e2e.test.ts` |
-| `between` | `operators.e2e.test.ts` |
-| `inArray` | `operators.e2e.test.ts`, `builder-analytics.e2e.test.ts`, `injection-values.e2e.test.ts` |
-| `notInArray` | `operators.e2e.test.ts` |
-| `exists` | `operators.e2e.test.ts`, `builder-analytics.e2e.test.ts` |
-| `notExists` | `operators.e2e.test.ts` |
-| `asc` | `operators.e2e.test.ts` |
-| `desc` | `query-basics.e2e.test.ts`, `operators.e2e.test.ts`, `builder-analytics.e2e.test.ts` |
+| `ck.and` | `operators.e2e.test.ts` |
+| `ck.or` | `operators.e2e.test.ts` |
+| `ck.not` | `operators.e2e.test.ts` |
+| `ck.eq` | `operators.e2e.test.ts`, `builder-analytics.e2e.test.ts`, `session-cdc-stream.e2e.test.ts` |
+| `ck.ne` | `operators.e2e.test.ts` |
+| `ck.gt` | `query-basics.e2e.test.ts`, `operators.e2e.test.ts` |
+| `ck.gte` | `operators.e2e.test.ts` |
+| `ck.has` | `operators.e2e.test.ts` |
+| `ck.hasAll` | `operators.e2e.test.ts` |
+| `ck.hasAny` | `operators.e2e.test.ts` |
+| `ck.lt` | `operators.e2e.test.ts`, `builder-analytics.e2e.test.ts` |
+| `ck.lte` | `operators.e2e.test.ts` |
+| `ck.like` | `injection-values.e2e.test.ts` |
+| `ck.notLike` | `injection-values.e2e.test.ts` |
+| `ck.ilike` | `injection-values.e2e.test.ts` |
+| `ck.notIlike` | `injection-values.e2e.test.ts` |
+| `ck.escapeLike` | `injection-values.e2e.test.ts` |
+| `ck.between` | `operators.e2e.test.ts` |
+| `ck.inArray` | `operators.e2e.test.ts`, `builder-analytics.e2e.test.ts`, `injection-values.e2e.test.ts` |
+| `ck.notInArray` | `operators.e2e.test.ts` |
+| `ck.exists` | `operators.e2e.test.ts`, `builder-analytics.e2e.test.ts` |
+| `ck.notExists` | `operators.e2e.test.ts` |
+| `ck.asc` | `operators.e2e.test.ts` |
+| `ck.desc` | `query-basics.e2e.test.ts`, `operators.e2e.test.ts`, `builder-analytics.e2e.test.ts` |
 | `from` | `query-basics.e2e.test.ts`, `builder-analytics.e2e.test.ts` |
 | `innerJoin` | `builder-analytics.e2e.test.ts`, `functions.e2e.test.ts` |
 | `leftJoin` | `session-cdc-stream.e2e.test.ts` |
@@ -72,11 +72,11 @@ This matrix records coverage from the real ClickHouse E2E suite only. It does no
 
 | API | Coverage location |
 | --- | --- |
-| `sql('...')` | `query-basics.e2e.test.ts` |
-| `` sql`...` `` | most E2E files |
-| `sql.raw` | `query-basics.e2e.test.ts`, `injection-raw-sql.e2e.test.ts` |
-| `sql.join` | `query-basics.e2e.test.ts`, `injection-transport-and-boundaries.e2e.test.ts` |
-| `sql.identifier` | `query-basics.e2e.test.ts`, `session-cdc-stream.e2e.test.ts`, `injection-identifiers.e2e.test.ts`, `injection-transport-and-boundaries.e2e.test.ts` |
+| `ck.sql('...')` | `query-basics.e2e.test.ts` |
+| `` ck.sql`...` `` | most E2E files |
+| `ck.sql.raw` | `query-basics.e2e.test.ts`, `injection-raw-sql.e2e.test.ts` |
+| `ck.sql.join` | `query-basics.e2e.test.ts`, `injection-transport-and-boundaries.e2e.test.ts` |
+| `ck.sql.identifier` | `query-basics.e2e.test.ts`, `session-cdc-stream.e2e.test.ts`, `injection-identifiers.e2e.test.ts`, `injection-transport-and-boundaries.e2e.test.ts` |
 
 ## Function API
 
@@ -100,7 +100,7 @@ This matrix records coverage from the real ClickHouse E2E suite only. It does no
 | `fn.tuple` | `functions.e2e.test.ts` |
 | `fn.arrayZip` | `functions.e2e.test.ts` |
 | `fn.not` | `functions.e2e.test.ts` |
-| `tableFn.call` | `functions.e2e.test.ts`, `injection-identifiers.e2e.test.ts` |
+| `fn.table.call` | `functions.e2e.test.ts`, `injection-identifiers.e2e.test.ts` |
 
 ## Schema DSL
 
@@ -159,7 +159,7 @@ This matrix records coverage from the real ClickHouse E2E suite only. It does no
 | Unicode line separators in parameter values | `sql-injection.e2e.test.ts`, `injection-values.e2e.test.ts` |
 | set-membership payloads | `injection-values.e2e.test.ts` |
 | LIKE / ILIKE payloads | `injection-values.e2e.test.ts` |
-| literal wildcard matching via `escapeLike()` | `injection-values.e2e.test.ts` |
+| literal wildcard matching via `ck.escapeLike()` | `injection-values.e2e.test.ts` |
 | string and object identifier rejection | `injection-identifiers.e2e.test.ts` |
 | alias, temporary-table, and function-name rejection | `injection-identifiers.e2e.test.ts` |
 | stacked raw SQL rejection and no-mutation checks | `injection-raw-sql.e2e.test.ts` |
@@ -167,4 +167,4 @@ This matrix records coverage from the real ClickHouse E2E suite only. It does no
 | `query_params`, `query_id`, and `session_id` validation | `injection-transport-and-boundaries.e2e.test.ts` |
 | per-request `session_timeout` and continued-session `session_check` | `injection-transport-and-boundaries.e2e.test.ts` |
 | `createTemporaryTableRaw()` trusted-only boundary | `injection-transport-and-boundaries.e2e.test.ts` |
-| `sql.join()` separator validation | `injection-transport-and-boundaries.e2e.test.ts` |
+| `ck.sql.join()` separator validation | `injection-transport-and-boundaries.e2e.test.ts` |

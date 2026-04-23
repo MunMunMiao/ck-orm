@@ -1,4 +1,4 @@
-import { sql } from "./ck-orm";
+import { ck } from "./ck-orm";
 import {
   auditEvents,
   buildCreateTableStatement,
@@ -36,8 +36,8 @@ const recreateDatabase = async () => {
   const adminDb = createAdminDb();
   const { database } = getE2EConfig();
 
-  await adminDb.command(sql`DROP DATABASE IF EXISTS ${sql.identifier(database)}`);
-  await adminDb.command(sql`CREATE DATABASE ${sql.identifier(database)}`);
+  await adminDb.command(ck.sql`DROP DATABASE IF EXISTS ${ck.sql.identifier(database)}`);
+  await adminDb.command(ck.sql`CREATE DATABASE ${ck.sql.identifier(database)}`);
 };
 
 const createTables = async () => {

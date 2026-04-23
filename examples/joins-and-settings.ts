@@ -1,4 +1,4 @@
-import { clickhouseClient, eq } from "./ck-orm";
+import { ck, clickhouseClient } from "./ck-orm";
 import { commerceSchema, customerInvoice, orderRewardLog } from "./schema/commerce";
 
 const createCommerceDb = () => {
@@ -19,7 +19,7 @@ export const buildDefaultLeftJoinExample = () => {
   const query = commerceDb
     .select()
     .from(customerInvoice)
-    .leftJoin(orderRewardLog, eq(customerInvoice.user_id, orderRewardLog.user_id));
+    .leftJoin(orderRewardLog, ck.eq(customerInvoice.user_id, orderRewardLog.user_id));
 
   return {
     query,
@@ -40,7 +40,7 @@ export const runClickHouseDefaultJoinExample = async () => {
   return rawDefaultDb
     .select()
     .from(customerInvoice)
-    .leftJoin(orderRewardLog, eq(customerInvoice.user_id, orderRewardLog.user_id));
+    .leftJoin(orderRewardLog, ck.eq(customerInvoice.user_id, orderRewardLog.user_id));
 };
 
 export const buildExplicitSelectJoinExample = () => {
@@ -53,7 +53,7 @@ export const buildExplicitSelectJoinExample = () => {
       rewardPoints: orderRewardLog.reward_points,
     })
     .from(customerInvoice)
-    .leftJoin(orderRewardLog, eq(customerInvoice.user_id, orderRewardLog.user_id));
+    .leftJoin(orderRewardLog, ck.eq(customerInvoice.user_id, orderRewardLog.user_id));
 
   return {
     query,

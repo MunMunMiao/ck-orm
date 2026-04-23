@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { sql } from "./ck-orm";
+import { ck } from "./ck-orm";
 import { createE2EDb, users } from "./shared";
 import { describeE2E, expectClientValidationNotSent, expectNoMutationAfterRejectedInjection } from "./test-helpers";
 
@@ -19,14 +19,14 @@ describeE2E("ck-orm e2e injection raw sql", function describeInjectionRawSql() {
     await expectNoMutationAfterRejectedInjection();
   });
 
-  it("rejects stacked sql.raw fragments when the compiled builder is executed", async function testStackedSqlRawFragment() {
+  it("rejects stacked ck.sql.raw fragments when the compiled builder is executed", async function testStackedSqlRawFragment() {
     const db = createE2EDb();
     const injectedOrder = db
       .select({
         id: users.id,
       })
       .from(users)
-      .orderBy(sql.raw("1; DROP TABLE users; --"))
+      .orderBy(ck.sql.raw("1; DROP TABLE users; --"))
       .limit(1);
 
     await expectClientValidationNotSent(injectedOrder.execute(), {

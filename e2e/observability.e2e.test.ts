@@ -1,12 +1,12 @@
 import { expect, it } from "bun:test";
 import type { Tracer } from "@opentelemetry/api";
-import type {
-  ClickHouseOrmLogger,
-  ClickHouseOrmQueryErrorEvent,
-  ClickHouseOrmQueryEvent,
-  ClickHouseOrmQueryResultEvent,
+import {
+  type ClickHouseOrmLogger,
+  type ClickHouseOrmQueryErrorEvent,
+  type ClickHouseOrmQueryEvent,
+  type ClickHouseOrmQueryResultEvent,
+  ck,
 } from "./ck-orm";
-import { sql } from "./ck-orm";
 import { createE2EDb, users } from "./shared";
 import { describeE2E } from "./test-helpers";
 
@@ -123,7 +123,9 @@ describeE2E("ck-orm e2e observability", function describeObservability() {
       ],
     });
 
-    expect(await db.execute(sql`select ${users.id} as id from ${users} where ${users.id} = ${1}`)).toEqual([{ id: 1 }]);
+    expect(await db.execute(ck.sql`select ${users.id} as id from ${users} where ${users.id} = ${1}`)).toEqual([
+      { id: 1 },
+    ]);
 
     await expect(db.execute("SELECT * FROM missing_e2e_table")).rejects.toThrow();
 

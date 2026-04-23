@@ -1,5 +1,5 @@
 import type { AnyColumn, Column } from "./columns";
-import { createClientValidationError } from "./errors";
+import { createClientValidationError, createInternalError } from "./errors";
 import { createUuid } from "./platform";
 import type { InferSelectionResult, NoJoinedSources, SelectionRecord } from "./query/types";
 import {
@@ -271,9 +271,9 @@ const pushCompileState = (ctx: BuildContext, state: CompileState): void => {
 };
 
 const popCompileState = (ctx: BuildContext): void => {
-  const stack = compileStateStackStore.get(ctx) ?? [];
-  stack.pop();
-  if (stack.length === 0) {
+  const stack = compileStateStackStore.get(ctx);
+  stack?.pop();
+  if (!stack || stack.length === 0) {
     compileStateStackStore.delete(ctx);
   }
 };
@@ -287,7 +287,10 @@ const collectForcedSettings = (ctx: BuildContext, settings: ForcedSettings | und
     return;
   }
 
-  const state: CompileState = getActiveCompileState(ctx) ?? {};
+  const state = getActiveCompileState(ctx);
+  if (!state) {
+    throw createInternalError("Missing active compile state while collecting forced settings");
+  }
   state.forcedSettings = mergeForcedSettings(state.forcedSettings, settings);
 };
 
@@ -1226,18 +1229,6 @@ export const createSelectBuilder = <
   return builder;
 };
 
-export function SelectBuilder<
-  TResult extends Record<string, unknown> = Record<string, unknown>,
-  TSelection extends SelectionRecord | undefined = SelectionRecord | undefined,
-  TRootSource extends KnownQuerySource | undefined = KnownQuerySource | undefined,
-  TJoinedSources extends JoinedSources = NoJoinedSources,
-  TJoinUseNulls extends JoinUseNulls = 1,
->(
-  config?: SelectBuilderConfig<TResult> & { selection?: TSelection },
-): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
-  return createSelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>(config);
-}
-
 export interface InsertBuilder<TTable extends AnyTable> extends PromiseLike<undefined> {
   values(values: InsertRowInput<TTable> | readonly InsertRowInput<TTable>[]): InsertBuilder<TTable>;
   execute(options?: ClickHouseBaseQueryOptions): Promise<undefined>;
@@ -1314,10 +1305,6 @@ export const createInsertBuilder = <TTable extends AnyTable>(
 
   return builder;
 };
-
-export function InsertBuilder<TTable extends AnyTable>(table: TTable, runner?: PreparedRunner): InsertBuilder<TTable> {
-  return createInsertBuilder(table, runner);
-}
 
 export type Subquery<
   TResult extends Record<string, unknown> = Record<string, unknown>,
@@ -1452,15 +1439,6 @@ export const createQueryClient = <TSchema, TJoinUseNulls extends JoinUseNulls = 
 
   return client;
 };
-
-export function QueryClient<TSchema, TJoinUseNulls extends JoinUseNulls = 1>(config: {
-  schema: TSchema;
-  ctes?: AnyCte[];
-  runner?: PreparedRunner;
-  joinUseNulls?: TJoinUseNulls;
-}): QueryClient<TSchema, TJoinUseNulls> {
-  return createQueryClient<TSchema, TJoinUseNulls>(config);
-}
 
 const ensureComparableExpression = (value: unknown): SqlSelection<unknown> => {
   return ensureExpression(value);

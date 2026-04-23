@@ -12,6 +12,7 @@ describe("ck-orm public api", function describePublicApi() {
   });
 
   it("keeps core schema and query builders available from the package root", function testPublicBuilders() {
+    expect("ck" in publicApi).toBe(true);
     expect("chTable" in publicApi).toBe(true);
     expect("clickhouseClient" in publicApi).toBe(true);
     expect("Grouping" in publicApi).toBe(false);
@@ -20,7 +21,15 @@ describe("ck-orm public api", function describePublicApi() {
     expect("Selection" in publicApi).toBe(false);
     expect("SqlExpression" in publicApi).toBe(false);
     expect("makeWhereCondition" in publicApi).toBe(false);
-    expect("sql" in publicApi).toBe(true);
+    expect("sql" in publicApi).toBe(false);
+    expect("eq" in publicApi).toBe(false);
+    expect("desc" in publicApi).toBe(false);
+    expect("tableFn" in publicApi).toBe(false);
+    expect(publicApi.ck.fn).toBe(publicApi.fn);
+    expect(typeof publicApi.ck.eq).toBe("function");
+    expect(typeof publicApi.ck.desc).toBe("function");
+    expect(typeof publicApi.ck.sql.raw).toBe("function");
+    expect(typeof publicApi.fn.table.call).toBe("function");
   });
 
   it("keeps advanced root-exported types aligned with public_api.ts", function testRootExportedTypes() {
@@ -35,10 +44,13 @@ describe("ck-orm public api", function describePublicApi() {
   });
 
   it("keeps error guards and compatibility exports available from the package root", function testRootErrorExports() {
-    expect("ClickHouseOrmError" in publicApi).toBe(true);
-    expect("DecodeError" in publicApi).toBe(true);
+    expect("ClickHouseOrmError" in publicApi).toBe(false);
+    expect("DecodeError" in publicApi).toBe(false);
     expect("isClickHouseOrmError" in publicApi).toBe(true);
     expect("isDecodeError" in publicApi).toBe(true);
+
+    expectType<RootApi.ClickHouseOrmError | undefined>(undefined);
+    expectType<RootApi.DecodeError | undefined>(undefined);
   });
 });
 

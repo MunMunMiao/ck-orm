@@ -1,4 +1,4 @@
-import { clickhouseClient, eq, sql } from "./ck-orm";
+import { ck, clickhouseClient } from "./ck-orm";
 import { commerceSchema, customerInvoice, orderRewardLog } from "./schema/commerce";
 
 const createCommerceDb = () => {
@@ -23,7 +23,7 @@ export const buildDirectValueQueryExample = () => {
       rewardPoints: orderRewardLog.reward_points,
     })
     .from(orderRewardLog)
-    .where(eq(orderRewardLog.user_id, "user_100"))
+    .where(ck.eq(orderRewardLog.user_id, "user_100"))
     .limit(10);
 
   return {
@@ -40,7 +40,7 @@ export const runRawQueryParamsExample = async () => {
   const commerceDb = createCommerceDb();
 
   return commerceDb.execute(
-    sql`select user_id, reward_points from order_reward_log where user_id = {user_id:String} limit {limit:Int64}`,
+    ck.sql`select user_id, reward_points from order_reward_log where user_id = {user_id:String} limit {limit:Int64}`,
     {
       query_params: {
         user_id: "user_100",

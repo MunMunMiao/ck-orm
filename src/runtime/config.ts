@@ -194,13 +194,6 @@ export type ResolveJoinUseNulls<TSettings, TFallback extends 0 | 1> = TSettings 
     : TFallback
   : TFallback;
 
-export interface SessionContext {
-  readonly sessionId: string;
-  readonly ancestorSessionIds: readonly string[];
-  readonly tempTables: string[];
-  queueTail: Promise<void>;
-}
-
 export type RawQueryInput = string | SQLFragment;
 
 export type NormalizedClientConfig = {
@@ -263,7 +256,7 @@ const assertValidUserQueryParams = (queryParams: Record<string, unknown> | undef
     if (key.startsWith(RESERVED_INTERNAL_QUERY_PARAM_PREFIX)) {
       throw createClientValidationError(
         `query_params key "${key}" uses reserved internal prefix "${RESERVED_INTERNAL_QUERY_PARAM_PREFIX}". ` +
-          "This prefix is reserved for sql`...` generated parameters.",
+          "This prefix is reserved for ck.sql`...` generated parameters.",
       );
     }
   }

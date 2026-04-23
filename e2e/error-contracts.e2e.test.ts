@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { chTable, createSessionId, int32, sql } from "./ck-orm";
+import { chTable, ck, int32 } from "./ck-orm";
 import { auditEvents, createE2EDb, createTempTableName } from "./shared";
 import { describeE2E, expectRejectsWithClickhouseError, waitForQueryLogException } from "./test-helpers";
 
@@ -28,7 +28,7 @@ describeE2E("ck-orm e2e error contracts", function describeErrorContracts() {
     const queryId = `e2e_unknown_table_${Date.now()}`;
 
     await expectRejectsWithClickhouseError(
-      db.execute(sql`select count() as total from ${sql.identifier("missing_error_contract_table")}`, {
+      db.execute(ck.sql`select count() as total from ${ck.sql.identifier("missing_error_contract_table")}`, {
         query_id: queryId,
       }),
       {
@@ -48,7 +48,7 @@ describeE2E("ck-orm e2e error contracts", function describeErrorContracts() {
 
   it("classifies session-expired temporary tables as rejected requests and records them in query_log", async function testSessionExpiredTempTables() {
     const db = createE2EDb();
-    const sessionId = createSessionId();
+    const sessionId = ck.createSessionId();
     const tempTable = createTempTableName("expired_scope");
     const tempScope = chTable(tempTable, { id: int32() });
 
@@ -62,7 +62,7 @@ describeE2E("ck-orm e2e error contracts", function describeErrorContracts() {
 
     const queryId = `e2e_expired_temp_${Date.now()}`;
     await expectRejectsWithClickhouseError(
-      db.execute(sql`select count() as total from ${sql.identifier(tempTable)}`, {
+      db.execute(ck.sql`select count() as total from ${ck.sql.identifier(tempTable)}`, {
         query_id: queryId,
         session_id: sessionId,
       }),

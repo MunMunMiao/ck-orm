@@ -77,24 +77,24 @@ The current E2E suite covers:
   - `alias`
   - aliased table interpolation in `` sql`...` ``
 - basic API
-  - `sql('...')`
-  - `` sql`...` ``
-  - `sql.raw`
-  - `sql.join`
-  - `sql.identifier`
-  - `decodeRow`
-  - `createSessionId`
+  - `ck.sql('...')`
+  - `` ck.sql`...` ``
+  - `ck.sql.raw`
+  - `ck.sql.join`
+  - `ck.sql.identifier`
+  - `ck.decodeRow`
+  - `ck.createSessionId`
 - query and builder behavior
-  - `and`, `or`, `not`
-  - `eq`, `ne`, `gt`, `gte`, `lt`, `lte`
-  - `like`, `notLike`, `ilike`, `notIlike`
-  - `escapeLike`
-  - `between`
-  - `inArray`, `notInArray`
-  - `exists`, `notExists`
+  - `ck.and`, `ck.or`, `ck.not`
+  - `ck.eq`, `ck.ne`, `ck.gt`, `ck.gte`, `ck.lt`, `ck.lte`
+  - `ck.like`, `ck.notLike`, `ck.ilike`, `ck.notIlike`
+  - `ck.escapeLike`
+  - `ck.between`
+  - `ck.inArray`, `ck.notInArray`
+  - `ck.exists`, `ck.notExists`
   - `Predicate[]` with variadic `.where(...predicates)` / `.count(...predicates)`
-  - `asc`, `desc`
-  - `expr`
+  - `ck.asc`, `ck.desc`
+  - `ck.expr`
   - `select`, `insert`
   - `from`, `innerJoin`, `leftJoin`
   - `where`, `groupBy`, `having`
@@ -108,27 +108,27 @@ The current E2E suite covers:
   - session-scoped counts over temporary tables and `FINAL` subqueries
 - function coverage
   - all `fn.*`
-  - `tableFn.call('numbers', ...)`
+  - `fn.table.call('numbers', ...)`
 - SQL injection coverage by context
   - foundations
     - classic payloads in builder equality filters
     - classic payloads in raw template literals
     - Unicode line separators passed as parameter values
   - value contexts
-    - `inArray(...)`
-    - `like`, `notLike`, `ilike`, `notIlike`
-    - `escapeLike(...)` for literal `%` and `_`
+    - `ck.inArray(...)`
+    - `ck.like`, `ck.notLike`, `ck.ilike`, `ck.notIlike`
+    - `ck.escapeLike(...)` for literal `%` and `_`
   - identifier contexts
-    - `sql.identifier('...')`
-    - `sql.identifier({ table, column, as })`
+    - `ck.sql.identifier('...')`
+    - `ck.sql.identifier({ table, column, as })`
     - `alias(...)`
     - temporary table names
     - `fn.withParams(...)` function names
-    - `tableFn.call(...)` function names
+    - `fn.table.call(...)` function names
   - raw SQL contexts
     - `execute(string)`
     - `command(string)`
-    - `sql.raw(...)` fragments that would create stacked statements
+    - `ck.sql.raw(...)` fragments that would create stacked statements
     - no-mutation checks after rejected stacked-query attempts
   - transport and trusted-only boundaries
     - `query_params` key validation
@@ -136,7 +136,7 @@ The current E2E suite covers:
     - `query_id` / `session_id` validation
     - per-request `session_timeout` and continued-session `session_check`
     - `createTemporaryTableRaw(name, definition)` single-statement boundary
-    - `sql.join(...)` separator validation
+    - `ck.sql.join(...)` separator validation
 - advanced ClickHouse SQL
   - scalar `WITH`
   - `ARRAY JOIN`

@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { and, chTable, eq, escapeLike, ilike, inArray, like, notIlike, notLike, string } from "./ck-orm";
+import { chTable, ck, string } from "./ck-orm";
 import { createE2EDb, createTempTableName, users } from "./shared";
 import { describeE2E } from "./test-helpers";
 
@@ -22,7 +22,7 @@ describeE2E("ck-orm e2e injection values", function describeInjectionValues() {
           name: users.name,
         })
         .from(users)
-        .where(inArray(users.name, [payload, "alice"]))
+        .where(ck.inArray(users.name, [payload, "alice"]))
         .orderBy(users.id)
         .limit(2);
 
@@ -47,7 +47,7 @@ describeE2E("ck-orm e2e injection values", function describeInjectionValues() {
             id: users.id,
           })
           .from(users)
-          .where(like(users.name, payload))
+          .where(ck.like(users.name, payload))
           .limit(1),
       ).toEqual([]);
 
@@ -57,7 +57,7 @@ describeE2E("ck-orm e2e injection values", function describeInjectionValues() {
             id: users.id,
           })
           .from(users)
-          .where(and(eq(users.id, 1), notLike(users.name, payload)))
+          .where(ck.and(ck.eq(users.id, 1), ck.notLike(users.name, payload)))
           .limit(1),
       ).toEqual([{ id: 1 }]);
 
@@ -67,7 +67,7 @@ describeE2E("ck-orm e2e injection values", function describeInjectionValues() {
             id: users.id,
           })
           .from(users)
-          .where(ilike(users.name, payload))
+          .where(ck.ilike(users.name, payload))
           .limit(1),
       ).toEqual([]);
 
@@ -77,7 +77,7 @@ describeE2E("ck-orm e2e injection values", function describeInjectionValues() {
             id: users.id,
           })
           .from(users)
-          .where(and(eq(users.id, 1), notIlike(users.name, payload)))
+          .where(ck.and(ck.eq(users.id, 1), ck.notIlike(users.name, payload)))
           .limit(1),
       ).toEqual([{ id: 1 }]);
     }
@@ -104,7 +104,7 @@ describeE2E("ck-orm e2e injection values", function describeInjectionValues() {
           name: patternScope.name,
         })
         .from(patternScope)
-        .where(like(patternScope.name, "price100%real"))
+        .where(ck.like(patternScope.name, "price100%real"))
         .orderBy(patternScope.name);
       expect(unescapedPercentRows.map((row) => row.name)).toEqual(["price100%real", "price100Xreal"]);
 
@@ -113,7 +113,7 @@ describeE2E("ck-orm e2e injection values", function describeInjectionValues() {
           name: patternScope.name,
         })
         .from(patternScope)
-        .where(like(patternScope.name, escapeLike("price100%real")))
+        .where(ck.like(patternScope.name, ck.escapeLike("price100%real")))
         .orderBy(patternScope.name);
       expect(escapedPercentRows.map((row) => row.name)).toEqual(["price100%real"]);
 
@@ -122,7 +122,7 @@ describeE2E("ck-orm e2e injection values", function describeInjectionValues() {
           name: patternScope.name,
         })
         .from(patternScope)
-        .where(like(patternScope.name, "tag_user_1"))
+        .where(ck.like(patternScope.name, "tag_user_1"))
         .orderBy(patternScope.name);
       expect(unescapedUnderscoreRows.map((row) => row.name)).toEqual(["tag_userA1", "tag_user_1"]);
 
@@ -131,7 +131,7 @@ describeE2E("ck-orm e2e injection values", function describeInjectionValues() {
           name: patternScope.name,
         })
         .from(patternScope)
-        .where(like(patternScope.name, escapeLike("tag_user_1")))
+        .where(ck.like(patternScope.name, ck.escapeLike("tag_user_1")))
         .orderBy(patternScope.name);
       expect(escapedUnderscoreRows.map((row) => row.name)).toEqual(["tag_user_1"]);
     });

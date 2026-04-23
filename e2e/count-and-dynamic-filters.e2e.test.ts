@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { and, chTable, eq, exists, gt, int32, lte, or, type Predicate } from "./ck-orm";
+import { chTable, ck, int32, type Predicate } from "./ck-orm";
 import { createE2EDb, createTempTableName, pets, rewardEvents, users, webEvents } from "./shared";
 import { describeE2E } from "./test-helpers";
 
@@ -8,7 +8,7 @@ describeE2E("ck-orm e2e count and dynamic filters", function describeCountAndDyn
     const db = createE2EDb();
 
     expect(await db.count(users)).toBe(5_000);
-    expect(await db.count(users, gt(users.id, 10), lte(users.id, 20))).toBe(10);
+    expect(await db.count(users, ck.gt(users.id, 10), ck.lte(users.id, 20))).toBe(10);
 
     const groupedUsers = db
       .select({
@@ -29,7 +29,7 @@ describeE2E("ck-orm e2e count and dynamic filters", function describeCountAndDyn
           userId: users.id,
         })
         .from(users)
-        .where(eq(users.tier, "vip"))
+        .where(ck.eq(users.tier, "vip"))
         .orderBy(users.id)
         .limit(20),
     );
@@ -39,10 +39,10 @@ describeE2E("ck-orm e2e count and dynamic filters", function describeCountAndDyn
     const petCounts = await db
       .select({
         id: users.id,
-        petCount: db.count(pets, eq(pets.owner_id, users.id)).as("pet_count"),
+        petCount: db.count(pets, ck.eq(pets.owner_id, users.id)).as("pet_count"),
       })
       .from(users)
-      .where(lte(users.id, 3))
+      .where(ck.lte(users.id, 3))
       .orderBy(users.id);
 
     expect(petCounts).toEqual([
@@ -61,7 +61,7 @@ describeE2E("ck-orm e2e count and dynamic filters", function describeCountAndDyn
         tier: users.tier,
       })
       .from(users)
-      .where(and(gt(users.id, 2), lte(users.id, 5), undefined))
+      .where(ck.and(ck.gt(users.id, 2), ck.lte(users.id, 5), undefined))
       .orderBy(users.id);
 
     expect(optionalRows).toEqual([
@@ -83,15 +83,15 @@ describeE2E("ck-orm e2e count and dynamic filters", function describeCountAndDyn
     expect(defaultRows).toEqual([{ id: 1 }, { id: 2 }]);
 
     const predicates: Predicate[] = [];
-    predicates.push(or(eq(users.id, 1), eq(users.id, 4001)));
+    predicates.push(ck.or(ck.eq(users.id, 1), ck.eq(users.id, 4001)));
     predicates.push(
-      exists(
+      ck.exists(
         db
           .select({
             ownerId: pets.owner_id,
           })
           .from(pets)
-          .where(eq(pets.owner_id, users.id))
+          .where(ck.eq(pets.owner_id, users.id))
           .limit(1)
           .as("owned_pets"),
       ),
@@ -131,7 +131,7 @@ describeE2E("ck-orm e2e count and dynamic filters", function describeCountAndDyn
           userId: tempScope.user_id,
         })
         .from(tempScope)
-        .where(gt(tempScope.user_id, 1))
+        .where(ck.gt(tempScope.user_id, 1))
         .as("scoped_temp_users");
 
       const activeRewards = session
@@ -140,7 +140,7 @@ describeE2E("ck-orm e2e count and dynamic filters", function describeCountAndDyn
         })
         .from(rewardEvents)
         .final()
-        .where(eq(rewardEvents._peerdb_is_deleted, 0))
+        .where(ck.eq(rewardEvents._peerdb_is_deleted, 0))
         .limit(10)
         .as("active_rewards");
 

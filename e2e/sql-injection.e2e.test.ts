@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { eq, sql } from "./ck-orm";
+import { ck } from "./ck-orm";
 import { createE2EDb, users } from "./shared";
 import { describeE2E } from "./test-helpers";
 
@@ -19,7 +19,7 @@ describeE2E("ck-orm e2e SQL injection foundations", function describeSqlInjectio
     ];
 
     for (const payload of payloads) {
-      const rows = await db.select().from(users).where(eq(users.name, payload)).limit(1);
+      const rows = await db.select().from(users).where(ck.eq(users.name, payload)).limit(1);
 
       expect(rows).toEqual([]);
     }
@@ -41,7 +41,7 @@ describeE2E("ck-orm e2e SQL injection foundations", function describeSqlInjectio
     ];
 
     for (const payload of payloads) {
-      const rows = await db.execute(sql`
+      const rows = await db.execute(ck.sql`
         select ${users.id} as id
         from ${users}
         where ${users.name} = ${payload}

@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { alias, and, desc, eq, exists, fn, inArray, lt, lte } from "./ck-orm";
+import { alias, ck, fn } from "./ck-orm";
 import { createE2EDb, rewardEvents, users, webEvents } from "./shared";
 import { describeE2E } from "./test-helpers";
 
@@ -14,7 +14,7 @@ describeE2E("ck-orm e2e builder analytics", function describeBuilderAnalytics() 
           totalRevenue: fn.sum(webEvents.revenue).as("total_revenue"),
         })
         .from(webEvents)
-        .where(lt(webEvents.user_id, 6))
+        .where(ck.lt(webEvents.user_id, 6))
         .groupBy(fn.toStartOfMonth(webEvents.viewed_at), webEvents.user_id),
     );
 
@@ -37,7 +37,7 @@ describeE2E("ck-orm e2e builder analytics", function describeBuilderAnalytics() 
         totalRevenue: topUsers.totalRevenue,
       })
       .from(topUsers)
-      .innerJoin(users, eq(users.id, topUsers.userId))
+      .innerJoin(users, ck.eq(users.id, topUsers.userId))
       .orderBy(topUsers.userId);
 
     expect(rows).toHaveLength(5);
@@ -75,7 +75,7 @@ describeE2E("ck-orm e2e builder analytics", function describeBuilderAnalytics() 
         revenue: webEvents.revenue,
       })
       .from(webEvents)
-      .orderBy(webEvents.country, desc(webEvents.revenue), webEvents.user_id)
+      .orderBy(webEvents.country, ck.desc(webEvents.revenue), webEvents.user_id)
       .limitBy([webEvents.country], 2);
 
     expect(topPerCountry).toHaveLength(8);
@@ -94,7 +94,7 @@ describeE2E("ck-orm e2e builder analytics", function describeBuilderAnalytics() 
       })
       .from(rewardEvents)
       .final()
-      .where(eq(rewardEvents._peerdb_is_deleted, 0))
+      .where(ck.eq(rewardEvents._peerdb_is_deleted, 0))
       .limit(10)
       .as("reward_scope");
 
@@ -106,19 +106,19 @@ describeE2E("ck-orm e2e builder analytics", function describeBuilderAnalytics() 
         deviceType: webEvents.device_type,
       })
       .from(owner)
-      .innerJoin(webEvents, eq(owner.id, webEvents.user_id))
+      .innerJoin(webEvents, ck.eq(owner.id, webEvents.user_id))
       .where(
-        and(
-          inArray(
+        ck.and(
+          ck.inArray(
             owner.id,
             db
               .select({ userId: webEvents.user_id })
               .from(webEvents)
-              .where(lte(webEvents.user_id, 5))
+              .where(ck.lte(webEvents.user_id, 5))
               .limit(5)
               .as("scoped_event_users"),
           ),
-          exists(db.select({ userId: rewardScope.userId }).from(rewardScope).limit(1)),
+          ck.exists(db.select({ userId: rewardScope.userId }).from(rewardScope).limit(1)),
         ),
       )
       .orderBy(owner.id, webEvents.event_id)
@@ -137,7 +137,7 @@ describeE2E("ck-orm e2e builder analytics", function describeBuilderAnalytics() 
       })
       .from(rewardEvents)
       .final()
-      .where(eq(rewardEvents._peerdb_is_deleted, 0))
+      .where(ck.eq(rewardEvents._peerdb_is_deleted, 0))
       .as("final_reward_scope");
 
     const leftRows = await db
@@ -146,8 +146,8 @@ describeE2E("ck-orm e2e builder analytics", function describeBuilderAnalytics() 
         rewardUserId: finalRewardScope.userId,
       })
       .from(owner)
-      .leftJoin(finalRewardScope, eq(owner.name, finalRewardScope.userId))
-      .where(eq(owner.id, 4001))
+      .leftJoin(finalRewardScope, ck.eq(owner.name, finalRewardScope.userId))
+      .where(ck.eq(owner.id, 4001))
       .limit(1);
 
     expect(leftRows[0]).toEqual({

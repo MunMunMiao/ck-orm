@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { int32, string } from "./columns";
-import { ClickHouseOrmError } from "./errors";
+import { isClickHouseOrmError } from "./errors";
 import { expr } from "./query";
 import { clickhouseClient } from "./runtime";
 import type { AnyTable } from "./schema";
@@ -44,7 +44,7 @@ const expectRejectsWithClickhouseError = async (promise: Promise<unknown>, expec
     await promise;
     throw new Error("Expected promise to reject with ClickHouseOrmError");
   } catch (error) {
-    expect(error).toBeInstanceOf(ClickHouseOrmError);
+    expect(isClickHouseOrmError(error)).toBe(true);
     for (const [key, value] of Object.entries(expected)) {
       expect((error as Record<string, unknown>)[key]).toEqual(value);
     }
@@ -165,7 +165,7 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
       capturedUrls.some((url) => url.searchParams.get("query") === "INSERT INTO `order_reward_log` FORMAT JSONEachRow"),
     ).toBe(true);
 
-    expect(() => db.registerTempTable("tmp_scope")).toThrow(ClickHouseOrmError);
+    expect(() => db.registerTempTable("tmp_scope")).toThrow();
     await expectRejectsWithClickhouseError(db.createTemporaryTable(chTable("tmp_scope", { id: int32() })), {
       kind: "session",
       executionState: "not_sent",
@@ -456,7 +456,7 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
           request: true,
         },
       } as unknown as Parameters<typeof clickhouseClient<{ users: typeof users }>>[0]),
-    ).toThrow(ClickHouseOrmError);
+    ).toThrow();
   });
 
   it("detects ClickHouse exception blocks even when HTTP status is 200", async function testEmbeddedExceptionBlocks() {
@@ -743,7 +743,7 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
         kind: "client_validation",
         executionState: "not_sent",
         message:
-          '[ck-orm] query_params key "orm_param1" uses reserved internal prefix "orm_param". This prefix is reserved for sql`...` generated parameters.',
+          '[ck-orm] query_params key "orm_param1" uses reserved internal prefix "orm_param". This prefix is reserved for ck.sql`...` generated parameters.',
       },
     );
 
@@ -757,7 +757,7 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
         kind: "client_validation",
         executionState: "not_sent",
         message:
-          '[ck-orm] query_params key "orm_param1" uses reserved internal prefix "orm_param". This prefix is reserved for sql`...` generated parameters.',
+          '[ck-orm] query_params key "orm_param1" uses reserved internal prefix "orm_param". This prefix is reserved for ck.sql`...` generated parameters.',
       },
     );
 

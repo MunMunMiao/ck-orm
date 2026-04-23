@@ -1,4 +1,4 @@
-import { clickhouseClient, desc, eq, inArray } from "./ck-orm";
+import { ck, clickhouseClient } from "./ck-orm";
 import { commerceSchema, orderRewardLog } from "./schema/commerce";
 import { fulfillmentSchema, shipmentEvent } from "./schema/fulfillment";
 
@@ -36,8 +36,8 @@ export const loadRewardOrdersWithShipmentSnapshot = async () => {
       createdAt: orderRewardLog.created_at,
     })
     .from(orderRewardLog)
-    .where(eq(orderRewardLog._peerdb_is_deleted, 0))
-    .orderBy(desc(orderRewardLog.created_at))
+    .where(ck.eq(orderRewardLog._peerdb_is_deleted, 0))
+    .orderBy(ck.desc(orderRewardLog.created_at))
     .limit(100)
     .final();
 
@@ -58,8 +58,8 @@ export const loadRewardOrdersWithShipmentSnapshot = async () => {
       note: shipmentEvent.note,
     })
     .from(shipmentEvent)
-    .where(inArray(shipmentEvent.order_id, orderIds))
-    .orderBy(desc(shipmentEvent.processed_at))
+    .where(ck.inArray(shipmentEvent.order_id, orderIds))
+    .orderBy(ck.desc(shipmentEvent.processed_at))
     .limit(500)
     .final();
 

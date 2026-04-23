@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { chTable, createSessionId, eq, expr, int32, sql } from "./ck-orm";
+import { chTable, ck, int32 } from "./ck-orm";
 import { createE2EDb, createTempTableName, pets, rewardEvents, users } from "./shared";
 import { describeE2E, expectPresent, takeAsync } from "./test-helpers";
 
@@ -20,7 +20,7 @@ describeE2E("ck-orm e2e session, cdc and stream", function describeSessionCdcAnd
     );
 
     const rawRows = await takeAsync(
-      db.stream(sql`select ${users.id} as id, ${users.name} as name from ${users} order by ${users.id}`),
+      db.stream(ck.sql`select ${users.id} as id, ${users.name} as name from ${users} order by ${users.id}`),
       5,
     );
 
@@ -40,7 +40,7 @@ describeE2E("ck-orm e2e session, cdc and stream", function describeSessionCdcAnd
     const defaultRows = await db
       .select()
       .from(users)
-      .leftJoin(pets, eq(users.id, pets.owner_id))
+      .leftJoin(pets, ck.eq(users.id, pets.owner_id))
       .orderBy(users.id)
       .limit(3);
     expect(defaultRows[0]?.users.name).toBe("alice");
@@ -49,8 +49,8 @@ describeE2E("ck-orm e2e session, cdc and stream", function describeSessionCdcAnd
     const [missingPetRow] = await db
       .select()
       .from(users)
-      .leftJoin(pets, eq(users.id, pets.owner_id))
-      .where(eq(users.id, 4001))
+      .leftJoin(pets, ck.eq(users.id, pets.owner_id))
+      .where(ck.eq(users.id, 4001))
       .limit(1);
 
     expect(missingPetRow?.pets).toBeNull();
@@ -61,8 +61,8 @@ describeE2E("ck-orm e2e session, cdc and stream", function describeSessionCdcAnd
       })
       .select()
       .from(users)
-      .leftJoin(pets, eq(users.id, pets.owner_id))
-      .where(eq(users.id, 4001))
+      .leftJoin(pets, ck.eq(users.id, pets.owner_id))
+      .where(ck.eq(users.id, 4001))
       .limit(1);
 
     expect(noNullMissingPetRow?.pets).toEqual({
@@ -78,16 +78,16 @@ describeE2E("ck-orm e2e session, cdc and stream", function describeSessionCdcAnd
 
     const [physicalRows] = await db
       .select({
-        total: sql<number>`count()`.mapWith((value) => Number(value)).as("total"),
+        total: ck.sql<number>`count()`.mapWith((value) => Number(value)).as("total"),
       })
       .from(rewardEvents);
     const [logicalRows] = await db
       .select({
-        total: sql<number>`count()`.mapWith((value) => Number(value)).as("total"),
+        total: ck.sql<number>`count()`.mapWith((value) => Number(value)).as("total"),
       })
       .from(rewardEvents)
       .final()
-      .where(eq(rewardEvents._peerdb_is_deleted, 0));
+      .where(ck.eq(rewardEvents._peerdb_is_deleted, 0));
 
     const physicalTotal = Number(expectPresent(physicalRows, "physicalRows").total);
     const logicalTotal = Number(expectPresent(logicalRows, "logicalRows").total);
@@ -100,7 +100,7 @@ describeE2E("ck-orm e2e session, cdc and stream", function describeSessionCdcAnd
     const manualTempTable = createTempTableName("manual_scope");
     const helperTempTable = createTempTableName("helper_scope");
     const helperTempScope = chTable(helperTempTable, { user_id: int32() });
-    const sessionId = createSessionId();
+    const sessionId = ck.createSessionId();
 
     const scopedRows = await db.runInSession(
       async (session) => {
@@ -118,11 +118,11 @@ describeE2E("ck-orm e2e session, cdc and stream", function describeSessionCdcAnd
           })
           .from(users)
           .where(
-            expr(sql`
+            ck.expr(ck.sql`
               ${users.id} in (
-                select user_id from ${sql.identifier(manualTempTable)}
+                select user_id from ${ck.sql.identifier(manualTempTable)}
                 union all
-                select user_id from ${sql.identifier(helperTempTable)}
+                select user_id from ${ck.sql.identifier(helperTempTable)}
               )
             `),
           )
@@ -138,13 +138,13 @@ describeE2E("ck-orm e2e session, cdc and stream", function describeSessionCdcAnd
     ]);
 
     await expect(
-      db.execute(sql`select count() as total from ${sql.identifier(manualTempTable)}`, {
+      db.execute(ck.sql`select count() as total from ${ck.sql.identifier(manualTempTable)}`, {
         session_id: sessionId,
       }),
     ).rejects.toThrow(/doesn't exist|unknown table/i);
 
     await expect(
-      db.execute(sql`select count() as total from ${sql.identifier(helperTempTable)}`, {
+      db.execute(ck.sql`select count() as total from ${ck.sql.identifier(helperTempTable)}`, {
         session_id: sessionId,
       }),
     ).rejects.toThrow(/doesn't exist|unknown table/i);
