@@ -105,7 +105,7 @@ describe("ck-orm sql security", function describeSqlSecurity() {
   });
 
   it("escapes dateTime64 timezone with single quotes", function testDateTime64TimezoneEscaping() {
-    const col = dateTime64(3, "Asia/Shanghai' OR '1'='1");
+    const col = dateTime64({ precision: 3, timezone: "Asia/Shanghai' OR '1'='1" });
     expect(col.sqlType).toBe("DateTime64(3, 'Asia/Shanghai\\' OR \\'1\\'=\\'1')");
   });
 
@@ -127,23 +127,33 @@ describe("ck-orm sql security", function describeSqlSecurity() {
   });
 
   it("rejects column constructors with invalid parameters", function testColumnParameterValidation() {
-    expect(() => fixedString(0)).toThrow("fixedString length must be a positive integer, got 0");
-    expect(() => fixedString(-1)).toThrow("fixedString length must be a positive integer, got -1");
-    expect(() => fixedString(1.5)).toThrow("fixedString length must be a positive integer, got 1.5");
+    expect(() => fixedString({ length: 0 })).toThrow("fixedString length must be a positive integer, got 0");
+    expect(() => fixedString({ length: -1 })).toThrow("fixedString length must be a positive integer, got -1");
+    expect(() => fixedString({ length: 1.5 })).toThrow("fixedString length must be a positive integer, got 1.5");
 
-    expect(() => decimal(0, 0)).toThrow("decimal precision must be an integer between 1 and 76, got 0");
-    expect(() => decimal(77, 0)).toThrow("decimal precision must be an integer between 1 and 76, got 77");
-    expect(() => decimal(10, -1)).toThrow("decimal scale must be an integer between 0 and precision (10), got -1");
-    expect(() => decimal(10, 11)).toThrow("decimal scale must be an integer between 0 and precision (10), got 11");
-    expect(() => decimal(10.5, 2)).toThrow("decimal precision must be an integer between 1 and 76, got 10.5");
+    expect(() => decimal({ precision: 0, scale: 0 })).toThrow(
+      "decimal precision must be an integer between 1 and 76, got 0",
+    );
+    expect(() => decimal({ precision: 77, scale: 0 })).toThrow(
+      "decimal precision must be an integer between 1 and 76, got 77",
+    );
+    expect(() => decimal({ precision: 10, scale: -1 })).toThrow(
+      "decimal scale must be an integer between 0 and precision (10), got -1",
+    );
+    expect(() => decimal({ precision: 10, scale: 11 })).toThrow(
+      "decimal scale must be an integer between 0 and precision (10), got 11",
+    );
+    expect(() => decimal({ precision: 10.5, scale: 2 })).toThrow(
+      "decimal precision must be an integer between 1 and 76, got 10.5",
+    );
 
-    expect(() => time64(-1)).toThrow("time64 precision must be an integer between 0 and 9, got -1");
-    expect(() => time64(10)).toThrow("time64 precision must be an integer between 0 and 9, got 10");
-    expect(() => time64(1.5)).toThrow("time64 precision must be an integer between 0 and 9, got 1.5");
+    expect(() => time64({ precision: -1 })).toThrow("time64 precision must be an integer between 0 and 9, got -1");
+    expect(() => time64({ precision: 10 })).toThrow("time64 precision must be an integer between 0 and 9, got 10");
+    expect(() => time64({ precision: 1.5 })).toThrow("time64 precision must be an integer between 0 and 9, got 1.5");
 
-    expect(() => qbit(float32(), 0)).toThrow("qbit dimensions must be a positive integer, got 0");
-    expect(() => qbit(float32(), -1)).toThrow("qbit dimensions must be a positive integer, got -1");
-    expect(() => qbit(float32(), 1.5)).toThrow("qbit dimensions must be a positive integer, got 1.5");
+    expect(() => qbit(float32(), { dimensions: 0 })).toThrow("qbit dimensions must be a positive integer, got 0");
+    expect(() => qbit(float32(), { dimensions: -1 })).toThrow("qbit dimensions must be a positive integer, got -1");
+    expect(() => qbit(float32(), { dimensions: 1.5 })).toThrow("qbit dimensions must be a positive integer, got 1.5");
   });
 
   it("escapes backslashes before single quotes in enum keys to prevent boundary escape", function testEnumBackslashEscaping() {
@@ -155,10 +165,10 @@ describe("ck-orm sql security", function describeSqlSecurity() {
   });
 
   it("escapes backslashes before single quotes in dateTime64 timezone", function testDateTime64BackslashEscaping() {
-    const col = dateTime64(3, "Asia/Shanghai\\");
+    const col = dateTime64({ precision: 3, timezone: "Asia/Shanghai\\" });
     expect(col.sqlType).toBe("DateTime64(3, 'Asia/Shanghai\\\\')");
 
-    const evil = dateTime64(3, "UTC\\' OR '1'='1");
+    const evil = dateTime64({ precision: 3, timezone: "UTC\\' OR '1'='1" });
     expect(evil.sqlType).toBe("DateTime64(3, 'UTC\\\\\\' OR \\'1\\'=\\'1')");
   });
 

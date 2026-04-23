@@ -74,10 +74,10 @@ export const orderRewardLog = chTable(
     user_id: chType.string(),
     campaign_id: chType.int32(),
     order_id: chType.int64(),
-    reward_points: chType.decimal(20, 5),
+    reward_points: chType.decimal({ precision: 20, scale: 5 }),
     status: chType.int16(),
     created_at: chType.int32(),
-    _peerdb_synced_at: chType.dateTime64(9),
+    _peerdb_synced_at: chType.dateTime64({ precision: 9 }),
     _peerdb_is_deleted: chType.uint8(),
     _peerdb_version: chType.uint64(),
   },
@@ -145,7 +145,7 @@ Start here by task:
 | Task | Example |
 | --- | --- |
 | Basic builder query, filters, aggregate, `FINAL` | [`examples/basic-select.ts`](./examples/basic-select.ts) |
-| Schema options, column metadata, inferred row/insert types | [`examples/schema-and-types.ts`](./examples/schema-and-types.ts) |
+| Schema options, column name mapping, column metadata, inferred row/insert types | [`examples/schema-and-types.ts`](./examples/schema-and-types.ts) |
 | Inserts, raw `query_params`, direct value binding | [`examples/params-and-insert.ts`](./examples/params-and-insert.ts) |
 | Raw SQL templates, identifiers, table functions | [`examples/raw-sql.ts`](./examples/raw-sql.ts) |
 | JSON extraction, array helpers, `arrayJoin(arrayZip(...))`, tuple scopes | [`examples/json-array-functions.ts`](./examples/json-array-functions.ts) |
@@ -215,7 +215,7 @@ const orderRewardLog = chTable("order_reward_log", {
   id: chType.int32(),
   user_id: chType.string(),
   order_id: chType.int64(),
-  reward_points: chType.decimal(20, 5),
+  reward_points: chType.decimal({ precision: 20, scale: 5 }),
   created_at: chType.int32(),
   _peerdb_version: chType.uint64(),
 });
@@ -230,7 +230,7 @@ const orderRewardLog = chTable(
     id: chType.int32(),
     user_id: chType.string(),
     order_id: chType.int64(),
-    reward_points: chType.decimal(20, 5),
+    reward_points: chType.decimal({ precision: 20, scale: 5 }),
     created_at: chType.int32(),
     _peerdb_version: chType.uint64(),
   },
@@ -333,6 +333,80 @@ const rewardLog = alias(orderRewardLog, "reward_log");
 
 Aliased columns are rebound automatically to the alias.
 
+### Column names
+
+The schema object key is the logical key used by TypeScript rows, decoded query results, and insert values. By default, that same key is also the ClickHouse column name:
+
+```ts
+const rewardLog = chTable("reward_log", {
+  rewardPoints: chType.decimal({ precision: 20, scale: 5 }),
+});
+```
+
+When the database column uses a different name, pass that physical column name as the first argument:
+
+```ts
+const rewardLog = chTable("reward_log", {
+  userId: chType.string("user_id"),
+  rewardPoints: chType.decimal("reward_points", { precision: 20, scale: 5 }),
+  createdAt: chType.dateTime64("created_at", { precision: 9 }),
+});
+
+await db.insert(rewardLog).values({
+  userId: "u_100",
+  rewardPoints: "12.50000",
+  createdAt: new Date(),
+});
+```
+
+SQL, DDL, filters, ordering, grouping, and write column lists use the physical names (`user_id`, `reward_points`, `created_at`). Inferred models, default select results, explicit projection keys, and insert values use the schema object keys (`userId`, `rewardPoints`, `createdAt`).
+
+Every public `chType` builder supports an outer physical column name. Builders without extra configuration accept `name?`; builders with type configuration keep the optional physical column name first and put the type configuration in an object:
+
+```ts
+const typedColumns = chTable("typed_columns", {
+  id: chType.int32("id"),
+  code: chType.fixedString("code", { length: 8 }),
+  amount: chType.decimal("amount", { precision: 20, scale: 5 }),
+  tags: chType.array("tags", chType.string()),
+  attrs: chType.map("attrs", chType.string(), chType.string()),
+  embedding: chType.qbit("embedding", chType.float32(), { dimensions: 8 }),
+});
+```
+
+`aggregateFunction` and `simpleAggregateFunction` have one extra wrinkle: in their natural ClickHouse-shaped form, the first string is the aggregate function name, not the column name:
+
+```ts
+chType.aggregateFunction("sum", chType.uint64());
+chType.simpleAggregateFunction("sum", chType.uint64());
+```
+
+Use object config when you also need a physical column name:
+
+```ts
+const aggregateStateColumns = chTable("aggregate_state_columns", {
+  rewardSumState: chType.aggregateFunction("reward_sum_state", {
+    name: "sum",
+    args: [chType.decimal({ precision: 20, scale: 5 })],
+  }),
+  rewardSum: chType.simpleAggregateFunction("reward_sum", {
+    name: "sum",
+    value: chType.decimal({ precision: 20, scale: 5 }),
+  }),
+});
+```
+
+`nested("items", shape)` names the outer `Nested(...)` column. Nested field names are the keys of `shape`; inner column `configuredName` values are not used for the nested field names:
+
+```ts
+const orderLines = chTable("order_lines", {
+  items: chType.nested("items", {
+    productSku: chType.string(),
+    quantity: chType.float64(),
+  }),
+});
+```
+
 ### Column builders
 
 Use `chType.*` for schema column builders. The schema DSL covers the common ClickHouse type families:
@@ -350,6 +424,16 @@ Use `chType.*` for schema column builders. The schema DSL covers the common Clic
 
 ClickHouse does not support `Nullable(Array(...))`, `Nullable(Map(...))`, or `Nullable(Tuple(...))`. `ck-orm` rejects those shapes at schema-definition time. Put `nullable(...)` inside the composite type instead, for example `chType.array(chType.nullable(chType.string()))`.
 
+Builders with type configuration use object config, with the optional physical column name first:
+
+```ts
+chType.decimal({ precision: 20, scale: 5 });
+chType.decimal("reward_points", { precision: 20, scale: 5 });
+chType.fixedString({ length: 8 });
+chType.dateTime64("created_at", { precision: 9, timezone: "UTC" });
+chType.qbit("embedding", chType.float32(), { dimensions: 8 });
+```
+
 ### Column Type Cookbook
 
 Common schema shapes and their TypeScript values:
@@ -358,7 +442,7 @@ Common schema shapes and their TypeScript values:
 | --- | --- | --- |
 | enum | `chType.enum8<"new" | "paid">({ new: 1, paid: 2 })` | `"new" | "paid"` |
 | low-cardinality string | `chType.lowCardinality(chType.string())` | `string` |
-| nullable decimal | `chType.nullable(chType.decimal(18, 5))` | `string | null` |
+| nullable decimal | `chType.nullable(chType.decimal({ precision: 18, scale: 5 }))` | `string | null` |
 | array | `chType.array(chType.string())` | `string[]` |
 | nullable array item | `chType.array(chType.nullable(chType.string()))` | `(string | null)[]` |
 | tuple | `chType.tuple(chType.string(), chType.int32())` | `[string, number]` |

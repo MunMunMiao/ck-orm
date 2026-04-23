@@ -1,11 +1,12 @@
 import { describe, expect, it } from "bun:test";
-import { type array, type decimal, type int16, int32, type int64, type nullable, string, type uint64 } from "./columns";
+import { type array, decimal, type int16, int32, type int64, type nullable, string, type uint64 } from "./columns";
 import { fn } from "./functions";
 import {
   and,
   compileQuerySymbol,
   compileWithContextSymbol,
   createQueryClient,
+  decodeRow,
   desc,
   eq,
   exists,
@@ -64,6 +65,19 @@ const users = chTable(
   (table) => ({
     engine: "MergeTree",
     orderBy: [table.id],
+  }),
+);
+
+const camelRewardLog = chTable(
+  "order_reward_log",
+  {
+    userId: string("user_id"),
+    rewardPoints: decimal("reward_points", { precision: 20, scale: 5 }),
+    createdAt: int32("created_at"),
+  },
+  (table) => ({
+    engine: "MergeTree",
+    orderBy: [table.userId, table.createdAt],
   }),
 );
 
@@ -433,6 +447,61 @@ describe("ck-orm query compile", function describeClickHouseOrmQueryCompile() {
     expect(normalizeSql(built.query)).toContain("insert into `order_reward_log`");
     expect(normalizeSql(built.query)).toContain("{orm_param1:Int32}");
     expect(normalizeSql(built.query)).toContain("{orm_param9:Int32}");
+  });
+
+  it("compiles physical column names while decoding and inserting logical keys", function testLogicalAndPhysicalNames() {
+    const db = createQueryClient({
+      schema: {
+        camelRewardLog,
+      },
+    });
+
+    const implicitSelect = db.select().from(camelRewardLog)[compileQuerySymbol]();
+    expect(normalizeSql(implicitSelect.statement)).toContain(
+      "select `order_reward_log`.`user_id` as `userId`, `order_reward_log`.`reward_points` as `rewardPoints`, `order_reward_log`.`created_at` as `createdAt`",
+    );
+    expect(
+      decodeRow({ userId: "u_1", rewardPoints: "2.50000", createdAt: "1710000000" }, implicitSelect.selection),
+    ).toEqual({
+      userId: "u_1",
+      rewardPoints: "2.50000",
+      createdAt: 1710000000,
+    });
+
+    const aggregateSelect = db
+      .select({
+        userId: camelRewardLog.userId,
+        totalRewardPoints: fn.sum(camelRewardLog.rewardPoints).as("total_reward_points"),
+      })
+      .from(camelRewardLog)
+      .where(eq(camelRewardLog.userId, "u_1"))
+      .groupBy(camelRewardLog.userId)
+      .orderBy(desc(camelRewardLog.createdAt))
+      [compileQuerySymbol]();
+
+    expect(normalizeSql(aggregateSelect.statement)).toContain(
+      "where `order_reward_log`.`user_id` = {orm_param1:String}",
+    );
+    expect(normalizeSql(aggregateSelect.statement)).toContain("group by `order_reward_log`.`user_id`");
+    expect(normalizeSql(aggregateSelect.statement)).toContain("order by `order_reward_log`.`created_at` DESC");
+
+    const insert = db
+      .insert(camelRewardLog)
+      .values({
+        userId: "u_1",
+        rewardPoints: "2.50000",
+        createdAt: 1710000000,
+      })
+      [compileQuerySymbol]();
+
+    expect(normalizeSql(insert.statement)).toContain(
+      "insert into `order_reward_log` (`user_id`, `reward_points`, `created_at`)",
+    );
+    expect(insert.params).toEqual({
+      orm_param1: "u_1",
+      orm_param2: "2.50000",
+      orm_param3: 1710000000,
+    });
   });
 
   it("supports drizzle-style orderBy(column, desc(expr)) and nested default left-join selection", function testOrderByAndJoinShape() {

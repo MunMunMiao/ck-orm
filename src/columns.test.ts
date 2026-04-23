@@ -88,7 +88,7 @@ describe("ck-orm columns", function describeClickHouseOrmColumns() {
     expect(stringColumn.mapFromDriverValue(new Date("2026-04-21T00:00:00.000Z"))).toBe("2026-04-21T00:00:00.000Z");
     expect(() => stringColumn.mapFromDriverValue({})).toThrow("Cannot convert value to string");
 
-    const dateColumn = dateTime64(3, "UTC");
+    const dateColumn = dateTime64({ precision: 3, timezone: "UTC" });
     const originalDate = new Date("2026-04-21T00:00:00.000Z");
     expect(dateColumn.mapFromDriverValue(originalDate)).toBe(originalDate);
     const parsedDate = dateColumn.mapFromDriverValue("2026-04-21T00:00:00.000Z");
@@ -129,21 +129,21 @@ describe("ck-orm columns", function describeClickHouseOrmColumns() {
     expect(float32().sqlType).toBe("Float32");
     expect(float64().sqlType).toBe("Float64");
     expect(bfloat16().sqlType).toBe("BFloat16");
-    expect(fixedString(8).sqlType).toBe("FixedString(8)");
-    expect(decimal(18, 5).sqlType).toBe("Decimal(18, 5)");
+    expect(fixedString({ length: 8 }).sqlType).toBe("FixedString(8)");
+    expect(decimal({ precision: 18, scale: 5 }).sqlType).toBe("Decimal(18, 5)");
     expect(date().sqlType).toBe("Date");
     expect(date32().sqlType).toBe("Date32");
     expect(time().sqlType).toBe("Time");
-    expect(time64(6).sqlType).toBe("Time64(6)");
+    expect(time64({ precision: 6 }).sqlType).toBe("Time64(6)");
     expect(dateTime().sqlType).toBe("DateTime");
-    expect(dateTime64(6).sqlType).toBe("DateTime64(6)");
-    expect(dateTime64(6, "Asia/Shanghai").sqlType).toBe("DateTime64(6, 'Asia/Shanghai')");
+    expect(dateTime64({ precision: 6 }).sqlType).toBe("DateTime64(6)");
+    expect(dateTime64({ precision: 6, timezone: "Asia/Shanghai" }).sqlType).toBe("DateTime64(6, 'Asia/Shanghai')");
     expect(uuid().sqlType).toBe("UUID");
     expect(ipv4().sqlType).toBe("IPv4");
     expect(ipv6().sqlType).toBe("IPv6");
     expect(json<{ id: number }>().sqlType).toBe("JSON");
     expect(dynamic<{ label: string }>().sqlType).toBe("Dynamic");
-    expect(qbit(float32(), 8).sqlType).toBe("QBit(Float32, 8)");
+    expect(qbit(float32(), { dimensions: 8 }).sqlType).toBe("QBit(Float32, 8)");
     expect(json<{ id: number }>().mapFromDriverValue({ id: 1 })).toEqual({
       id: 1,
     });
@@ -152,12 +152,37 @@ describe("ck-orm columns", function describeClickHouseOrmColumns() {
     });
     expect(dynamic<{ label: string }>().mapFromDriverValue({ label: "dynamic" })).toEqual({ label: "dynamic" });
     expect(dynamic<{ label: string }>().mapToDriverValue({ label: "dynamic" })).toEqual({ label: "dynamic" });
-    expect(qbit(float32(), 8).mapFromDriverValue([1, 2, 3])).toEqual([1, 2, 3]);
-    expect(qbit(float32(), 8).mapToDriverValue([1, 2, 3])).toEqual([1, 2, 3]);
-    expect(() => qbit(float32(), 8).mapFromDriverValue("bad")).toThrow("Cannot convert value to qbit array");
+    expect(qbit(float32(), { dimensions: 8 }).mapFromDriverValue([1, 2, 3])).toEqual([1, 2, 3]);
+    expect(qbit(float32(), { dimensions: 8 }).mapToDriverValue([1, 2, 3])).toEqual([1, 2, 3]);
+    expect(() => qbit(float32(), { dimensions: 8 }).mapFromDriverValue("bad")).toThrow(
+      "Cannot convert value to qbit array",
+    );
 
-    expect(decimal(18, 5).mapToDriverValue("12.50000")).toBe("12.50000");
-    expect(decimal(18, 5).mapToDriverValue(12.5 as never)).toBe("12.5");
+    expect(decimal({ precision: 18, scale: 5 }).mapToDriverValue("12.50000")).toBe("12.50000");
+    expect(decimal({ precision: 18, scale: 5 }).mapToDriverValue(12.5 as never)).toBe("12.5");
+  });
+
+  it("preserves logical keys separately from configured database column names", function testConfiguredColumnNames() {
+    const rewardPoints = decimal("reward_points", { precision: 20, scale: 5 });
+    expect(rewardPoints.configuredName).toBe("reward_points");
+    expect(decimal({ precision: 20, scale: 5 }).configuredName).toBeUndefined();
+    expect(fixedString("code", { length: 4 }).configuredName).toBe("code");
+    expect(dateTime64("created_at", { precision: 9 }).configuredName).toBe("created_at");
+    expect(qbit("embedding", float32(), { dimensions: 8 }).configuredName).toBe("embedding");
+    expect(() => qbit("embedding", float32() as never)).toThrow("qbit() requires two values after the column name");
+
+    const bound = rewardPoints.bind({
+      key: "rewardPoints",
+      name: "reward_points",
+      tableName: "order_reward_log",
+    });
+
+    expect(bound.key).toBe("rewardPoints");
+    expect(bound.name).toBe("reward_points");
+    expect(normalizeSql(compileSql(sql`${bound}`).query)).toBe("`order_reward_log`.`reward_points`");
+    expect(() => string("bad-name")).toThrow("Invalid SQL identifier: bad-name");
+    expect(() => decimal("reward_points" as never)).toThrow("decimal() requires a config object after the column name");
+    expect(() => decimal(20 as never)).toThrow("decimal() requires a config object");
   });
 
   it("covers enum, nullable, array, tuple, map, variant and nested types", function testCompositeColumns() {
@@ -176,6 +201,8 @@ describe("ck-orm columns", function describeClickHouseOrmColumns() {
     expect(nullableString.mapFromDriverValue(7)).toBe("7");
     expect(nullableString.mapToDriverValue(null)).toBeNull();
     expect(nullableString.mapToDriverValue("ok")).toBe("ok");
+    expect(nullable("optional_note", string()).configuredName).toBe("optional_note");
+    expect(() => nullable("optional_note" as never)).toThrow("nullable() requires a value after the column name");
     expect(() => nullable(array(string()))).toThrow(
       "Nullable(Array(String)) is not supported by ClickHouse; wrap Nullable around fields inside the composite type instead",
     );
@@ -188,6 +215,9 @@ describe("ck-orm columns", function describeClickHouseOrmColumns() {
     expect(stringArray.mapFromDriverValue(["a", 1])).toEqual(["a", "1"]);
     expect(stringArray.mapToDriverValue(["a", "b"])).toEqual(["a", "b"]);
     expect(() => stringArray.mapFromDriverValue("bad")).toThrow("Cannot convert value to array");
+    const namedStringArray = array("tags", string());
+    expect(namedStringArray.configuredName).toBe("tags");
+    expect(namedStringArray.sqlType).toBe("Array(String)");
     const nullableStringArray = array(nullable(string()));
     expect(nullableStringArray.sqlType).toBe("Array(Nullable(String))");
     expect(nullableStringArray.mapFromDriverValue(["a", null, undefined])).toEqual(["a", null, null]);
@@ -243,10 +273,24 @@ describe("ck-orm columns", function describeClickHouseOrmColumns() {
     expect(aggregate.mapFromDriverValue("state")).toBe("state");
     expect(aggregate.mapToDriverValue("state")).toBe("state");
 
+    const namedAggregate = aggregateFunction("agg_sum_state", {
+      name: "sum",
+      args: [uint64()],
+    });
+    expect(namedAggregate.configuredName).toBe("agg_sum_state");
+    expect(namedAggregate.sqlType).toBe("AggregateFunction(sum, UInt64)");
+
     const simpleAggregate = simpleAggregateFunction("sum", int32());
     expect(simpleAggregate.sqlType).toBe("SimpleAggregateFunction(sum, Int32)");
     expect(simpleAggregate.mapFromDriverValue("value")).toBe("value");
     expect(simpleAggregate.mapToDriverValue("value")).toBe("value");
+
+    const namedSimpleAggregate = simpleAggregateFunction("sum_value", {
+      name: "sum",
+      value: int32(),
+    });
+    expect(namedSimpleAggregate.configuredName).toBe("sum_value");
+    expect(namedSimpleAggregate.sqlType).toBe("SimpleAggregateFunction(sum, Int32)");
 
     const pointValue: [number, number] = [1, 2];
     const lineValue: [number, number][] = [pointValue];

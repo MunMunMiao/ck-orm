@@ -8,6 +8,7 @@ export interface ColumnBinding<
   TTableName extends string = string,
   TTableAlias extends string | undefined = string | undefined,
 > {
+  readonly key?: string;
   readonly name: string;
   readonly tableName: TTableName;
   readonly tableAlias?: TTableAlias;
@@ -25,7 +26,9 @@ export interface Column<
   TTableAlias extends string | undefined = string | undefined,
 > extends SqlExpression<TData, ResolveSourceKey<TTableName, TTableAlias>> {
   readonly kind: "column";
+  readonly key?: string;
   readonly name?: string;
+  readonly configuredName?: string;
   readonly tableName?: TTableName;
   readonly tableAlias?: TTableAlias;
   readonly sqlType: TSqlType;
@@ -57,6 +60,7 @@ export interface ColumnDdlConfig {
 }
 
 type ColumnFactoryConfig<TData, TSqlType extends string> = {
+  readonly configuredName?: string;
   readonly sqlType: TSqlType;
   readonly mapFromDriverValue: Decoder<TData>;
   readonly mapToDriverValue?: Encoder<TData>;
@@ -64,6 +68,148 @@ type ColumnFactoryConfig<TData, TSqlType extends string> = {
 };
 
 const identity = <TData>(value: TData) => value;
+
+type ColumnName = string;
+type OptionalColumnName = ColumnName | undefined;
+type DecimalConfig = {
+  readonly precision: number;
+  readonly scale: number;
+};
+type FixedStringConfig = {
+  readonly length: number;
+};
+type PrecisionConfig = {
+  readonly precision: number;
+};
+type DateTime64Config = PrecisionConfig & {
+  readonly timezone?: string;
+};
+type QBitConfig = {
+  readonly dimensions: number;
+};
+type AggregateFunctionConfig = {
+  readonly name: string;
+  readonly args?: readonly (AnyColumn | string)[];
+};
+type SimpleAggregateFunctionConfig = {
+  readonly name: string;
+  readonly value: AnyColumn;
+};
+
+const normalizeConfiguredName = (name: OptionalColumnName): OptionalColumnName => {
+  if (name === undefined) {
+    return undefined;
+  }
+  assertValidSqlIdentifier(name);
+  return name;
+};
+
+const isObjectRecord = (value: unknown): value is Record<string, unknown> => {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+};
+
+const isAggregateFunctionConfig = (value: unknown): value is AggregateFunctionConfig => {
+  return isObjectRecord(value) && !("kind" in value) && typeof value.name === "string";
+};
+
+const withConfiguredName = <TData, TSqlType extends string>(
+  config: Omit<ColumnFactoryConfig<TData, TSqlType>, "configuredName">,
+  name?: string,
+): ColumnFactoryConfig<TData, TSqlType> => {
+  return {
+    ...config,
+    configuredName: normalizeConfiguredName(name),
+  };
+};
+
+const parseNamedConfig = <TConfig extends object>(
+  builderName: string,
+  first: string | TConfig,
+  second?: TConfig,
+): {
+  readonly name?: string;
+  readonly config: TConfig;
+} => {
+  if (typeof first === "string") {
+    if (!isObjectRecord(second)) {
+      throw createClientValidationError(`${builderName}() requires a config object after the column name`);
+    }
+    return {
+      name: normalizeConfiguredName(first),
+      config: second,
+    };
+  }
+
+  if (isObjectRecord(first) && second === undefined) {
+    return {
+      config: first,
+    };
+  }
+
+  throw createClientValidationError(`${builderName}() requires a config object`);
+};
+
+const parseNamedValue = <TValue>(
+  builderName: string,
+  first: string | TValue,
+  second?: TValue,
+): {
+  readonly name?: string;
+  readonly value: TValue;
+} => {
+  if (typeof first === "string") {
+    if (second === undefined) {
+      throw createClientValidationError(`${builderName}() requires a value after the column name`);
+    }
+    return {
+      name: normalizeConfiguredName(first),
+      value: second,
+    };
+  }
+
+  return {
+    value: first,
+  };
+};
+
+const parseNamedPair = <TLeft, TRight>(
+  builderName: string,
+  first: string | TLeft,
+  second: TLeft | TRight,
+  third?: TRight,
+): {
+  readonly name?: string;
+  readonly left: TLeft;
+  readonly right: TRight;
+} => {
+  if (typeof first === "string") {
+    if (third === undefined) {
+      throw createClientValidationError(`${builderName}() requires two values after the column name`);
+    }
+    return {
+      name: normalizeConfiguredName(first),
+      left: second as TLeft,
+      right: third,
+    };
+  }
+
+  return {
+    left: first,
+    right: second as TRight,
+  };
+};
+
+const assertPositiveInteger = (label: string, value: number): void => {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw createClientValidationError(`${label} must be a positive integer, got ${value}`);
+  }
+};
+
+const assertPrecision = (label: string, value: number): void => {
+  if (!Number.isInteger(value) || value < 0 || value > 9) {
+    throw createClientValidationError(`${label} must be an integer between 0 and 9, got ${value}`);
+  }
+};
 
 const rethrowDecodeWithPath = (error: unknown, segment: string, originalValue: unknown): DecodeError => {
   if (isDecodeError(error)) {
@@ -149,7 +295,9 @@ const createColumnFactory = <
   return {
     ...expression,
     kind: "column",
+    key: binding?.key ?? binding?.name,
     name: binding?.name,
+    configuredName: config.configuredName,
     tableName: binding?.tableName as TTableName | undefined,
     tableAlias: binding?.tableAlias as TTableAlias | undefined,
     sqlType: config.sqlType,
@@ -288,45 +436,64 @@ export type MultiPolygon<TData extends readonly [number, number][][][] = readonl
   "MultiPolygon"
 >;
 
-const numericColumn = <TData, TSqlType extends string>(sqlType: TSqlType, decoder: Decoder<TData>) =>
-  createColumnFactory<TData, TSqlType>({ sqlType, mapFromDriverValue: decoder });
+const numericColumn = <TData, TSqlType extends string>(sqlType: TSqlType, decoder: Decoder<TData>, name?: string) =>
+  createColumnFactory<TData, TSqlType>(withConfiguredName({ sqlType, mapFromDriverValue: decoder }, name));
 
-const integerStringColumn = <TSqlType extends "Int64" | "UInt64">(sqlType: TSqlType) =>
-  createColumnFactory<string, TSqlType>({
-    sqlType,
-    mapFromDriverValue: toIntegerString,
-    mapToDriverValue: toIntegerString,
-  });
+const integerStringColumn = <TSqlType extends "Int64" | "UInt64">(sqlType: TSqlType, name?: string) =>
+  createColumnFactory<string, TSqlType>(
+    withConfiguredName(
+      {
+        sqlType,
+        mapFromDriverValue: toIntegerString,
+        mapToDriverValue: toIntegerString,
+      },
+      name,
+    ),
+  );
 
-const geometryColumn = <TData, TSqlType extends string>(sqlType: TSqlType) =>
-  createColumnFactory<TData, TSqlType>({
-    sqlType,
-    mapFromDriverValue: (value) => value as TData,
-  });
+const geometryColumn = <TData, TSqlType extends string>(sqlType: TSqlType, name?: string) =>
+  createColumnFactory<TData, TSqlType>(
+    withConfiguredName(
+      {
+        sqlType,
+        mapFromDriverValue: (value) => value as TData,
+      },
+      name,
+    ),
+  );
 
-export const int8 = (): Int8<number> => numericColumn("Int8", toNumber);
-export const int16 = (): Int16<number> => numericColumn("Int16", toNumber);
-export const int32 = (): Int32<number> => numericColumn("Int32", toNumber);
-export const int64 = (): Int64<string> => integerStringColumn("Int64");
-export const uint8 = (): UInt8<number> => numericColumn("UInt8", toNumber);
-export const uint16 = (): UInt16<number> => numericColumn("UInt16", toNumber);
-export const uint32 = (): UInt32<number> => numericColumn("UInt32", toNumber);
-export const uint64 = (): UInt64<string> => integerStringColumn("UInt64");
-export const float32 = (): Float32<number> => numericColumn("Float32", toNumber);
-export const float64 = (): Float64<number> => numericColumn("Float64", toNumber);
-export const bfloat16 = (): BFloat16<number> => numericColumn("BFloat16", toNumber);
-export const string = (): StringColumn<string> =>
-  createColumnFactory({ sqlType: "String", mapFromDriverValue: toStringValue });
-export const fixedString = (length: number): FixedString<string> => {
+export const int8 = (name?: string): Int8<number> => numericColumn("Int8", toNumber, name);
+export const int16 = (name?: string): Int16<number> => numericColumn("Int16", toNumber, name);
+export const int32 = (name?: string): Int32<number> => numericColumn("Int32", toNumber, name);
+export const int64 = (name?: string): Int64<string> => integerStringColumn("Int64", name);
+export const uint8 = (name?: string): UInt8<number> => numericColumn("UInt8", toNumber, name);
+export const uint16 = (name?: string): UInt16<number> => numericColumn("UInt16", toNumber, name);
+export const uint32 = (name?: string): UInt32<number> => numericColumn("UInt32", toNumber, name);
+export const uint64 = (name?: string): UInt64<string> => integerStringColumn("UInt64", name);
+export const float32 = (name?: string): Float32<number> => numericColumn("Float32", toNumber, name);
+export const float64 = (name?: string): Float64<number> => numericColumn("Float64", toNumber, name);
+export const bfloat16 = (name?: string): BFloat16<number> => numericColumn("BFloat16", toNumber, name);
+export const string = (name?: string): StringColumn<string> =>
+  createColumnFactory(withConfiguredName({ sqlType: "String", mapFromDriverValue: toStringValue }, name));
+export function fixedString(config: FixedStringConfig): FixedString<string>;
+export function fixedString(name: string, config: FixedStringConfig): FixedString<string>;
+export function fixedString(first: string | FixedStringConfig, second?: FixedStringConfig): FixedString<string> {
+  const { name, config } = parseNamedConfig("fixedString", first, second);
+  const { length } = config;
   if (!Number.isInteger(length) || length <= 0) {
     throw createClientValidationError(`fixedString length must be a positive integer, got ${length}`);
   }
   return createColumnFactory({
+    configuredName: name,
     sqlType: `FixedString(${length})`,
     mapFromDriverValue: toStringValue,
   });
-};
-export const decimal = (precision: number, scale: number): Decimal<string> => {
+}
+export function decimal(config: DecimalConfig): Decimal<string>;
+export function decimal(name: string, config: DecimalConfig): Decimal<string>;
+export function decimal(first: string | DecimalConfig, second?: DecimalConfig): Decimal<string> {
+  const { name, config } = parseNamedConfig("decimal", first, second);
+  const { precision, scale } = config;
   if (!Number.isInteger(precision) || precision < 1 || precision > 76) {
     throw createClientValidationError(`decimal precision must be an integer between 1 and 76, got ${precision}`);
   }
@@ -336,57 +503,96 @@ export const decimal = (precision: number, scale: number): Decimal<string> => {
     );
   }
   return createColumnFactory({
+    configuredName: name,
     sqlType: `Decimal(${precision}, ${scale})`,
     mapFromDriverValue: toStringValue,
     mapToDriverValue: toStringValue,
   });
-};
-export const date = (): DateColumn<Date> => createColumnFactory({ sqlType: "Date", mapFromDriverValue: toDate });
-export const date32 = (): Date32<Date> => createColumnFactory({ sqlType: "Date32", mapFromDriverValue: toDate });
-export const time = (): Time<Date> => createColumnFactory({ sqlType: "Time", mapFromDriverValue: toDate });
-export const time64 = (precision: number): Time64<Date> => {
-  if (!Number.isInteger(precision) || precision < 0 || precision > 9) {
-    throw createClientValidationError(`time64 precision must be an integer between 0 and 9, got ${precision}`);
-  }
+}
+export const date = (name?: string): DateColumn<Date> =>
+  createColumnFactory(withConfiguredName({ sqlType: "Date", mapFromDriverValue: toDate }, name));
+export const date32 = (name?: string): Date32<Date> =>
+  createColumnFactory(withConfiguredName({ sqlType: "Date32", mapFromDriverValue: toDate }, name));
+export const time = (name?: string): Time<Date> =>
+  createColumnFactory(withConfiguredName({ sqlType: "Time", mapFromDriverValue: toDate }, name));
+export function time64(config: PrecisionConfig): Time64<Date>;
+export function time64(name: string, config: PrecisionConfig): Time64<Date>;
+export function time64(first: string | PrecisionConfig, second?: PrecisionConfig): Time64<Date> {
+  const { name, config } = parseNamedConfig("time64", first, second);
+  const { precision } = config;
+  assertPrecision("time64 precision", precision);
   return createColumnFactory({
+    configuredName: name,
     sqlType: `Time64(${precision})`,
     mapFromDriverValue: toDate,
   });
-};
-export const dateTime = (): DateTime<Date> => createColumnFactory({ sqlType: "DateTime", mapFromDriverValue: toDate });
+}
+export const dateTime = (name?: string): DateTime<Date> =>
+  createColumnFactory(withConfiguredName({ sqlType: "DateTime", mapFromDriverValue: toDate }, name));
 const escapeSqlSingleQuoted = (value: string) => value.replaceAll("\\", "\\\\").replaceAll("'", "\\'");
 
-export const dateTime64 = (precision: number, timezone?: string): DateTime64<Date> => {
+export function dateTime64(config: DateTime64Config): DateTime64<Date>;
+export function dateTime64(name: string, config: DateTime64Config): DateTime64<Date>;
+export function dateTime64(first: string | DateTime64Config, second?: DateTime64Config): DateTime64<Date> {
+  const { name, config } = parseNamedConfig("dateTime64", first, second);
+  const { precision, timezone } = config;
+  assertPrecision("dateTime64 precision", precision);
   const suffix = timezone ? `, '${escapeSqlSingleQuoted(timezone)}'` : "";
   return createColumnFactory({
+    configuredName: name,
     sqlType: `DateTime64(${precision}${suffix})`,
     mapFromDriverValue: toDate,
   });
-};
-export const bool = (): Bool<boolean> => createColumnFactory({ sqlType: "Bool", mapFromDriverValue: toBoolean });
-export const uuid = (): UUID<string> => createColumnFactory({ sqlType: "UUID", mapFromDriverValue: toStringValue });
-export const ipv4 = (): IPv4<string> => createColumnFactory({ sqlType: "IPv4", mapFromDriverValue: toStringValue });
-export const ipv6 = (): IPv6<string> => createColumnFactory({ sqlType: "IPv6", mapFromDriverValue: toStringValue });
-export const json = <TData = unknown>(): JsonColumn<TData> =>
-  createColumnFactory({
-    sqlType: "JSON",
-    mapFromDriverValue: (value) => value as TData,
-    mapToDriverValue: (value) => value,
-  });
-export const dynamic = <TData = unknown>(): Dynamic<TData> =>
-  createColumnFactory({
-    sqlType: "Dynamic",
-    mapFromDriverValue: (value) => value as TData,
-    mapToDriverValue: (value) => value,
-  });
-export const qbit = <TInner extends Float32 | Float64 | BFloat16, TData extends readonly number[] = readonly number[]>(
+}
+export const bool = (name?: string): Bool<boolean> =>
+  createColumnFactory(withConfiguredName({ sqlType: "Bool", mapFromDriverValue: toBoolean }, name));
+export const uuid = (name?: string): UUID<string> =>
+  createColumnFactory(withConfiguredName({ sqlType: "UUID", mapFromDriverValue: toStringValue }, name));
+export const ipv4 = (name?: string): IPv4<string> =>
+  createColumnFactory(withConfiguredName({ sqlType: "IPv4", mapFromDriverValue: toStringValue }, name));
+export const ipv6 = (name?: string): IPv6<string> =>
+  createColumnFactory(withConfiguredName({ sqlType: "IPv6", mapFromDriverValue: toStringValue }, name));
+export const json = <TData = unknown>(name?: string): JsonColumn<TData> =>
+  createColumnFactory(
+    withConfiguredName(
+      {
+        sqlType: "JSON",
+        mapFromDriverValue: (value) => value as TData,
+        mapToDriverValue: (value) => value,
+      },
+      name,
+    ),
+  );
+export const dynamic = <TData = unknown>(name?: string): Dynamic<TData> =>
+  createColumnFactory(
+    withConfiguredName(
+      {
+        sqlType: "Dynamic",
+        mapFromDriverValue: (value) => value as TData,
+        mapToDriverValue: (value) => value,
+      },
+      name,
+    ),
+  );
+export function qbit<TInner extends Float32 | Float64 | BFloat16, TData extends readonly number[] = readonly number[]>(
   inner: TInner,
-  dimensions: number,
-): QBit<TData> => {
-  if (!Number.isInteger(dimensions) || dimensions <= 0) {
-    throw createClientValidationError(`qbit dimensions must be a positive integer, got ${dimensions}`);
-  }
+  config: QBitConfig,
+): QBit<TData>;
+export function qbit<TInner extends Float32 | Float64 | BFloat16, TData extends readonly number[] = readonly number[]>(
+  name: string,
+  inner: TInner,
+  config: QBitConfig,
+): QBit<TData>;
+export function qbit<TInner extends Float32 | Float64 | BFloat16, TData extends readonly number[] = readonly number[]>(
+  first: string | TInner,
+  second: TInner | QBitConfig,
+  third?: QBitConfig,
+): QBit<TData> {
+  const { name, left: inner, right: config } = parseNamedPair<TInner, QBitConfig>("qbit", first, second, third);
+  const { dimensions } = config;
+  assertPositiveInteger("qbit dimensions", dimensions);
   return createColumnFactory({
+    configuredName: name,
     sqlType: `QBit(${inner.sqlType}, ${dimensions})`,
     mapFromDriverValue: (value) => {
       if (!Array.isArray(value)) {
@@ -396,47 +602,70 @@ export const qbit = <TInner extends Float32 | Float64 | BFloat16, TData extends 
     },
     mapToDriverValue: (value) => value,
   });
-};
-export const enum8 = <TData extends string = string>(values: Record<string, number>): Enum8<TData> =>
-  createColumnFactory({
+}
+export function enum8<TData extends string = string>(values: Record<string, number>): Enum8<TData>;
+export function enum8<TData extends string = string>(name: string, values: Record<string, number>): Enum8<TData>;
+export function enum8<TData extends string = string>(
+  first: string | Record<string, number>,
+  second?: Record<string, number>,
+): Enum8<TData> {
+  const { name, value: values } = parseNamedValue<Record<string, number>>("enum8", first, second);
+  return createColumnFactory({
+    configuredName: name,
     sqlType: `Enum8(${Object.entries(values)
       .map(([key, value]) => `'${escapeSqlSingleQuoted(key)}' = ${value}`)
       .join(", ")})`,
     mapFromDriverValue: toStringValue as Decoder<TData>,
   });
-export const enum16 = <TData extends string = string>(values: Record<string, number>): Enum16<TData> =>
-  createColumnFactory({
+}
+export function enum16<TData extends string = string>(values: Record<string, number>): Enum16<TData>;
+export function enum16<TData extends string = string>(name: string, values: Record<string, number>): Enum16<TData>;
+export function enum16<TData extends string = string>(
+  first: string | Record<string, number>,
+  second?: Record<string, number>,
+): Enum16<TData> {
+  const { name, value: values } = parseNamedValue<Record<string, number>>("enum16", first, second);
+  return createColumnFactory({
+    configuredName: name,
     sqlType: `Enum16(${Object.entries(values)
       .map(([key, value]) => `'${escapeSqlSingleQuoted(key)}' = ${value}`)
       .join(", ")})`,
     mapFromDriverValue: toStringValue as Decoder<TData>,
   });
-export const nullable = <TInner extends AnyColumn>(inner: TInner): Nullable<TInner> =>
-  (() => {
-    if (/^(Array|Map|Tuple)\(/.test(inner.sqlType)) {
-      throw createClientValidationError(
-        `Nullable(${inner.sqlType}) is not supported by ClickHouse; wrap Nullable around fields inside the composite type instead`,
-      );
-    }
+}
+export function nullable<TInner extends AnyColumn>(inner: TInner): Nullable<TInner>;
+export function nullable<TInner extends AnyColumn>(name: string, inner: TInner): Nullable<TInner>;
+export function nullable<TInner extends AnyColumn>(first: string | TInner, second?: TInner): Nullable<TInner> {
+  const { name, value: inner } = parseNamedValue<TInner>("nullable", first, second);
+  if (/^(Array|Map|Tuple)\(/.test(inner.sqlType)) {
+    throw createClientValidationError(
+      `Nullable(${inner.sqlType}) is not supported by ClickHouse; wrap Nullable around fields inside the composite type instead`,
+    );
+  }
 
-    return createColumnFactory<InferData<TInner> | null, string>({
-      sqlType: `Nullable(${inner.sqlType})`,
-      mapFromDriverValue: (value) => {
-        if (value === null || value === undefined) {
-          return null;
-        }
-        return inner.mapFromDriverValue(value) as InferData<TInner>;
-      },
-      mapToDriverValue: (value) => {
-        if (value === null) {
-          return null;
-        }
-        return inner.mapToDriverValue(value as InferData<TInner>);
-      },
-    });
-  })();
-export const array = <TInner extends AnyColumn>(inner: TInner): ArrayColumn<TInner> =>
-  createColumnFactory<InferData<TInner>[], string>({
+  return createColumnFactory<InferData<TInner> | null, string>({
+    configuredName: name,
+    sqlType: `Nullable(${inner.sqlType})`,
+    mapFromDriverValue: (value) => {
+      if (value === null || value === undefined) {
+        return null;
+      }
+      return inner.mapFromDriverValue(value) as InferData<TInner>;
+    },
+    mapToDriverValue: (value) => {
+      if (value === null) {
+        return null;
+      }
+      return inner.mapToDriverValue(value as InferData<TInner>);
+    },
+  });
+}
+export function array<TInner extends AnyColumn>(inner: TInner): ArrayColumn<TInner>;
+export function array<TInner extends AnyColumn>(name: string, inner: TInner): ArrayColumn<TInner>;
+export function array<TInner extends AnyColumn>(first: string | TInner, second?: TInner): ArrayColumn<TInner> {
+  const { name, value: inner } = parseNamedValue<TInner>("array", first, second);
+  return createColumnFactory({
+    configuredName: name,
     sqlType: `Array(${inner.sqlType})`,
     mapFromDriverValue: (value) => {
       if (!Array.isArray(value)) {
@@ -452,8 +681,17 @@ export const array = <TInner extends AnyColumn>(inner: TInner): ArrayColumn<TInn
     },
     mapToDriverValue: (value) => value.map((item) => inner.mapToDriverValue(item)),
   });
-export const tuple = <const TItems extends readonly AnyColumn[]>(...items: TItems): TupleColumn<TItems> =>
-  createColumnFactory<{ [K in keyof TItems]: InferData<TItems[K]> }, string>({
+}
+export function tuple<const TItems extends readonly AnyColumn[]>(...items: TItems): TupleColumn<TItems>;
+export function tuple<const TItems extends readonly AnyColumn[]>(name: string, ...items: TItems): TupleColumn<TItems>;
+export function tuple<const TItems extends readonly AnyColumn[]>(
+  first: string | TItems[number],
+  ...rest: TItems
+): TupleColumn<TItems> {
+  const name = typeof first === "string" ? normalizeConfiguredName(first) : undefined;
+  const items = (typeof first === "string" ? rest : [first, ...rest]) as unknown as TItems;
+  return createColumnFactory<{ [K in keyof TItems]: InferData<TItems[K]> }, string>({
+    configuredName: name,
     sqlType: `Tuple(${items.map((item) => item.sqlType).join(", ")})`,
     mapFromDriverValue: (value) => {
       if (!Array.isArray(value)) {
@@ -471,11 +709,24 @@ export const tuple = <const TItems extends readonly AnyColumn[]>(...items: TItem
     },
     mapToDriverValue: (value) => value.map((item, index) => items[index]?.mapToDriverValue(item)) as unknown[],
   });
-export const map = <TKey extends AnyColumn, TValue extends AnyColumn>(
+}
+export function map<TKey extends AnyColumn, TValue extends AnyColumn>(
   key: TKey,
   value: TValue,
-): MapColumn<TKey, TValue> =>
-  createColumnFactory<Record<string, InferData<TValue>>, string>({
+): MapColumn<TKey, TValue>;
+export function map<TKey extends AnyColumn, TValue extends AnyColumn>(
+  name: string,
+  key: TKey,
+  value: TValue,
+): MapColumn<TKey, TValue>;
+export function map<TKey extends AnyColumn, TValue extends AnyColumn>(
+  first: string | TKey,
+  second: TKey | TValue,
+  third?: TValue,
+): MapColumn<TKey, TValue> {
+  const { name, left: key, right: value } = parseNamedPair<TKey, TValue>("map", first, second, third);
+  return createColumnFactory<Record<string, InferData<TValue>>, string>({
+    configuredName: name,
     sqlType: `Map(${key.sqlType}, ${value.sqlType})`,
     mapFromDriverValue: (input) => {
       if (typeof input !== "object" || input === null) {
@@ -499,20 +750,48 @@ export const map = <TKey extends AnyColumn, TValue extends AnyColumn>(
       return record;
     },
   });
-export const variant = <const TItems extends readonly AnyColumn[]>(...items: TItems): VariantColumn<TItems> =>
-  createColumnFactory<InferData<TItems[number]>, string>({
+}
+export function variant<const TItems extends readonly AnyColumn[]>(...items: TItems): VariantColumn<TItems>;
+export function variant<const TItems extends readonly AnyColumn[]>(
+  name: string,
+  ...items: TItems
+): VariantColumn<TItems>;
+export function variant<const TItems extends readonly AnyColumn[]>(
+  first: string | TItems[number],
+  ...rest: TItems
+): VariantColumn<TItems> {
+  const name = typeof first === "string" ? normalizeConfiguredName(first) : undefined;
+  const items = (typeof first === "string" ? rest : [first, ...rest]) as unknown as TItems;
+  return createColumnFactory<InferData<TItems[number]>, string>({
+    configuredName: name,
     sqlType: `Variant(${items.map((item) => item.sqlType).join(", ")})`,
     mapFromDriverValue: (value) => value as InferData<TItems[number]>,
     mapToDriverValue: (value) => value,
   });
-export const lowCardinality = <TInner extends AnyColumn>(inner: TInner): LowCardinality<TInner> =>
-  createColumnFactory<InferData<TInner>, string>({
+}
+export function lowCardinality<TInner extends AnyColumn>(inner: TInner): LowCardinality<TInner>;
+export function lowCardinality<TInner extends AnyColumn>(name: string, inner: TInner): LowCardinality<TInner>;
+export function lowCardinality<TInner extends AnyColumn>(
+  first: string | TInner,
+  second?: TInner,
+): LowCardinality<TInner> {
+  const { name, value: inner } = parseNamedValue<TInner>("lowCardinality", first, second);
+  return createColumnFactory<InferData<TInner>, string>({
+    configuredName: name,
     sqlType: `LowCardinality(${inner.sqlType})`,
     mapFromDriverValue: (value) => inner.mapFromDriverValue(value) as InferData<TInner>,
     mapToDriverValue: (value) => inner.mapToDriverValue(value),
   });
-export const nested = <TShape extends Record<string, AnyColumn>>(shape: TShape): NestedColumn<TShape> =>
-  createColumnFactory<{ [K in keyof TShape]: InferData<TShape[K]> }[], string>({
+}
+export function nested<TShape extends Record<string, AnyColumn>>(shape: TShape): NestedColumn<TShape>;
+export function nested<TShape extends Record<string, AnyColumn>>(name: string, shape: TShape): NestedColumn<TShape>;
+export function nested<TShape extends Record<string, AnyColumn>>(
+  first: string | TShape,
+  second?: TShape,
+): NestedColumn<TShape> {
+  const { name, value: shape } = parseNamedValue<TShape>("nested", first, second);
+  return createColumnFactory<{ [K in keyof TShape]: InferData<TShape[K]> }[], string>({
+    configuredName: name,
     sqlType: `Nested(${Object.entries(shape)
       .map(([key, value]) => {
         assertValidSqlIdentifier(key, "nested column");
@@ -551,33 +830,59 @@ export const nested = <TShape extends Record<string, AnyColumn>>(shape: TShape):
         return record;
       }),
   });
-export const aggregateFunction = <TData = string>(
+}
+export function aggregateFunction<TData = string>(
   name: string,
   ...args: (AnyColumn | string)[]
-): AggregateFunction<TData> => {
+): AggregateFunction<TData>;
+export function aggregateFunction<TData = string>(
+  columnName: string,
+  config: AggregateFunctionConfig,
+): AggregateFunction<TData>;
+export function aggregateFunction<TData = string>(
+  first: string,
+  ...rest: (AnyColumn | string | AggregateFunctionConfig)[]
+): AggregateFunction<TData> {
+  const namedConfig = rest.length === 1 && isAggregateFunctionConfig(rest[0]) ? rest[0] : undefined;
+  const configuredName = namedConfig ? normalizeConfiguredName(first) : undefined;
+  const name = namedConfig ? String(namedConfig.name) : first;
+  const args = namedConfig ? (namedConfig.args ?? []) : (rest as (AnyColumn | string)[]);
   assertValidSqlIdentifier(name, "aggregate function");
   return createColumnFactory({
+    configuredName,
     sqlType: `AggregateFunction(${name}${args.length > 0 ? `, ${args.map((arg) => (typeof arg === "string" ? arg : arg.sqlType)).join(", ")}` : ""})`,
     mapFromDriverValue: (input) => input as TData,
     mapToDriverValue: (input) => input,
   });
-};
-export const simpleAggregateFunction = <TData = string>(
-  name: string,
-  value: AnyColumn,
-): SimpleAggregateFunction<TData> => {
+}
+export function simpleAggregateFunction<TData = string>(name: string, value: AnyColumn): SimpleAggregateFunction<TData>;
+export function simpleAggregateFunction<TData = string>(
+  columnName: string,
+  config: SimpleAggregateFunctionConfig,
+): SimpleAggregateFunction<TData>;
+export function simpleAggregateFunction<TData = string>(
+  first: string,
+  second: AnyColumn | SimpleAggregateFunctionConfig,
+): SimpleAggregateFunction<TData> {
+  const namedConfig = isObjectRecord(second) && "name" in second && "value" in second ? second : undefined;
+  const configuredName = namedConfig ? normalizeConfiguredName(first) : undefined;
+  const name = namedConfig ? String(namedConfig.name) : first;
+  const value = namedConfig ? (namedConfig.value as AnyColumn) : (second as AnyColumn);
   assertValidSqlIdentifier(name, "simple aggregate function");
   return createColumnFactory({
+    configuredName,
     sqlType: `SimpleAggregateFunction(${name}, ${value.sqlType})`,
     mapFromDriverValue: (input) => input as TData,
     mapToDriverValue: (input) => input,
   });
-};
-export const point = (): Point => geometryColumn<readonly [number, number], "Point">("Point");
-export const ring = (): Ring => geometryColumn<readonly [number, number][], "Ring">("Ring");
-export const lineString = (): LineString => geometryColumn<readonly [number, number][], "LineString">("LineString");
-export const multiLineString = (): MultiLineString =>
-  geometryColumn<readonly [number, number][][], "MultiLineString">("MultiLineString");
-export const polygon = (): Polygon => geometryColumn<readonly [number, number][][], "Polygon">("Polygon");
-export const multiPolygon = (): MultiPolygon =>
-  geometryColumn<readonly [number, number][][][], "MultiPolygon">("MultiPolygon");
+}
+export const point = (name?: string): Point => geometryColumn<readonly [number, number], "Point">("Point", name);
+export const ring = (name?: string): Ring => geometryColumn<readonly [number, number][], "Ring">("Ring", name);
+export const lineString = (name?: string): LineString =>
+  geometryColumn<readonly [number, number][], "LineString">("LineString", name);
+export const multiLineString = (name?: string): MultiLineString =>
+  geometryColumn<readonly [number, number][][], "MultiLineString">("MultiLineString", name);
+export const polygon = (name?: string): Polygon =>
+  geometryColumn<readonly [number, number][][], "Polygon">("Polygon", name);
+export const multiPolygon = (name?: string): MultiPolygon =>
+  geometryColumn<readonly [number, number][][][], "MultiPolygon">("MultiPolygon", name);

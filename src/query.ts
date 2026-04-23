@@ -1396,9 +1396,12 @@ export const createInsertBuilder = <TTable extends AnyTable>(
     },
 
     [compileQuerySymbol](): CompiledQuery<never> {
-      const columnEntries = Object.entries(table.columns);
-      const columnNames = columnEntries.map(([name]) => name);
-      const columnTypes = columnEntries.map(([, column]) => column.sqlType);
+      const columnEntries = Object.entries(table.columns).map(([schemaKey, column]) => ({
+        key: column.key ?? schemaKey,
+        name: column.name ?? schemaKey,
+        column,
+      }));
+      const columnTypes = columnEntries.map(({ column }) => column.sqlType);
       const ctx: BuildContext = {
         params: {},
         nextParamIndex: 0,
@@ -1406,8 +1409,8 @@ export const createInsertBuilder = <TTable extends AnyTable>(
       const valueRows = rows.map(
         (row) =>
           sql`(${joinSqlParts(
-            columnEntries.map(([columnName, column], index) => {
-              const value = (row as Record<string, unknown>)[columnName];
+            columnEntries.map(({ key, column }, index) => {
+              const value = (row as Record<string, unknown>)[key];
               if (value === undefined) {
                 return sql.raw("DEFAULT");
               }
@@ -1417,7 +1420,7 @@ export const createInsertBuilder = <TTable extends AnyTable>(
           )})`,
       );
       const statement = sql`insert into ${renderTableIdentifier(table)} (${joinSqlParts(
-        columnNames.map((columnName) => sql.identifier(columnName)),
+        columnEntries.map(({ name }) => sql.identifier(name)),
         ", ",
       )}) values ${joinSqlParts(valueRows, ", ")}`;
       const compiled = compileSql(statement, ctx);

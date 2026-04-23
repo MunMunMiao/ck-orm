@@ -29,7 +29,7 @@ After that, move on to the larger scenario examples:
 
 | Need | File |
 | --- | --- |
-| Define schemas, table options, DDL metadata, inferred model types | [`schema-and-types.ts`](./schema-and-types.ts) |
+| Define schemas, column name mapping, table options, DDL metadata, inferred model types | [`schema-and-types.ts`](./schema-and-types.ts) |
 | Build common `select` queries with filters, grouping, ordering, `FINAL` | [`basic-select.ts`](./basic-select.ts) |
 | Insert rows and use raw `query_params` | [`params-and-insert.ts`](./params-and-insert.ts) |
 | Use `csql`, identifiers, raw execution, and table functions | [`raw-sql.ts`](./raw-sql.ts) |

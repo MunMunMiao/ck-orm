@@ -1,4 +1,5 @@
 import type { AnyColumn, Column, DdlFragmentInput } from "./columns";
+import { createClientValidationError } from "./errors";
 import { type SQLFragment, sql } from "./sql";
 
 type InferSelect<TColumns extends Record<string, AnyColumn>> = {
@@ -167,10 +168,21 @@ const bindColumns = <
   tableAlias?: TTableAlias,
 ): BoundColumns<TColumns, TTableName, TTableAlias> => {
   const boundColumns = {} as BoundColumns<TColumns, TTableName, TTableAlias>;
+  const physicalNames = new Map<string, string>();
 
-  for (const [columnName, column] of Object.entries(columns)) {
-    boundColumns[columnName as keyof BoundColumns<TColumns, TTableName, TTableAlias>] = column.bind({
-      name: columnName,
+  for (const [columnKey, column] of Object.entries(columns)) {
+    const physicalName = column.configuredName ?? columnKey;
+    const previousKey = physicalNames.get(physicalName);
+    if (previousKey) {
+      throw createClientValidationError(
+        `Duplicate column name "${physicalName}" in table "${tableName}" for schema keys "${previousKey}" and "${columnKey}"`,
+      );
+    }
+    physicalNames.set(physicalName, columnKey);
+
+    boundColumns[columnKey as keyof BoundColumns<TColumns, TTableName, TTableAlias>] = column.bind({
+      key: columnKey,
+      name: physicalName,
       tableAlias,
       tableName,
     }) as BoundColumns<TColumns, TTableName, TTableAlias>[keyof BoundColumns<TColumns, TTableName, TTableAlias>];
@@ -184,7 +196,8 @@ const isColumnLike = (value: unknown): value is AnyColumn => {
 };
 
 const remapColumn = (boundColumns: Record<string, AnyColumn>, column: AnyColumn): AnyColumn => {
-  return column.name ? (boundColumns[column.name] ?? column) : column;
+  const columnKey = column.key ?? column.name;
+  return columnKey ? (boundColumns[columnKey] ?? column) : column;
 };
 
 const remapExpressionInput = (
@@ -245,11 +258,10 @@ export const alias = <TTable extends AnyTable, TAlias extends string>(
   TTable["originalName"]
 > => {
   const boundColumns = bindColumns(table.originalName, table.columns, aliasName);
-  // bindColumns guarantees `column.name === <schema key>` for every entry, so
-  // `boundColumns[someColumn.name]` is the canonical lookup for finding the
-  // re-bound counterpart of any column carried over from `table.options`.
+  // `column.key` is the logical schema key. It remains stable even when
+  // `column.name` is an explicit database column name such as `user_id`.
   const remap = (column: AnyColumn): AnyColumn =>
-    column.name ? (boundColumns[column.name as keyof typeof boundColumns] ?? column) : column;
+    column.key ? (boundColumns[column.key as keyof typeof boundColumns] ?? column) : column;
   const mappedOptions: TableOptions = {
     ...table.options,
     partitionBy: remapExpressionListInput(boundColumns, table.options.partitionBy),

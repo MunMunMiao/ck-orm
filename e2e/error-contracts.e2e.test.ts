@@ -143,7 +143,7 @@ describeE2E("ck-orm e2e error contracts", function describeErrorContracts() {
     const scope = chTable(tempTable, {
       id: chType.int32(),
       label: chType.string(),
-      created_at: chType.dateTime64(3),
+      created_at: chType.dateTime64({ precision: 3 }),
     });
 
     await db.runInSession(async (session) => {

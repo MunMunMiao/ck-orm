@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { InferInsertModel, InferInsertSchema, InferSelectModel, InferSelectSchema } from "ck-orm";
-import { int32 } from "./columns";
+import { int32, string } from "./columns";
 import { alias, chTable } from "./schema";
 import type {
   commerceSchema,
@@ -85,6 +85,32 @@ describe("ck-orm schema infer helpers", function describeClickHouseOrmSchemaInfe
     expect(aliased.options.versionColumn).toBe(aliased.version as never);
     expect((aliased.options.orderBy?.[0] as { tableAlias?: string } | undefined)?.tableAlias).toBe("e");
     expect((aliased.options.versionColumn as { tableAlias?: string } | undefined)?.tableAlias).toBe("e");
+  });
+
+  it("uses object keys as logical keys and rejects duplicate physical column names", function testPhysicalNames() {
+    const events = chTable("events", { userId: string("user_id"), createdAt: int32("created_at") }, (table) => ({
+      engine: "MergeTree",
+      orderBy: [table.userId, table.createdAt],
+    }));
+
+    expect(events.userId.key).toBe("userId");
+    expect(events.userId.name).toBe("user_id");
+    expect(events.createdAt.key).toBe("createdAt");
+    expect(events.createdAt.name).toBe("created_at");
+
+    const aliased = alias(events, "e");
+    expect(aliased.userId.key).toBe("userId");
+    expect(aliased.userId.name).toBe("user_id");
+    expect(aliased.userId.tableAlias).toBe("e");
+    expect(aliased.options.orderBy?.[0]).toBe(aliased.userId as never);
+    expect(aliased.options.orderBy?.[1]).toBe(aliased.createdAt as never);
+
+    expect(() =>
+      chTable("duplicate_columns", {
+        userId: string("user_id"),
+        user_id: int32(),
+      }),
+    ).toThrow('Duplicate column name "user_id" in table "duplicate_columns"');
   });
 
   it("rebinds partitionBy and primaryKey arrays when aliasing tables", function testAliasRebindsExpressionLists() {

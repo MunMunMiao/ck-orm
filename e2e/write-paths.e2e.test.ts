@@ -1,5 +1,5 @@
 import { beforeEach, expect, it } from "bun:test";
-import { chTable, chType, csql } from "./ck-orm";
+import { chTable, chType, ck, csql } from "./ck-orm";
 import { auditEvents, createE2EDb, createTempTableName, writePathBigInts } from "./shared";
 import { describeE2E } from "./test-helpers";
 
@@ -249,6 +249,95 @@ describeE2E("ck-orm e2e write paths", function describeWritePaths() {
 
       const rows = await session.select().from(scope);
       expect(rows).toEqual([{ id: 1, label: "kept" }]);
+    });
+  });
+
+  it("round-trips camelCase keys with configured snake_case column names", async function testConfiguredColumnNameRoundTrip() {
+    const db = createE2EDb();
+    const tempTable = createTempTableName("tmp_column_name_mapping");
+    const scope = chTable(tempTable, {
+      userId: chType.string("user_id"),
+      rewardPoints: chType.decimal("reward_points", { precision: 20, scale: 5 }),
+      eventRank: chType.int32("event_rank"),
+    });
+
+    await db.runInSession(async (session) => {
+      await session.createTemporaryTable(scope);
+
+      const description = await session.execute(csql`DESCRIBE TABLE ${csql.identifier(tempTable)}`);
+      expect(description.map((row) => row.name)).toEqual(["user_id", "reward_points", "event_rank"]);
+
+      await session.insert(scope).values({
+        userId: "u_builder",
+        rewardPoints: "1.50000",
+        eventRank: 1,
+      });
+      await session.insertJsonEachRow(scope, [
+        {
+          userId: "u_json",
+          rewardPoints: "2.50000",
+          eventRank: 2,
+        },
+      ]);
+      await session.insertJsonEachRow(
+        scope,
+        (async function* rows() {
+          yield {
+            userId: "u_async",
+            rewardPoints: "3.50000",
+            eventRank: 3,
+          };
+        })(),
+      );
+
+      const implicitRows = await session.select().from(scope).orderBy(scope.eventRank);
+      expect(implicitRows).toEqual([
+        {
+          userId: "u_builder",
+          rewardPoints: "1.5",
+          eventRank: 1,
+        },
+        {
+          userId: "u_json",
+          rewardPoints: "2.5",
+          eventRank: 2,
+        },
+        {
+          userId: "u_async",
+          rewardPoints: "3.5",
+          eventRank: 3,
+        },
+      ]);
+
+      const explicitRows = await session
+        .select({
+          userId: scope.userId,
+          rewardPoints: scope.rewardPoints,
+        })
+        .from(scope)
+        .where(ck.eq(scope.eventRank, 2));
+
+      expect(explicitRows).toEqual([
+        {
+          userId: "u_json",
+          rewardPoints: "2.5",
+        },
+      ]);
+
+      const asyncRows = await session
+        .select({
+          userId: scope.userId,
+          eventRank: scope.eventRank,
+        })
+        .from(scope)
+        .where(ck.eq(scope.eventRank, 3));
+
+      expect(asyncRows).toEqual([
+        {
+          userId: "u_async",
+          eventRank: 3,
+        },
+      ]);
     });
   });
 

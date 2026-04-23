@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { dateTime, int32, string } from "./columns";
+import { dateTime, decimal, int32, string } from "./columns";
 import { alias, chTable } from "./schema";
 import { buildCreateTableStatement, buildCreateTemporaryTableStatement, buildDropTableStatement } from "./schema-ddl";
 import { sql } from "./sql";
@@ -61,6 +61,29 @@ describe("ck-orm schema ddl", function describeSchemaDdl() {
     expect(statement).toContain("CREATE TEMPORARY TABLE IF NOT EXISTS `tmp_scope`");
     expect(statement).toContain("`note` String DEFAULT 'scoped'");
     expect(statement).toContain("ENGINE = Memory");
+  });
+
+  it("renders configured physical column names in DDL and table expressions", function testConfiguredColumnNamesDdl() {
+    const rewards = chTable(
+      "reward_events",
+      {
+        userId: string("user_id"),
+        rewardPoints: decimal("reward_points", { precision: 20, scale: 5 }),
+        createdAt: dateTime("created_at"),
+      },
+      (table) => ({
+        engine: "MergeTree",
+        orderBy: [table.userId, table.createdAt],
+      }),
+    );
+
+    const statement = normalizeSql(buildCreateTableStatement(rewards));
+    expect(statement).toContain("`user_id` String");
+    expect(statement).toContain("`reward_points` Decimal(20, 5)");
+    expect(statement).toContain("`created_at` DateTime");
+    expect(statement).toContain("ORDER BY (`user_id`, `created_at`)");
+    expect(statement).not.toContain("`userId`");
+    expect(statement).not.toContain("`rewardPoints`");
   });
 
   it("rejects unsupported temporary table engines and conflicting column generation modes", function testTempEngineValidation() {

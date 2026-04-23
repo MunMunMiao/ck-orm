@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import { int32, string } from "./columns";
+import { decimal, int32, string } from "./columns";
 import { isClickHouseOrmError } from "./errors";
 import { expr } from "./query";
 import { clickhouseClient } from "./runtime";
@@ -24,6 +24,12 @@ const users = chTable(
     orderBy: [table.id],
   }),
 );
+
+const mappedRewards = chTable("mapped_rewards", {
+  userId: string("user_id"),
+  rewardPoints: decimal("reward_points", { precision: 20, scale: 5 }),
+  note: string(),
+});
 
 const readBodyText = async (body: unknown) => {
   if (typeof body === "string") {
@@ -1218,6 +1224,92 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
     const outerRequest = requests.find(({ body }) => body === "select 2");
     expect(outerRequest?.url.searchParams.get("session_id")).toBe(outerSessionId);
     expect(outerRequest?.url.searchParams.get("max_threads")).toBeNull();
+  });
+
+  it("maps JSONEachRow logical keys to physical column names for table inputs", async function testJsonEachRowColumnNameMapping() {
+    const bodies: string[] = [];
+
+    globalThis.fetch = mock(async (_input: string | URL | Request, init?: RequestInit) => {
+      const bodyText = await readBodyText(init?.body);
+      if (typeof bodyText === "string") {
+        bodies.push(bodyText);
+      }
+      return new Response("", { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const db = clickhouseClient({
+      databaseUrl: "http://localhost:8123/demo_store",
+      schema: { mappedRewards },
+    });
+
+    await db.insertJsonEachRow(mappedRewards, [
+      {
+        userId: "u_1",
+        rewardPoints: "2.50000",
+        note: "mapped",
+      },
+    ]);
+    await db.insertJsonEachRow("mapped_rewards", [
+      {
+        userId: "raw_passthrough",
+        rewardPoints: "3.50000",
+      },
+    ]);
+    await db.insertJsonEachRow(
+      mappedRewards,
+      (async function* rows() {
+        yield {
+          userId: "u_async",
+          rewardPoints: "4.50000",
+          note: "mapped_async",
+        };
+      })(),
+    );
+
+    expect(
+      bodies.map((body) =>
+        body
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line)),
+      ),
+    ).toEqual([
+      [
+        {
+          note: "mapped",
+          user_id: "u_1",
+          reward_points: "2.50000",
+        },
+      ],
+      [
+        {
+          userId: "raw_passthrough",
+          rewardPoints: "3.50000",
+        },
+      ],
+      [
+        {
+          note: "mapped_async",
+          user_id: "u_async",
+          reward_points: "4.50000",
+        },
+      ],
+    ]);
+
+    await expectRejectsWithClickhouseError(
+      db.insertJsonEachRow(mappedRewards, [
+        {
+          userId: "u_2",
+          user_id: "u_2",
+          rewardPoints: "1.00000",
+        },
+      ]),
+      {
+        kind: "client_validation",
+        executionState: "not_sent",
+        message: '[ck-orm] insertJsonEachRow() row contains both logical key "userId" and database column "user_id"',
+      },
+    );
   });
 
   it("keeps raw streams quiet when ignore_error_response is enabled on an error response", async function testStreamIgnoreErrorResponse() {

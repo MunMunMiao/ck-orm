@@ -362,6 +362,54 @@ export const createClickHouseOrmClient = <TSchema, TJoinUseNulls extends 0 | 1 =
     sessionController?.registerTempTable(name);
   };
 
+  const mapLogicalJsonEachRowKeys = (
+    table: AnyTable | string,
+    rows: readonly Record<string, unknown>[] | AsyncIterable<Record<string, unknown>>,
+  ): readonly Record<string, unknown>[] | AsyncIterable<Record<string, unknown>> => {
+    if (typeof table === "string") {
+      return rows;
+    }
+
+    const mappings = Object.entries(table.columns)
+      .map(([schemaKey, column]) => ({
+        logicalKey: column.key ?? schemaKey,
+        physicalName: column.name ?? schemaKey,
+      }))
+      .filter((mapping) => mapping.logicalKey !== mapping.physicalName);
+
+    if (mappings.length === 0) {
+      return rows;
+    }
+
+    const mapRow = (row: Record<string, unknown>): Record<string, unknown> => {
+      let mapped: Record<string, unknown> | undefined;
+      for (const { logicalKey, physicalName } of mappings) {
+        if (!Object.hasOwn(row, logicalKey)) {
+          continue;
+        }
+        if (Object.hasOwn(row, physicalName)) {
+          throw createClientValidationError(
+            `insertJsonEachRow() row contains both logical key "${logicalKey}" and database column "${physicalName}"`,
+          );
+        }
+        mapped ??= { ...row };
+        mapped[physicalName] = mapped[logicalKey];
+        delete mapped[logicalKey];
+      }
+      return mapped ?? row;
+    };
+
+    if (Array.isArray(rows)) {
+      return rows.map(mapRow);
+    }
+
+    return (async function* mappedRows() {
+      for await (const row of rows) {
+        yield mapRow(row);
+      }
+    })();
+  };
+
   client = {
     ...queryClient,
     $client: config.client,
@@ -514,6 +562,7 @@ export const createClickHouseOrmClient = <TSchema, TJoinUseNulls extends 0 | 1 =
       const mergedOptions = mergeOptions(options);
       const tableName = toClickHouseTableName(table);
       const tableIdentifier = compileSql(sql.identifier({ table: tableName })).query;
+      const mappedRows = mapLogicalJsonEachRowKeys(table, rows);
       const arrayRowCount = Array.isArray(rows) ? rows.length : undefined;
       return runSerial(mergedOptions, async () => {
         await executeWithInstrumentation(
@@ -528,7 +577,7 @@ export const createClickHouseOrmClient = <TSchema, TJoinUseNulls extends 0 | 1 =
           },
           async () => {
             if (arrayRowCount !== 0) {
-              await config.client.insertJsonEachRow(tableName, rows, mergedOptions);
+              await config.client.insertJsonEachRow(tableName, mappedRows, mergedOptions);
             }
             return {
               value: undefined,
