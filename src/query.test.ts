@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { type array, type decimal, type int16, int32, type int64, type nullable, string } from "./columns";
+import { type array, type decimal, type int16, int32, type int64, type nullable, string, type uint64 } from "./columns";
 import { fn } from "./functions";
 import {
   and,
@@ -27,7 +27,10 @@ type _Int16Type = Expect<
   Equal<ReturnType<typeof int16>["mapFromDriverValue"] extends (value: unknown) => infer T ? T : never, number>
 >;
 type _Int64Type = Expect<
-  Equal<ReturnType<typeof int64>["mapFromDriverValue"] extends (value: unknown) => infer T ? T : never, bigint>
+  Equal<ReturnType<typeof int64>["mapFromDriverValue"] extends (value: unknown) => infer T ? T : never, string>
+>;
+type _UInt64Type = Expect<
+  Equal<ReturnType<typeof uint64>["mapFromDriverValue"] extends (value: unknown) => infer T ? T : never, string>
 >;
 type _DecimalType = Expect<
   Equal<ReturnType<typeof decimal>["mapFromDriverValue"] extends (value: unknown) => infer T ? T : never, string>
@@ -122,9 +125,18 @@ const publicParamQuery = publicDb
   .leftJoin(pets, eq(users.id, pets.owner_id))
   .where(eq(users.id, 1));
 const publicCountQuery = publicDb.count(users, eq(users.id, 1));
+const publicSafeCountQuery = publicCountQuery.toSafe();
+const publicUnsafeSafeCountQuery = publicCountQuery.toUnsafe().toSafe();
+const publicMixedCountQuery = publicCountQuery.toMixed();
 const publicCountSelection = publicDb
   .select({
     userCount: publicDb.count(pets, eq(pets.owner_id, users.id)).as("user_count"),
+  })
+  .from(users);
+const publicCountModeSelection = publicDb
+  .select({
+    safeCount: publicDb.count(pets, eq(pets.owner_id, users.id)).toSafe().as("safe_count"),
+    mixedCount: publicDb.count(pets, eq(pets.owner_id, users.id)).toMixed().as("mixed_count"),
   })
   .from(users);
 const publicNoNullsDb = publicDb.withSettings({
@@ -163,7 +175,12 @@ const assertPublicClientRuntimeTypes = async () => {
   const countExecute: Promise<number> = publicCountQuery.execute({
     query_id: "typed_count_query",
   });
+  const safeCountValue: string = await publicSafeCountQuery;
+  const safeCountExecute: Promise<string> = publicSafeCountQuery.execute();
+  const unsafeSafeCountValue: string = await publicUnsafeSafeCountQuery;
+  const mixedCountValue: number | string = await publicMixedCountQuery;
   const countRows: Array<{ userCount: number }> = await publicCountSelection;
+  const modeCountRows: Array<{ safeCount: string; mixedCount: number | string }> = await publicCountModeSelection;
   const insertResult: undefined = await publicDb.insert(users).values({ id: 1, name: "alice" });
 
   // @ts-expect-error builder should no longer go through db.execute()
@@ -181,7 +198,12 @@ const assertPublicClientRuntimeTypes = async () => {
   void paramIterator;
   void countValue;
   void countExecute;
+  void safeCountValue;
+  void safeCountExecute;
+  void unsafeSafeCountValue;
+  void mixedCountValue;
   void countRows;
+  void modeCountRows;
   void insertResult;
 };
 
@@ -212,11 +234,18 @@ type _PublicNoNullsLeftJoinType = Expect<
   >
 >;
 type _PublicCountQueryType = Expect<Equal<Awaited<typeof publicCountQuery>, number>>;
+type _PublicSafeCountQueryType = Expect<Equal<Awaited<typeof publicSafeCountQuery>, string>>;
+type _PublicUnsafeSafeCountQueryType = Expect<Equal<Awaited<typeof publicUnsafeSafeCountQuery>, string>>;
+type _PublicMixedCountQueryType = Expect<Equal<Awaited<typeof publicMixedCountQuery>, number | string>>;
 type _PublicCountSelectionType = Expect<Equal<InferBuilderResult<typeof publicCountSelection>, { userCount: number }>>;
+type _PublicCountModeSelectionType = Expect<
+  Equal<InferBuilderResult<typeof publicCountModeSelection>, { safeCount: string; mixedCount: number | string }>
+>;
 
 const typeAssertions: [
   _Int16Type,
   _Int64Type,
+  _UInt64Type,
   _DecimalType,
   _NullableType,
   _ArrayType,
@@ -227,8 +256,12 @@ const typeAssertions: [
   _OrderByColumnType,
   _PublicNoNullsLeftJoinType,
   _PublicCountQueryType,
+  _PublicSafeCountQueryType,
+  _PublicUnsafeSafeCountQueryType,
+  _PublicMixedCountQueryType,
   _PublicCountSelectionType,
-] = [true, true, true, true, true, true, true, true, true, true, true, true, true];
+  _PublicCountModeSelectionType,
+] = [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true];
 
 const normalizeSql = (value: string) => value.replace(/\s+/g, " ").trim();
 const buildCompiled = (compiled: { statement: string; params: Record<string, unknown> }) => {
@@ -240,7 +273,26 @@ const buildCompiled = (compiled: { statement: string; params: Record<string, unk
 
 describe("ck-orm query compile", function describeClickHouseOrmQueryCompile() {
   it("compiles a drizzle-like select with alias, final, filters, limit and offset", function testCompileSelect() {
-    expect(typeAssertions).toEqual([true, true, true, true, true, true, true, true, true, true, true, true, true]);
+    expect(typeAssertions).toEqual([
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+    ]);
     expect(typeof assertPublicClientRuntimeTypes).toBe("function");
     expect(orderRewardLog.options.orderBy?.map((column) => column.name)).toEqual(["user_id", "created_at", "id"]);
     expect(orderRewardLog.options.versionColumn?.name).toBe("_peerdb_version");
@@ -361,7 +413,7 @@ describe("ck-orm query compile", function describeClickHouseOrmQueryCompile() {
           user_id: "u_1",
           membership_id: "member_1",
           campaign_id: 2,
-          order_id: 10n,
+          order_id: "10",
           product_sku: "SKU-RED-MUG",
           quantity: "1.00000",
           reward_points: "2.50000",
@@ -373,7 +425,7 @@ describe("ck-orm query compile", function describeClickHouseOrmQueryCompile() {
           event_date: 20260421,
           _peerdb_synced_at: new Date("2026-04-21T00:00:00.000Z"),
           _peerdb_is_deleted: 0,
-          _peerdb_version: 1n,
+          _peerdb_version: "1",
         })
         [compileQuerySymbol](),
     );

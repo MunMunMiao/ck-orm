@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type * as RootApi from "ck-orm";
 import * as publicApi from "./index";
+import { compileSql } from "./sql";
 
 describe("ck-orm public api", function describePublicApi() {
   it("keeps internal runtime helpers out of the package root", function testPrivateRuntimeHelpers() {
@@ -49,6 +50,18 @@ describe("ck-orm public api", function describePublicApi() {
     expect(typeof publicApi.csql.join).toBe("function");
     expect("raw" in publicApi.csql).toBe(false);
     expect(typeof publicApi.fn.table.call).toBe("function");
+  });
+
+  it("rejects direct csql function calls at runtime", function testCsqlDirectCallGuard() {
+    expect(() => (publicApi.csql as unknown as (query: string) => unknown)("select 1")).toThrow(
+      '[ck-orm] csql only supports tagged-template usage. Use csql`...` instead of csql("...").',
+    );
+  });
+
+  it("keeps public csql helpers callable from the package root", function testPublicCsqlHelpers() {
+    const built = compileSql(publicApi.csql.join([publicApi.csql.identifier("events"), publicApi.csql`final`], " "));
+
+    expect(built.query).toBe("`events` final");
   });
 
   it("keeps advanced root-exported types aligned with public_api.ts", function testRootExportedTypes() {

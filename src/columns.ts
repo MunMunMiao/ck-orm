@@ -1,4 +1,4 @@
-import { toBigInt, toBoolean, toDate, toNumber, toStringValue } from "./coercion";
+import { toBoolean, toDate, toIntegerString, toNumber, toStringValue } from "./coercion";
 import { createClientValidationError, createDecodeError, type DecodeError, isDecodeError } from "./errors";
 import { assertValidSqlIdentifier } from "./internal/identifier";
 import { createExpression, type Decoder, type Encoder, type InferData, type SqlExpression } from "./query-shared";
@@ -225,11 +225,11 @@ const createColumnFactory = <
 export type Int8<TData extends number = number> = Column<TData, "Int8">;
 export type Int16<TData extends number = number> = Column<TData, "Int16">;
 export type Int32<TData extends number = number> = Column<TData, "Int32">;
-export type Int64<TData extends bigint = bigint> = Column<TData, "Int64">;
+export type Int64<TData extends string = string> = Column<TData, "Int64">;
 export type UInt8<TData extends number = number> = Column<TData, "UInt8">;
 export type UInt16<TData extends number = number> = Column<TData, "UInt16">;
 export type UInt32<TData extends number = number> = Column<TData, "UInt32">;
-export type UInt64<TData extends bigint = bigint> = Column<TData, "UInt64">;
+export type UInt64<TData extends string = string> = Column<TData, "UInt64">;
 export type Float32<TData extends number = number> = Column<TData, "Float32">;
 export type Float64<TData extends number = number> = Column<TData, "Float64">;
 export type BFloat16<TData extends number = number> = Column<TData, "BFloat16">;
@@ -291,6 +291,13 @@ export type MultiPolygon<TData extends readonly [number, number][][][] = readonl
 const numericColumn = <TData, TSqlType extends string>(sqlType: TSqlType, decoder: Decoder<TData>) =>
   createColumnFactory<TData, TSqlType>({ sqlType, mapFromDriverValue: decoder });
 
+const integerStringColumn = <TSqlType extends "Int64" | "UInt64">(sqlType: TSqlType) =>
+  createColumnFactory<string, TSqlType>({
+    sqlType,
+    mapFromDriverValue: toIntegerString,
+    mapToDriverValue: toIntegerString,
+  });
+
 const geometryColumn = <TData, TSqlType extends string>(sqlType: TSqlType) =>
   createColumnFactory<TData, TSqlType>({
     sqlType,
@@ -300,11 +307,11 @@ const geometryColumn = <TData, TSqlType extends string>(sqlType: TSqlType) =>
 export const int8 = (): Int8<number> => numericColumn("Int8", toNumber);
 export const int16 = (): Int16<number> => numericColumn("Int16", toNumber);
 export const int32 = (): Int32<number> => numericColumn("Int32", toNumber);
-export const int64 = (): Int64<bigint> => numericColumn("Int64", toBigInt);
+export const int64 = (): Int64<string> => integerStringColumn("Int64");
 export const uint8 = (): UInt8<number> => numericColumn("UInt8", toNumber);
 export const uint16 = (): UInt16<number> => numericColumn("UInt16", toNumber);
 export const uint32 = (): UInt32<number> => numericColumn("UInt32", toNumber);
-export const uint64 = (): UInt64<bigint> => numericColumn("UInt64", toBigInt);
+export const uint64 = (): UInt64<string> => integerStringColumn("UInt64");
 export const float32 = (): Float32<number> => numericColumn("Float32", toNumber);
 export const float64 = (): Float64<number> => numericColumn("Float64", toNumber);
 export const bfloat16 = (): BFloat16<number> => numericColumn("BFloat16", toNumber);

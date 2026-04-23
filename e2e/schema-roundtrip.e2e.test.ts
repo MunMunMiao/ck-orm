@@ -12,11 +12,11 @@ describeE2E("ck-orm e2e schema roundtrip", function describeSchemaRoundtrip() {
     expect(presentRow.int8_value).toBe(-8);
     expect(presentRow.int16_value).toBe(-16);
     expect(presentRow.int32_value).toBe(-32);
-    expect(presentRow.int64_value).toBe(-64n);
+    expect(presentRow.int64_value).toBe("-64");
     expect(presentRow.uint8_value).toBe(8);
     expect(presentRow.uint16_value).toBe(16);
     expect(presentRow.uint32_value).toBe(32);
-    expect(presentRow.uint64_value).toBe(64n);
+    expect(presentRow.uint64_value).toBe("64");
     expect(presentRow.float32_value).toBeCloseTo(3.25);
     expect(presentRow.float64_value).toBe(6.5);
     expect(presentRow.bfloat16_value).toBeCloseTo(1.75, 2);
@@ -33,7 +33,7 @@ describeE2E("ck-orm e2e schema roundtrip", function describeSchemaRoundtrip() {
     expect(presentRow.uuid_value).toBe("123e4567-e89b-12d3-a456-426614174000");
     expect(presentRow.ipv4_value).toBe("192.168.10.1");
     expect(presentRow.ipv6_value).toBe("2001:db8::1");
-    expect(presentRow.json_value).toEqual({ id: 1, label: "json-value" });
+    expect(presentRow.json_value).toEqual({ id: "1", label: "json-value" });
     expect(presentRow.dynamic_value).toBe("dynamic-value");
     expect(presentRow.qbit_value).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
     expect(presentRow.enum8_value).toBe("active");
@@ -76,7 +76,7 @@ describeE2E("ck-orm e2e schema roundtrip", function describeSchemaRoundtrip() {
     expect(expectPresent(aggregateRow, "aggregateRow")).toEqual({
       id: 1,
       aggValue: 7,
-      simpleValue: 11,
+      simpleValue: "11",
     });
 
     const [geoRow] = await db.select().from(schemaGeo).orderBy(schemaGeo.id).limit(1);

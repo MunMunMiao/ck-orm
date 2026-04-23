@@ -19,6 +19,7 @@ import {
   userDailySummary,
   users,
   webEvents,
+  writePathBigInts,
 } from "./shared";
 
 const scenarioTables = [
@@ -30,6 +31,7 @@ const scenarioTables = [
   quoteSnapshots,
   userDailySummary,
   auditEvents,
+  writePathBigInts,
 ];
 const schemaTables = [schemaPrimitives, schemaCompound, schemaAggregates, schemaGeo];
 

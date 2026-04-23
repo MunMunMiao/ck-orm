@@ -24,7 +24,7 @@ describeE2E("ck-orm e2e query basics", function describeQueryBasics() {
       await db.execute(
         csql`select count() as total from ${csql.identifier("users")} where ${csql.identifier({ column: "id" })} <= ${3}`,
       ),
-    ).toEqual([{ total: 3 }]);
+    ).toEqual([{ total: "3" }]);
   });
 
   it("supports interpolated SQL with tables, columns, sources, values and fn expressions", async function testInterpolatedSql() {

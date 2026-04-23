@@ -8,6 +8,9 @@ describeE2E("ck-orm e2e count and dynamic filters", function describeCountAndDyn
     const db = createE2EDb();
 
     expect(await db.count(users)).toBe(5_000);
+    expect(await db.count(users).toUnsafe()).toBe(5_000);
+    expect(await db.count(users).toSafe()).toBe("5000");
+    expect(await db.count(users).toMixed()).toBe("5000");
     expect(await db.count(users, ck.gt(users.id, 10), ck.lte(users.id, 20))).toBe(10);
 
     const groupedUsers = db
@@ -40,15 +43,16 @@ describeE2E("ck-orm e2e count and dynamic filters", function describeCountAndDyn
       .select({
         id: users.id,
         petCount: db.count(pets, ck.eq(pets.owner_id, users.id)).as("pet_count"),
+        safePetCount: db.count(pets, ck.eq(pets.owner_id, users.id)).toSafe().as("safe_pet_count"),
       })
       .from(users)
       .where(ck.lte(users.id, 3))
       .orderBy(users.id);
 
     expect(petCounts).toEqual([
-      { id: 1, petCount: 2 },
-      { id: 2, petCount: 2 },
-      { id: 3, petCount: 2 },
+      { id: 1, petCount: 2, safePetCount: "2" },
+      { id: 2, petCount: 2, safePetCount: "2" },
+      { id: 3, petCount: 2, safePetCount: "2" },
     ]);
   });
 

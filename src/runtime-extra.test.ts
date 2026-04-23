@@ -3,6 +3,8 @@ import { int32, string } from "./columns";
 import { isClickHouseOrmError } from "./errors";
 import { expr } from "./query";
 import { clickhouseClient } from "./runtime";
+import { createClickHouseOrmClient } from "./runtime/client";
+import type { FetchClickHouseTransport } from "./runtime/transport";
 import type { AnyTable } from "./schema";
 import { chTable } from "./schema";
 import { sql } from "./sql";
@@ -193,6 +195,32 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
       executionState: "not_sent",
       message: "[ck-orm] Query contains multiple statements; only a single statement is allowed per request",
     });
+  });
+
+  it("runs direct clients without an optional session concurrency controller", async function testDirectClientWithoutSessionController() {
+    const transport: FetchClickHouseTransport = {
+      async queryJSON() {
+        return [{ id: 1 }];
+      },
+      async *queryStream() {
+        yield { id: 2 };
+      },
+      async command() {},
+      async insertJsonEachRow() {},
+      async endpoint() {},
+    };
+    const db = createClickHouseOrmClient({
+      schema: { users },
+      client: transport,
+    });
+
+    expect(await db.execute(sql`select 1 as id`)).toEqual([{ id: 1 }]);
+
+    const streamedRows: Record<string, unknown>[] = [];
+    for await (const row of db.stream(sql`select 2 as id`)) {
+      streamedRows.push(row);
+    }
+    expect(streamedRows).toEqual([{ id: 2 }]);
   });
 
   it("covers session iterator cleanup, automatic multipart params and timeout/abort handling", async function testSessionAndAbortBranches() {
@@ -524,6 +552,20 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
         kind: "client_validation",
         executionState: "not_sent",
         message: "[ck-orm] ck-orm requires http_write_exception_in_output_format=0 for stable HTTP exception parsing",
+      },
+    );
+
+    await expectRejectsWithClickhouseError(
+      db.execute(sql`select 1`, {
+        clickhouse_settings: {
+          output_format_json_quote_64bit_integers: 0,
+        },
+      }),
+      {
+        kind: "client_validation",
+        executionState: "not_sent",
+        message:
+          "[ck-orm] ck-orm requires output_format_json_quote_64bit_integers=1 for lossless 64-bit integer decoding",
       },
     );
 

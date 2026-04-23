@@ -775,6 +775,16 @@ export const normalizeTransportSettings = (input: {
   }
   settings.http_write_exception_in_output_format = 0;
 
+  if (
+    "output_format_json_quote_64bit_integers" in settings &&
+    !isEnabledSetting(settings.output_format_json_quote_64bit_integers)
+  ) {
+    throw createClientValidationError(
+      "ck-orm requires output_format_json_quote_64bit_integers=1 for lossless 64-bit integer decoding",
+    );
+  }
+  settings.output_format_json_quote_64bit_integers = 1;
+
   if (input.parseMode !== "json_each_row" && settings.wait_end_of_query === undefined) {
     settings.wait_end_of_query = 1;
   }

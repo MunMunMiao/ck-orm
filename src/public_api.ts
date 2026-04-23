@@ -219,13 +219,13 @@ export {
 } from "./schema";
 export type { SQLFragment } from "./sql";
 
+const csqlTaggedTemplateError =
+  '[ck-orm] csql only supports tagged-template usage. Use csql`...` instead of csql("...").';
+
 const createCsqlNamespace = (): CsqlNamespace => {
   const csqlFactory = (<TData = unknown>(strings: TemplateStringsArray, ...values: unknown[]): SQLFragment<TData> => {
-    if (!Array.isArray(strings) || !Array.isArray(strings.raw)) {
-      throw new TypeError('[ck-orm] csql only supports tagged-template usage. Use csql`...` instead of csql("...").');
-    }
-
-    return sql<TData>(strings, ...values);
+    if (Array.isArray(strings) && Array.isArray(strings.raw)) return sql<TData>(strings, ...values);
+    throw new TypeError(csqlTaggedTemplateError);
   }) as CsqlNamespace;
 
   csqlFactory.join = (parts, separator = ", ") => sql.join(parts, separator);

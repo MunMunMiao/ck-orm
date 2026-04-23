@@ -220,6 +220,9 @@ Every table exposes:
 ```ts
 type RewardLogRow = typeof orderRewardLog.$inferSelect;
 type RewardLogInsert = typeof orderRewardLog.$inferInsert;
+
+const orderId: RewardLogRow["order_id"] = "900001";
+const peerdbVersion: RewardLogInsert["_peerdb_version"] = "1";
 ```
 
 For generic helpers, use:
@@ -262,6 +265,8 @@ Use `chType.*` for schema column builders. The schema DSL covers the common Clic
 - containers: `nullable`, `array`, `tuple`, `map`, `nested`, `variant`, `lowCardinality`
 - aggregate types: `aggregateFunction`, `simpleAggregateFunction`
 - geometry types: `point`, `ring`, `lineString`, `multiLineString`, `polygon`, `multiPolygon`
+
+`int64` and `uint64` default to TypeScript `string` in schema-driven reads, writes, and inferred models so 64-bit values stay exact across the ClickHouse JSON wire format and JavaScript runtimes. When you explicitly want `bigint`, opt in with your own decoder such as `mapWith((value) => BigInt(String(value)))`.
 
 ## Client configuration
 
@@ -683,7 +688,15 @@ const activeUsers = db
 const total = await db.count(activeUsers);
 ```
 
-`db.count(...)` decodes to `number` for convenience. If you need explicit aggregate control or exact handling for very large counts, use `fn.count()`.
+`db.count(...)` defaults to the convenient unsafe path: it renders `toFloat64(count())` and decodes to `number`, so very large counts can lose JavaScript integer precision. Use the chainable modes when the return shape matters:
+
+```ts
+const approximateTotal = await db.count(activeUsers); // number
+const exactTotal = await db.count(activeUsers).toSafe(); // string
+const wireTotal = await db.count(activeUsers).toMixed(); // number | string
+```
+
+`.toSafe()` renders `toString(count())` and is intended for exact reads. If you use a safe count as a SQL expression, it has `String` semantics; use the default/`.toUnsafe()` or `.toMixed()` for numeric SQL comparisons. `.toMixed()` renders `toUInt64(count())` and preserves the driver/wire shape; with ck-orm's default lossless 64-bit JSON settings, real ClickHouse responses usually arrive as `string`.
 
 ## Join null semantics
 
@@ -715,13 +728,13 @@ await db.insert(orderRewardLog).values({
   id: 1,
   user_id: "user_100",
   campaign_id: 10,
-  order_id: 900001,
+  order_id: "900001",
   reward_points: "42.50000",
   status: 1,
   created_at: 1710000000,
   _peerdb_synced_at: new Date("2026-04-21T00:00:00.000Z"),
   _peerdb_is_deleted: 0,
-  _peerdb_version: 1n,
+  _peerdb_version: "1",
 });
 ```
 

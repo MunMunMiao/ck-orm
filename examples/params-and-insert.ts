@@ -65,7 +65,7 @@ export const buildInsertExample = () => {
     updated_at: 1710000000,
     _peerdb_synced_at: new Date("2026-04-21T00:00:00.000Z"),
     _peerdb_is_deleted: 0,
-    _peerdb_version: 1n,
+    _peerdb_version: "1",
   });
 
   return {

@@ -38,7 +38,7 @@ describeE2E("ck-orm e2e dataset smoke", function describeDatasetSmoke() {
     `);
 
     expect(expectPresent(ownerStats, "ownerStats")).toEqual({
-      distinct_owner_count: 4000,
+      distinct_owner_count: "4000",
       max_owner_id: 4000,
     });
 
@@ -54,7 +54,7 @@ describeE2E("ck-orm e2e dataset smoke", function describeDatasetSmoke() {
       .limit(1);
 
     expect(expectPresent(eventSample, "eventSample")).toEqual({
-      eventId: 1n,
+      eventId: "1",
       userId: 1,
       country: "US",
       deviceType: "ios",

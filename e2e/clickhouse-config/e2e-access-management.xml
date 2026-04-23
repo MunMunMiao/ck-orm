@@ -1,0 +1,7 @@
+<clickhouse>
+  <users>
+    <e2e>
+      <access_management>1</access_management>
+    </e2e>
+  </users>
+</clickhouse>

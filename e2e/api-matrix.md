@@ -6,8 +6,8 @@ This matrix records coverage from the real ClickHouse E2E suite only. It does no
 
 | API | Coverage location |
 | --- | --- |
-| `clickhouseClient` | `dataset-smoke.e2e.test.ts`, `observability.e2e.test.ts` |
-| `count` | `count-and-dynamic-filters.e2e.test.ts` |
+| `clickhouseClient` | `dataset-smoke.e2e.test.ts`, `observability.e2e.test.ts`, `transport-contracts.e2e.test.ts` |
+| `count`, `count().toUnsafe`, `count().toSafe`, `count().toMixed` | `count-and-dynamic-filters.e2e.test.ts` |
 | `select` | most E2E files |
 | `insert` | `write-paths.e2e.test.ts` |
 | `withSettings` | `session-cdc-stream.e2e.test.ts` |
@@ -23,6 +23,15 @@ This matrix records coverage from the real ClickHouse E2E suite only. It does no
 | `ck.createSessionId` | `query-basics.e2e.test.ts`, `session-cdc-stream.e2e.test.ts` |
 | `ck.decodeRow` | `query-basics.e2e.test.ts` |
 | `ck.expr` | `operators.e2e.test.ts`, `session-cdc-stream.e2e.test.ts` |
+
+## Transport behavior
+
+| Scenario | Coverage location |
+| --- | --- |
+| `databaseUrl` credential parsing and stripped outgoing URLs | `transport-contracts.e2e.test.ts` |
+| merged `http_headers` with `Authorization` precedence | `transport-contracts.e2e.test.ts` |
+| repeated `role` query parameter propagation | `transport-contracts.e2e.test.ts` |
+| real gzip response compression with `compression.response` | `transport-contracts.e2e.test.ts` |
 
 ## Session behavior
 
@@ -122,8 +131,8 @@ This matrix records coverage from the real ClickHouse E2E suite only. It does no
 | --- | --- |
 | `chTable` | `schema-roundtrip.e2e.test.ts` |
 | `alias` | `schema-roundtrip.e2e.test.ts`, `builder-analytics.e2e.test.ts` |
-| `int8/int16/int32/int64` | `schema-roundtrip.e2e.test.ts` |
-| `uint8/uint16/uint32/uint64` | `schema-roundtrip.e2e.test.ts` |
+| `int8/int16/int32/int64` | `schema-roundtrip.e2e.test.ts`, `write-paths.e2e.test.ts` |
+| `uint8/uint16/uint32/uint64` | `schema-roundtrip.e2e.test.ts`, `write-paths.e2e.test.ts` |
 | `float32/float64/bfloat16` | `schema-roundtrip.e2e.test.ts` |
 | `string/fixedString` | `schema-roundtrip.e2e.test.ts` |
 | `decimal` | `schema-roundtrip.e2e.test.ts` |

@@ -256,6 +256,7 @@ describe("ck-orm runtime", function describeClickHouseOrmRuntime() {
     expect(calls[0]?.url.searchParams.get("max_memory_usage")).toBe("1024");
     expect(calls[0]?.url.searchParams.get("wait_end_of_query")).toBe("1");
     expect(calls[0]?.url.searchParams.get("http_write_exception_in_output_format")).toBe("0");
+    expect(calls[0]?.url.searchParams.get("output_format_json_quote_64bit_integers")).toBe("1");
     expect(calls[0]?.url.searchParams.getAll("role")).toEqual(["analyst"]);
 
     const form = calls[0]?.init.body;

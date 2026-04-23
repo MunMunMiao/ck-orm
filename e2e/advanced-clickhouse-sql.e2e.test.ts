@@ -19,7 +19,7 @@ describeE2E("ck-orm e2e advanced clickhouse sql", function describeAdvancedClick
         FROM users
         WHERE id > min_user_id
       `),
-    ).toEqual([{ total: 4990 }]);
+    ).toEqual([{ total: "4990" }]);
 
     expect(
       await db.execute(csql`
@@ -32,8 +32,8 @@ describeE2E("ck-orm e2e advanced clickhouse sql", function describeAdvancedClick
         ORDER BY tag
       `),
     ).toEqual([
-      { event_id: 1, tag: "segment_0" },
-      { event_id: 1, tag: "tag_0" },
+      { event_id: "1", tag: "segment_0" },
+      { event_id: "1", tag: "tag_0" },
     ]);
   });
 
@@ -52,16 +52,16 @@ describeE2E("ck-orm e2e advanced clickhouse sql", function describeAdvancedClick
     `);
 
     expect(rows).toEqual([
-      { id: 4, tier: "standard", rank_in_tier: 1, previous_id: 0 },
-      { id: 7, tier: "standard", rank_in_tier: 2, previous_id: 4 },
-      { id: 10, tier: "standard", rank_in_tier: 3, previous_id: 7 },
-      { id: 2, tier: "trial", rank_in_tier: 1, previous_id: 0 },
-      { id: 3, tier: "trial", rank_in_tier: 2, previous_id: 2 },
-      { id: 5, tier: "trial", rank_in_tier: 3, previous_id: 3 },
-      { id: 6, tier: "trial", rank_in_tier: 4, previous_id: 5 },
-      { id: 9, tier: "trial", rank_in_tier: 5, previous_id: 6 },
-      { id: 1, tier: "vip", rank_in_tier: 1, previous_id: 0 },
-      { id: 8, tier: "vip", rank_in_tier: 2, previous_id: 1 },
+      { id: 4, tier: "standard", rank_in_tier: "1", previous_id: 0 },
+      { id: 7, tier: "standard", rank_in_tier: "2", previous_id: 4 },
+      { id: 10, tier: "standard", rank_in_tier: "3", previous_id: 7 },
+      { id: 2, tier: "trial", rank_in_tier: "1", previous_id: 0 },
+      { id: 3, tier: "trial", rank_in_tier: "2", previous_id: 2 },
+      { id: 5, tier: "trial", rank_in_tier: "3", previous_id: 3 },
+      { id: 6, tier: "trial", rank_in_tier: "4", previous_id: 5 },
+      { id: 9, tier: "trial", rank_in_tier: "5", previous_id: 6 },
+      { id: 1, tier: "vip", rank_in_tier: "1", previous_id: 0 },
+      { id: 8, tier: "vip", rank_in_tier: "2", previous_id: 1 },
     ]);
   });
 
@@ -91,9 +91,9 @@ describeE2E("ck-orm e2e advanced clickhouse sql", function describeAdvancedClick
     `);
 
     expect(rows).toEqual([
-      { trade_id: 1, symbol: "EURUSD", bid: 1.1 },
-      { trade_id: 2, symbol: "XAUUSD", bid: 2350.001 },
-      { trade_id: 3, symbol: "BTCUSD", bid: 65000.002 },
+      { trade_id: "1", symbol: "EURUSD", bid: 1.1 },
+      { trade_id: "2", symbol: "XAUUSD", bid: 2350.001 },
+      { trade_id: "3", symbol: "BTCUSD", bid: 65000.002 },
     ]);
   });
 
@@ -127,9 +127,9 @@ describeE2E("ck-orm e2e advanced clickhouse sql", function describeAdvancedClick
     `);
 
     expect(reportRows).toEqual([
-      { tier: "trial", cnt: 4, rank: 1 },
-      { tier: "standard", cnt: 1, rank: 2 },
-      { tier: "vip", cnt: 1, rank: 3 },
+      { tier: "trial", cnt: "4", rank: "1" },
+      { tier: "standard", cnt: "1", rank: "2" },
+      { tier: "vip", cnt: "1", rank: "3" },
     ]);
 
     const expectedRows = await db.execute(csql`

@@ -66,8 +66,8 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
     expect(presentAggregateRow.totalRevenue).toMatch(/^\d+\.\d+$/);
     expect(presentAggregateRow.totalRevenueUs).toMatch(/^\d+\.\d+$/);
     expect(presentAggregateRow.avgRevenue).toBeGreaterThan(50_000);
-    expect(presentAggregateRow.minEventId).toBe(1n);
-    expect(presentAggregateRow.maxEventId).toBe(100000n);
+    expect(presentAggregateRow.minEventId).toBe("1");
+    expect(presentAggregateRow.maxEventId).toBe("100000");
     expect(presentAggregateRow.uniqueUsers).toBe("5000");
 
     const monthBucket = fn.toStartOfMonth(webEvents.viewed_at).as("month");
@@ -127,6 +127,6 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
       .from(numbers)
       .orderBy(ck.expr(csql`number`));
 
-    expect(rows).toEqual([{ value: 0 }, { value: 1 }, { value: 2 }, { value: 3 }, { value: 4 }]);
+    expect(rows).toEqual([{ value: 0n }, { value: 1n }, { value: 2n }, { value: 3n }, { value: 4n }]);
   });
 });

@@ -63,7 +63,7 @@ export const loadRewardOrdersWithShipmentSnapshot = async () => {
     .limit(500)
     .final();
 
-  const latestShipmentByOrderId = new Map<bigint, (typeof shipmentRows)[number]>();
+  const latestShipmentByOrderId = new Map<string, (typeof shipmentRows)[number]>();
   for (const row of shipmentRows) {
     if (!latestShipmentByOrderId.has(row.orderId)) {
       latestShipmentByOrderId.set(row.orderId, row);

@@ -517,6 +517,15 @@ describe("ck-orm runtime/config validation", function describeConfigValidation()
         }),
       ).toThrow("compression.response and clickhouse_settings.enable_http_compression must agree");
 
+      expect(() =>
+        normalizeTransportSettings({
+          settings: {
+            output_format_json_quote_64bit_integers: 0,
+          },
+          parseMode: "json",
+        }),
+      ).toThrow("ck-orm requires output_format_json_quote_64bit_integers=1 for lossless 64-bit integer decoding");
+
       const headers = createHeaders({
         config: normalizeClientConfig({
           host: "http://localhost:8123",
@@ -552,6 +561,7 @@ describe("ck-orm runtime/config validation", function describeConfigValidation()
       ).toEqual({
         async_insert: 1,
         http_write_exception_in_output_format: 0,
+        output_format_json_quote_64bit_integers: 1,
         wait_end_of_query: 1,
         wait_for_async_insert: 1,
       });

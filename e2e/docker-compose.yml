@@ -6,6 +6,11 @@ services:
       CLICKHOUSE_DB: ck_orm_e2e
       CLICKHOUSE_USER: e2e
       CLICKHOUSE_PASSWORD: e2e_password
+      CLICKHOUSE_E2E_ROLE_ANALYST: ck_orm_e2e_role_analyst
+      CLICKHOUSE_E2E_ROLE_AUDITOR: ck_orm_e2e_role_auditor
+    volumes:
+      - ./clickhouse-config/e2e-access-management.xml:/etc/clickhouse-server/users.d/e2e-access-management.xml:ro
+      - ./clickhouse-init/01-rbac-fixtures.sql:/docker-entrypoint-initdb.d/01-rbac-fixtures.sql:ro
     healthcheck:
       test: ["CMD", "clickhouse-client", "--user", "e2e", "--password", "e2e_password", "--query", "SELECT 1"]
       interval: 2s
@@ -26,6 +31,8 @@ services:
       CLICKHOUSE_E2E_DATABASE: ck_orm_e2e
       CLICKHOUSE_E2E_USERNAME: e2e
       CLICKHOUSE_E2E_PASSWORD: e2e_password
+      CLICKHOUSE_E2E_ROLE_ANALYST: ck_orm_e2e_role_analyst
+      CLICKHOUSE_E2E_ROLE_AUDITOR: ck_orm_e2e_role_auditor
     command: ["bun", "run", "e2e/seed.ts"]
 
   e2e:
@@ -43,4 +50,8 @@ services:
       CLICKHOUSE_E2E_DATABASE: ck_orm_e2e
       CLICKHOUSE_E2E_USERNAME: e2e
       CLICKHOUSE_E2E_PASSWORD: e2e_password
+      CLICKHOUSE_E2E_ROLE_ANALYST: ck_orm_e2e_role_analyst
+      CLICKHOUSE_E2E_ROLE_AUDITOR: ck_orm_e2e_role_auditor
+      CLICKHOUSE_E2E_ROLE_USERNAME: ck_orm_e2e_transport
+      CLICKHOUSE_E2E_ROLE_PASSWORD: ck_orm_e2e_transport_password
     command: ["bun", "test", "e2e"]

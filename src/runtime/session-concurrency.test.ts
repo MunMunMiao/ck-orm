@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { createSessionConcurrencyController } from "./session-concurrency";
+import { createIdempotentRelease, createSessionConcurrencyController } from "./session-concurrency";
 
 type Deferred<TValue> = {
   promise: Promise<TValue>;
@@ -23,6 +23,18 @@ const flushAsyncWork = async () => {
 };
 
 describe("session concurrency controller", function describeSessionConcurrencyController() {
+  it("keeps private slot release callbacks idempotent", function testIdempotentReleaseCallback() {
+    let releaseCount = 0;
+    const release = createIdempotentRelease(() => {
+      releaseCount += 1;
+    });
+
+    release();
+    release();
+
+    expect(releaseCount).toBe(1);
+  });
+
   it("does not throttle operations that do not target a session", async function testNoSessionBypass() {
     const controller = createSessionConcurrencyController(1);
     const firstGate = createDeferred<void>();
@@ -203,6 +215,7 @@ describe("session concurrency controller", function describeSessionConcurrencyCo
     await flushAsyncWork();
     expect(events).toEqual(["stream:start"]);
 
+    await stream.return(undefined);
     await stream.return(undefined);
 
     await flushAsyncWork();

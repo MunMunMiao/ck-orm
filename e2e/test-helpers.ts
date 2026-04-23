@@ -28,6 +28,42 @@ export const takeAsync = async <TValue>(iterable: AsyncIterable<TValue>, limit: 
   return rows;
 };
 
+export type FetchSample = {
+  readonly method: string;
+  readonly requestHeaders: Headers;
+  readonly responseHeaders: Headers;
+  readonly status: number;
+  readonly url: URL;
+};
+
+const resolveFetchUrl = (input: string | URL | Request) =>
+  new URL(typeof input === "string" || input instanceof URL ? String(input) : input.url);
+
+// Capture transport metadata without changing the real ClickHouse request path.
+export const withFetchSampling = async <TValue>(run: (calls: FetchSample[]) => Promise<TValue>) => {
+  const originalFetch = globalThis.fetch;
+  const calls: FetchSample[] = [];
+
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const request = input instanceof Request ? input : undefined;
+    const response = await originalFetch(input, init);
+    calls.push({
+      method: init?.method ?? request?.method ?? "GET",
+      requestHeaders: new Headers(init?.headers ?? request?.headers),
+      responseHeaders: new Headers(response.headers),
+      status: response.status,
+      url: resolveFetchUrl(input),
+    });
+    return response;
+  }) as typeof fetch;
+
+  try {
+    return await run(calls);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+};
+
 export const expectClickhouseError = (error: unknown, expected: Record<string, unknown>) => {
   expect(isClickHouseOrmError(error)).toBe(true);
   expect(isDecodeError(error)).toBe(expected.kind === "decode");

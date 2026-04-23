@@ -42,6 +42,10 @@ This repository uses two different environment-variable groups on purpose:
   - `CLICKHOUSE_E2E_DATABASE`
   - `CLICKHOUSE_E2E_USERNAME`
   - `CLICKHOUSE_E2E_PASSWORD`
+  - `CLICKHOUSE_E2E_ROLE_ANALYST` (optional; bundled harness sets it for transport role coverage)
+  - `CLICKHOUSE_E2E_ROLE_AUDITOR` (optional; bundled harness sets it for transport role coverage)
+  - `CLICKHOUSE_E2E_ROLE_USERNAME` (optional; bundled harness sets it for transport role coverage)
+  - `CLICKHOUSE_E2E_ROLE_PASSWORD` (optional; bundled harness sets it for transport role coverage)
 
 When you run `bash ./e2e/run.sh`, the harness variables control container startup and the script injects the `CLICKHOUSE_E2E_*` values into the `seed` and `e2e` containers for you.
 
@@ -52,6 +56,7 @@ When you point the E2E suite at an already-running ClickHouse instance, you usua
 Each E2E run follows the same sequence:
 
 1. `docker compose` starts a temporary ClickHouse instance
+   - the bundled harness also enables access management for the `e2e` user and pre-creates transport test roles
 2. The `seed` service runs `e2e/seed.ts`
    - drops the old database
    - recreates `ck_orm_e2e`
@@ -104,10 +109,15 @@ The current E2E suite covers:
   - `db.count(table, ...predicates)`
   - `db.count(subqueryOrCte)`
   - `db.count(...).as('alias')`
+  - `db.count(...).toUnsafe()`, `.toSafe()`, and `.toMixed()`
   - session-scoped counts over temporary tables and `FINAL` subqueries
 - function coverage
   - all `fn.*`
   - `fn.table.call('numbers', ...)`
+- write-path coverage
+  - `insert()` via direct await and explicit `.execute()`
+  - `insertJsonEachRow()` with array and async iterable sources
+  - real `Int64` / `UInt64` schema round-trips on string-mapped columns
 - SQL injection coverage by context
   - foundations
     - classic payloads in builder equality filters
@@ -163,7 +173,10 @@ The current E2E suite covers:
   - validating `ExceptionBeforeStart` and `ExceptionWhileProcessing` through `system.query_log`
 - transport behavior
   - POST-only fetch runtime
-  - response compression
+  - `databaseUrl` credential parsing and URL sanitization
+  - repeated `role` propagation
+  - merged `http_headers` with runtime-owned `Authorization`
+  - response compression through transparent fetch sampling against real ClickHouse
 
 See [api-matrix.md](./api-matrix.md) for the API-to-test coverage map.
 

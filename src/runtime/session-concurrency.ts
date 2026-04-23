@@ -16,6 +16,18 @@ const createSessionQueueEntry = (): SessionQueueEntry => ({
   waiters: [],
 });
 
+export const createIdempotentRelease = (releaseSlot: () => void): (() => void) => {
+  let released = false;
+
+  return () => {
+    if (released) {
+      return;
+    }
+    released = true;
+    releaseSlot();
+  };
+};
+
 export const createSessionConcurrencyController = (maxConcurrentRequests: number): SessionConcurrencyController => {
   const sessions = new Map<string, SessionQueueEntry>();
 
@@ -35,17 +47,7 @@ export const createSessionConcurrencyController = (maxConcurrentRequests: number
     const entry = sessions.get(sessionId) ?? createSessionQueueEntry();
     sessions.set(sessionId, entry);
 
-    const buildRelease = () => {
-      let released = false;
-
-      return () => {
-        if (released) {
-          return;
-        }
-        released = true;
-        releaseSlot(sessionId, entry);
-      };
-    };
+    const buildRelease = () => createIdempotentRelease(() => releaseSlot(sessionId, entry));
 
     if (entry.activeCount < maxConcurrentRequests) {
       entry.activeCount += 1;

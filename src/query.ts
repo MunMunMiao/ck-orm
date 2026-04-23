@@ -463,15 +463,110 @@ const normalizeLimitValue = (value: PrimitiveValue | Selection<unknown>, ctx: Bu
   return compileValue(value, ctx, "Int64");
 };
 
-const countDecoder: Decoder<number> = (value) => {
-  const nextValue =
-    typeof value === "number" ? value : typeof value === "bigint" ? Number(value) : Number(String(value));
+type CountMode = "unsafe" | "safe" | "mixed";
+type CountModeResult<TMode extends CountMode> = TMode extends "safe"
+  ? string
+  : TMode extends "mixed"
+    ? number | string
+    : number;
 
-  if (!Number.isNaN(nextValue)) return nextValue;
-  throw createClientValidationError(
-    `Failed to decode count() result: ${String(value)}. Expected a numeric value or numeric string from ClickHouse; verify the count() query was not aliased to a non-numeric expression.`,
+const COUNT_DECIMAL_PATTERN = /^(0|[1-9]\d*)$/;
+
+const createInvalidCountValueError = (value: unknown) =>
+  createClientValidationError(
+    `Failed to decode count() result: ${String(value)}. Expected a non-negative integer count value from ClickHouse.`,
     { cause: value },
   );
+
+const isNonNegativeIntegerNumber = (value: number): boolean => {
+  return Number.isFinite(value) && Number.isInteger(value) && value >= 0;
+};
+
+const countUnsafeDecoder: Decoder<number> = (value) => {
+  if (typeof value === "number" && isNonNegativeIntegerNumber(value)) {
+    return value;
+  }
+
+  if (typeof value === "bigint" && value >= 0n) {
+    const nextValue = Number(value);
+    if (isNonNegativeIntegerNumber(nextValue)) {
+      return nextValue;
+    }
+  }
+
+  if (typeof value === "string" && value.length > 0 && value.trim() === value) {
+    const nextValue = Number(value);
+    if (isNonNegativeIntegerNumber(nextValue)) {
+      return nextValue;
+    }
+  }
+
+  throw createInvalidCountValueError(value);
+};
+
+const countSafeDecoder: Decoder<string> = (value) => {
+  if (typeof value === "string" && COUNT_DECIMAL_PATTERN.test(value)) {
+    return value;
+  }
+
+  if (typeof value === "bigint" && value >= 0n) {
+    return value.toString();
+  }
+
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) {
+    return String(value);
+  }
+
+  throw createInvalidCountValueError(value);
+};
+
+const countMixedDecoder: Decoder<number | string> = (value) => {
+  if (typeof value === "string" && COUNT_DECIMAL_PATTERN.test(value)) {
+    return value;
+  }
+
+  if (typeof value === "number" && isNonNegativeIntegerNumber(value)) {
+    return value;
+  }
+
+  if (typeof value === "bigint" && value >= 0n) {
+    return value.toString();
+  }
+
+  throw createInvalidCountValueError(value);
+};
+
+const getCountSqlType = (mode: CountMode): string => {
+  switch (mode) {
+    case "safe":
+      return "String";
+    case "mixed":
+      return "UInt64";
+    case "unsafe":
+      return "Float64";
+  }
+};
+
+const getCountDecoder = <TMode extends CountMode>(mode: TMode): Decoder<CountModeResult<TMode>> => {
+  switch (mode) {
+    case "safe":
+      return countSafeDecoder as Decoder<CountModeResult<TMode>>;
+    case "mixed":
+      return countMixedDecoder as Decoder<CountModeResult<TMode>>;
+    case "unsafe":
+      return countUnsafeDecoder as Decoder<CountModeResult<TMode>>;
+  }
+};
+
+const renderCountExpression = (mode: CountMode): SQLFragment => {
+  switch (mode) {
+    case "safe":
+      return sql.raw("toString(count())");
+    case "mixed":
+      return sql.raw("toUInt64(count())");
+    case "unsafe":
+      return sql.raw("toFloat64(count())");
+  }
 };
 
 const buildLogicalPredicate = (operator: "and" | "or", predicates: readonly SqlPredicate[]): SqlPredicate => {
@@ -508,6 +603,9 @@ const normalizePredicateGroup = (
 type CountQuery<TData = number> = Selection<TData> &
   PromiseLike<TData> & {
     execute(options?: ClickHouseBaseQueryOptions): Promise<TData>;
+    toSafe(): CountQuery<string>;
+    toUnsafe(): CountQuery<number>;
+    toMixed(): CountQuery<number | string>;
     catch<TResult2 = never>(onrejected?: CatchHandler<TResult2>): Promise<TData | TResult2>;
     finally(onfinally?: (() => void) | null): Promise<TData>;
   };
@@ -530,6 +628,7 @@ const buildCountStatement = (
     ctes?: readonly AnyCte[];
     source: CountSource;
     condition?: SqlPredicate;
+    mode: CountMode;
     outputAlias?: string;
   },
 ): SQLFragment => {
@@ -542,8 +641,8 @@ const buildCountStatement = (
 
   queryParts.push(
     config.outputAlias
-      ? sql`${sql.raw("select count() as ")}${sql.identifier(config.outputAlias)}`
-      : sql`select count()`,
+      ? sql`${sql.raw("select ")}${renderCountExpression(config.mode)}${sql.raw(" as ")}${sql.identifier(config.outputAlias)}`
+      : sql`${sql.raw("select ")}${renderCountExpression(config.mode)}`,
   );
   queryParts.push(sql`${sql.raw("from ")}${renderSource(config.source, ctx)}`);
 
@@ -554,26 +653,40 @@ const buildCountStatement = (
   return sql`${joinSqlParts(queryParts, " ")}`;
 };
 
-const createCountQuery = (config: {
+const createCountQuery = <TMode extends CountMode = "unsafe">(config: {
   ctes: readonly AnyCte[];
+  mode?: TMode;
   runner?: PreparedRunner;
   source: CountSource;
   predicates?: PredicateInput[];
-}): CountQuery<number> => {
+}): CountQuery<CountModeResult<TMode>> => {
+  type TResult = CountModeResult<TMode>;
+  const mode = (config.mode ?? "unsafe") as TMode;
+  const decoder = getCountDecoder(mode);
   const condition = normalizePredicateGroup("and", config.predicates ?? []);
 
-  const expression = createExpression<number>({
+  const expression = createExpression<TResult>({
     compile: (ctx) =>
       sql`${sql.raw("(")}${buildCountStatement(ctx, {
         ctes: config.ctes,
         source: config.source,
         condition,
+        mode,
       })}${sql.raw(")")}`,
-    decoder: countDecoder,
-    sqlType: "UInt64",
+    decoder,
+    sqlType: getCountSqlType(mode),
   });
 
-  const execute = (options?: ClickHouseBaseQueryOptions): Promise<number> => {
+  const createWithMode = <TNextMode extends CountMode>(nextMode: TNextMode): CountQuery<CountModeResult<TNextMode>> =>
+    createCountQuery({
+      ctes: config.ctes,
+      mode: nextMode,
+      runner: config.runner,
+      source: config.source,
+      predicates: config.predicates,
+    });
+
+  const execute = (options?: ClickHouseBaseQueryOptions): Promise<TResult> => {
     const runner = ensureRunner(config.runner, "count");
     const ctx: BuildContext = {
       params: {},
@@ -584,6 +697,7 @@ const createCountQuery = (config: {
         ctes: config.ctes,
         source: config.source,
         condition,
+        mode,
         outputAlias: "__orm_count",
       });
       const compiled = compileSql(statement, ctx);
@@ -596,13 +710,13 @@ const createCountQuery = (config: {
 
     return runner
       .execute(
-        createCompiledQuery<{ value: number }>(
+        createCompiledQuery<{ value: TResult }>(
           compiledResult.query,
           [
             {
               key: "value",
               sqlAlias: "__orm_count",
-              decoder: countDecoder,
+              decoder,
               path: ["value"],
             },
           ],
@@ -625,25 +739,34 @@ const createCountQuery = (config: {
 
   return Object.assign(expression, {
     execute,
+    toSafe() {
+      return createWithMode("safe");
+    },
+    toUnsafe() {
+      return createWithMode("unsafe");
+    },
+    toMixed() {
+      return createWithMode("mixed");
+    },
     /**
      * Builders are intentionally re-entrant: each `await db.count(...)` triggers a fresh
      * `execute()` and a new ClickHouse request. To memoize the result, capture the promise
      * once: `const pending = builder.execute()`. This matches Drizzle/Kysely semantics.
      */
     // biome-ignore lint/suspicious/noThenProperty: count queries are intentionally thenable so await db.count(...) matches Drizzle-style usage.
-    then<TResult1 = number, TResult2 = never>(
-      onfulfilled?: ThenHandler<number, TResult1>,
+    then<TResult1 = TResult, TResult2 = never>(
+      onfulfilled?: ThenHandler<TResult, TResult1>,
       onrejected?: CatchHandler<TResult2>,
     ): PromiseLike<TResult1 | TResult2> {
       return execute().then(onfulfilled, onrejected);
     },
-    catch<TResult2 = never>(onrejected?: CatchHandler<TResult2>): Promise<number | TResult2> {
+    catch<TResult2 = never>(onrejected?: CatchHandler<TResult2>): Promise<TResult | TResult2> {
       return execute().catch(onrejected);
     },
-    finally(onfinally?: (() => void) | null): Promise<number> {
+    finally(onfinally?: (() => void) | null): Promise<TResult> {
       return execute().finally(onfinally ?? undefined);
     },
-  }) as CountQuery<number>;
+  }) as CountQuery<TResult>;
 };
 
 interface SelectBuilderConfig<_TResult extends Record<string, unknown>> {
@@ -1786,4 +1909,8 @@ export const createSessionId = () => {
 export const expr = <TData = unknown>(
   value: SQLFragment,
   config?: { decoder?: Decoder<TData>; sqlType?: string },
-): Selection<TData> => wrapSql(value, config);
+): Selection<TData> =>
+  wrapSql(value, {
+    decoder: (config?.decoder ?? value.decoder) as Decoder<TData>,
+    sqlType: config?.sqlType,
+  });

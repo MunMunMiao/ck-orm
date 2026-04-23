@@ -261,6 +261,7 @@ describe("ck-orm query extras", function describeClickHouseOrmQueryExtras() {
       ).query,
     ).toContain("not");
 
+    expect(expr(sql.raw("1").mapWith((value) => Number(value) + 1)).decoder("4")).toBe(5);
     expect(eq(orders.id, 1).decoder(1)).toBe(true);
     expect(and(eq(orders.id, 1), gt(orders.amount, 0)).decoder("1")).toBe(true);
     expect(or(eq(orders.id, 0), eq(orders.id, 1)).decoder(1)).toBe(true);
@@ -524,24 +525,43 @@ describe("ck-orm query extras", function describeClickHouseOrmQueryExtras() {
         async execute<TResult extends Record<string, unknown>>(compiled: {
           statement: string;
           params: Record<string, unknown>;
+          selection?: readonly { decoder?: (value: unknown) => unknown }[];
         }) {
           compiledStatements.push({
             statement: compiled.statement,
             params: compiled.params,
           });
-          return [{ value: 7 }] as TResult[];
+          const rawValue = compiled.statement.includes("toString(count())")
+            ? "7"
+            : compiled.statement.includes("toUInt64(count())")
+              ? "7"
+              : 7;
+          const decoder = compiled.selection?.[0]?.decoder;
+          return [{ value: decoder ? decoder(rawValue) : rawValue }] as TResult[];
         },
         async *iterator() {},
         async command() {},
       },
     });
+    expect((db.count(orders) as { sqlType?: string }).sqlType).toBe("Float64");
+    expect((db.count(orders).toSafe() as { sqlType?: string }).sqlType).toBe("String");
+    expect((db.count(orders).toMixed() as { sqlType?: string }).sqlType).toBe("UInt64");
 
     const total = await db.count(orders, eq(orders.id, 1));
     expect(total).toBe(7);
     expect(normalizeSql(compiledStatements[0]?.statement ?? "")).toContain(
-      "select count() as `__orm_count` from `orders` where `orders`.`id` = {orm_param1:Int32}",
+      "select toFloat64(count()) as `__orm_count` from `orders` where `orders`.`id` = {orm_param1:Int32}",
     );
     expect(compiledStatements[0]?.params).toEqual({
+      orm_param1: 1,
+    });
+
+    const safeTotal = await db.count(orders, eq(orders.id, 1)).toSafe();
+    expect(safeTotal).toBe("7");
+    expect(normalizeSql(compiledStatements[1]?.statement ?? "")).toContain(
+      "select toString(count()) as `__orm_count` from `orders` where `orders`.`id` = {orm_param1:Int32}",
+    );
+    expect(compiledStatements[1]?.params).toEqual({
       orm_param1: 1,
     });
 
@@ -554,10 +574,10 @@ describe("ck-orm query extras", function describeClickHouseOrmQueryExtras() {
       .as("top_orders");
 
     await db.count(topOrders).execute();
-    expect(normalizeSql(compiledStatements[1]?.statement ?? "")).toContain(
-      "select count() as `__orm_count` from (select `orders`.`id` as `id` from `orders` where `orders`.`amount` > {orm_param1:Float64}) as `top_orders`",
+    expect(normalizeSql(compiledStatements[2]?.statement ?? "")).toContain(
+      "select toFloat64(count()) as `__orm_count` from (select `orders`.`id` as `id` from `orders` where `orders`.`amount` > {orm_param1:Float64}) as `top_orders`",
     );
-    expect(compiledStatements[1]?.params).toEqual({
+    expect(compiledStatements[2]?.params).toEqual({
       orm_param1: 10,
     });
 
@@ -570,22 +590,28 @@ describe("ck-orm query extras", function describeClickHouseOrmQueryExtras() {
     );
 
     await db.with(totals).count(totals).execute();
-    expect(normalizeSql(compiledStatements[2]?.statement ?? "")).toContain(
-      "with `totals` as (select `orders`.`id` as `id` from `orders`) select count() as `__orm_count` from `totals`",
+    expect(normalizeSql(compiledStatements[3]?.statement ?? "")).toContain(
+      "with `totals` as (select `orders`.`id` as `id` from `orders`) select toFloat64(count()) as `__orm_count` from `totals`",
+    );
+
+    const mixedTotal = await db.with(totals).count(totals).toMixed().execute();
+    expect(mixedTotal).toBe("7");
+    expect(normalizeSql(compiledStatements[4]?.statement ?? "")).toContain(
+      "with `totals` as (select `orders`.`id` as `id` from `orders`) select toUInt64(count()) as `__orm_count` from `totals`",
     );
 
     const built = buildCompiled(
       db
         .select({
           id: orders.id,
-          matchingOrderCount: db.count(orders, gt(orders.amount, 10)).as("matching_order_count"),
+          matchingOrderCount: db.count(orders, gt(orders.amount, 10)).toSafe().as("matching_order_count"),
         })
         .from(orders)
         [compileQuerySymbol](),
     );
 
     expect(normalizeSql(built.query)).toContain(
-      "(select count() from `orders` where `orders`.`amount` > {orm_param1:Float64}) as `matching_order_count`",
+      "(select toString(count()) from `orders` where `orders`.`amount` > {orm_param1:Float64}) as `matching_order_count`",
     );
     expect(built.params).toEqual({
       orm_param1: 10,
@@ -596,7 +622,7 @@ describe("ck-orm query extras", function describeClickHouseOrmQueryExtras() {
       cteBoundDb
         .select({
           id: orders.id,
-          totalCount: cteBoundDb.count(totals).as("total_count"),
+          totalCount: cteBoundDb.count(totals).toMixed().as("total_count"),
         })
         .from(orders)
         .where(
@@ -626,7 +652,7 @@ describe("ck-orm query extras", function describeClickHouseOrmQueryExtras() {
     );
 
     expect(normalizeSql(cteBuilt.query)).toContain(
-      "with `totals` as (select `orders`.`id` as `id` from `orders`) select `orders`.`id` as `id`, (with `totals` as (select `orders`.`id` as `id` from `orders`) select count() from `totals`) as `total_count` from `orders`",
+      "with `totals` as (select `orders`.`id` as `id` from `orders`) select `orders`.`id` as `id`, (with `totals` as (select `orders`.`id` as `id` from `orders`) select toUInt64(count()) from `totals`) as `total_count` from `orders`",
     );
     expect(normalizeSql(cteBuilt.query)).toContain(
       "`orders`.`id` in (select `orders`.`id` as `id` from `orders` where `orders`.`amount` > {orm_param1:Float64})",
@@ -872,9 +898,31 @@ describe("ck-orm query extras", function describeClickHouseOrmQueryExtras() {
       schema: { orders },
     });
 
-    expect(() => decodeDb.count(orders).decoder("not-a-number")).toThrow(
-      "Failed to decode count() result: not-a-number",
-    );
+    const defaultCount = decodeDb.count(orders);
+    expect(defaultCount.decoder(42)).toBe(42);
+    expect(defaultCount.decoder("42")).toBe(42);
+    expect(defaultCount.decoder(42n)).toBe(42);
+
+    const safeCount = defaultCount.toSafe();
+    expect(safeCount.decoder("42")).toBe("42");
+    expect(safeCount.decoder(42)).toBe("42");
+    expect(safeCount.decoder(42n)).toBe("42");
+
+    const mixedCount = defaultCount.toMixed();
+    expect(mixedCount.decoder("42")).toBe("42");
+    expect(mixedCount.decoder(42)).toBe(42);
+    expect(mixedCount.decoder(42n)).toBe("42");
+
+    for (const invalidValue of ["not-a-number", -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, true, {}, null]) {
+      expect(() => defaultCount.decoder(invalidValue)).toThrow("Failed to decode count() result");
+      expect(() => mixedCount.decoder(invalidValue)).toThrow("Failed to decode count() result");
+    }
+
+    for (const invalidValue of ["01", "1.5", Number.MAX_SAFE_INTEGER + 1, true, {}, null]) {
+      expect(() => safeCount.decoder(invalidValue)).toThrow("Failed to decode count() result");
+    }
+
+    expect(() => defaultCount.decoder(10n ** 400n)).toThrow("Failed to decode count() result");
 
     const countFailure = new Error("count failure");
     const countDb = createQueryClient({
@@ -1022,7 +1070,9 @@ describe("ck-orm query extras", function describeClickHouseOrmQueryExtras() {
     );
 
     expect(normalizeSql(cteQuery.query)).toContain("from `totals`");
-    expect(compiledStatements.some((statement) => normalizeSql(statement).includes("select count()"))).toBe(true);
+    expect(compiledStatements.some((statement) => normalizeSql(statement).includes("select toFloat64(count())"))).toBe(
+      true,
+    );
   });
 
   it("covers case-insensitive like predicates", function testIlikePredicates() {

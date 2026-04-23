@@ -138,9 +138,9 @@ describeE2E("ck-orm e2e operators", function describeOperators() {
       .orderBy(webEvents.event_id)
       .limit(5);
 
-    expect(hasRows).toEqual([{ id: 1n }, { id: 11n }, { id: 21n }]);
-    expect(hasAllRows).toEqual([{ id: 1n }, { id: 11n }, { id: 21n }]);
-    expect(hasAnyRows).toEqual([{ id: 1n }, { id: 2n }, { id: 6n }, { id: 11n }, { id: 12n }]);
+    expect(hasRows).toEqual([{ id: "1" }, { id: "11" }, { id: "21" }]);
+    expect(hasAllRows).toEqual([{ id: "1" }, { id: "11" }, { id: "21" }]);
+    expect(hasAnyRows).toEqual([{ id: "1" }, { id: "2" }, { id: "6" }, { id: "11" }, { id: "12" }]);
   });
 
   it("supports asc, desc and expr in ordered builder queries", async function testOrderByAndExpr() {
@@ -157,10 +157,10 @@ describeE2E("ck-orm e2e operators", function describeOperators() {
       .limit(4);
 
     expect(rows).toEqual([
-      { id: 100000n, country: "GB" },
-      { id: 99996n, country: "GB" },
-      { id: 99992n, country: "GB" },
-      { id: 99988n, country: "GB" },
+      { id: "100000", country: "GB" },
+      { id: "99996", country: "GB" },
+      { id: "99992", country: "GB" },
+      { id: "99988", country: "GB" },
     ]);
   });
 });

@@ -1,12 +1,13 @@
 import { beforeEach, expect, it } from "bun:test";
 import { csql } from "./ck-orm";
-import { auditEvents, createE2EDb } from "./shared";
+import { auditEvents, createE2EDb, writePathBigInts } from "./shared";
 import { describeE2E } from "./test-helpers";
 
 describeE2E("ck-orm e2e write paths", function describeWritePaths() {
-  beforeEach(async function truncateAuditEvents() {
+  beforeEach(async function truncateWritePathTables() {
     const db = createE2EDb();
     await db.command(csql`TRUNCATE TABLE audit_events`);
+    await db.command(csql`TRUNCATE TABLE write_path_bigints`);
   });
 
   it("writes with insert builder via direct await", async function testInsertBuilderAwait() {
@@ -137,6 +138,124 @@ describeE2E("ck-orm e2e write paths", function describeWritePaths() {
       {
         id: 22,
         eventName: "async_insert_two",
+      },
+    ]);
+  });
+
+  it("round-trips 64-bit schema columns through insert builder", async function testInsertBuilderBigIntRoundTrip() {
+    const db = createE2EDb();
+    await db.insert(writePathBigInts).values({
+      id: 1,
+      label: "builder_bigints",
+      int64_value: "-9223372036854775000",
+      uint64_value: "18446744073709551000",
+    });
+
+    const rows = await db
+      .select({
+        id: writePathBigInts.id,
+        label: writePathBigInts.label,
+        int64Value: writePathBigInts.int64_value,
+        uint64Value: writePathBigInts.uint64_value,
+      })
+      .from(writePathBigInts)
+      .orderBy(writePathBigInts.id);
+
+    expect(rows).toEqual([
+      {
+        id: 1,
+        label: "builder_bigints",
+        int64Value: "-9223372036854775000",
+        uint64Value: "18446744073709551000",
+      },
+    ]);
+  });
+
+  it("round-trips 64-bit schema columns through array insertJsonEachRow", async function testInsertJsonEachRowBigIntArray() {
+    const db = createE2EDb();
+    await db.insertJsonEachRow(writePathBigInts, [
+      {
+        id: 11,
+        label: "array_bigints_one",
+        int64_value: "-9000000000000000001",
+        uint64_value: "18446744073709550001",
+      },
+      {
+        id: 12,
+        label: "array_bigints_two",
+        int64_value: "9000000000000000001",
+        uint64_value: "18446744073709550002",
+      },
+    ]);
+
+    const rows = await db
+      .select({
+        id: writePathBigInts.id,
+        label: writePathBigInts.label,
+        int64Value: writePathBigInts.int64_value,
+        uint64Value: writePathBigInts.uint64_value,
+      })
+      .from(writePathBigInts)
+      .orderBy(writePathBigInts.id);
+
+    expect(rows).toEqual([
+      {
+        id: 11,
+        label: "array_bigints_one",
+        int64Value: "-9000000000000000001",
+        uint64Value: "18446744073709550001",
+      },
+      {
+        id: 12,
+        label: "array_bigints_two",
+        int64Value: "9000000000000000001",
+        uint64Value: "18446744073709550002",
+      },
+    ]);
+  });
+
+  it("round-trips 64-bit schema columns through async iterable insertJsonEachRow", async function testInsertJsonEachRowBigIntAsync() {
+    const db = createE2EDb();
+    await db.insertJsonEachRow(
+      writePathBigInts,
+      (async function* rows() {
+        yield {
+          id: 21,
+          label: "async_bigints_one",
+          int64_value: "-7777777777777777777",
+          uint64_value: "17777777777777777777",
+        };
+        yield {
+          id: 22,
+          label: "async_bigints_two",
+          int64_value: "7777777777777777777",
+          uint64_value: "17777777777777777778",
+        };
+      })(),
+    );
+
+    const rows = await db
+      .select({
+        id: writePathBigInts.id,
+        label: writePathBigInts.label,
+        int64Value: writePathBigInts.int64_value,
+        uint64Value: writePathBigInts.uint64_value,
+      })
+      .from(writePathBigInts)
+      .orderBy(writePathBigInts.id);
+
+    expect(rows).toEqual([
+      {
+        id: 21,
+        label: "async_bigints_one",
+        int64Value: "-7777777777777777777",
+        uint64Value: "17777777777777777777",
+      },
+      {
+        id: 22,
+        label: "async_bigints_two",
+        int64Value: "7777777777777777777",
+        uint64Value: "17777777777777777778",
       },
     ]);
   });

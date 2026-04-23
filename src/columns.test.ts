@@ -63,11 +63,23 @@ describe("ck-orm columns", function describeClickHouseOrmColumns() {
     expect(intColumn.mapFromDriverValue(3n)).toBe(3);
     expect(() => intColumn.mapFromDriverValue({})).toThrow("Cannot convert value to number");
 
-    const bigintColumn = int64();
-    expect(bigintColumn.mapFromDriverValue(4n)).toBe(4n);
-    expect(bigintColumn.mapFromDriverValue(4)).toBe(4n);
-    expect(bigintColumn.mapFromDriverValue("5")).toBe(5n);
-    expect(() => bigintColumn.mapFromDriverValue(false)).toThrow("Cannot convert value to bigint");
+    const int64Column = int64();
+    expect(int64Column.mapFromDriverValue(4n)).toBe("4");
+    expect(int64Column.mapFromDriverValue(4)).toBe("4");
+    expect(int64Column.mapFromDriverValue("5")).toBe("5");
+    expect(int64Column.mapToDriverValue("6")).toBe("6");
+    expect(int64Column.mapToDriverValue(6 as never)).toBe("6");
+    expect(int64Column.mapToDriverValue(6n as never)).toBe("6");
+    expect(() => int64Column.mapFromDriverValue(false)).toThrow("Cannot convert value to string");
+
+    const uint64Column = uint64();
+    expect(uint64Column.mapFromDriverValue(7n)).toBe("7");
+    expect(uint64Column.mapFromDriverValue(7)).toBe("7");
+    expect(uint64Column.mapFromDriverValue("8")).toBe("8");
+    expect(uint64Column.mapToDriverValue("9")).toBe("9");
+    expect(uint64Column.mapToDriverValue(9 as never)).toBe("9");
+    expect(uint64Column.mapToDriverValue(9n as never)).toBe("9");
+    expect(() => uint64Column.mapFromDriverValue(false)).toThrow("Cannot convert value to string");
 
     const stringColumn = string();
     expect(stringColumn.mapFromDriverValue("plain")).toBe("plain");

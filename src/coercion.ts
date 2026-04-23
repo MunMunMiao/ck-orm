@@ -23,14 +23,14 @@ export const toNumber = (value: unknown): number => {
   throw createDecodeError(`Cannot convert value to number: ${String(value)}`, value);
 };
 
-export const toBigInt = (value: unknown): bigint => {
-  if (typeof value === "bigint") {
+export const toIntegerString = (value: unknown): string => {
+  if (typeof value === "string") {
     return value;
   }
-  if (typeof value === "number" || typeof value === "string") {
-    return BigInt(value);
+  if (typeof value === "number" || typeof value === "bigint") {
+    return String(value);
   }
-  throw createDecodeError(`Cannot convert value to bigint: ${String(value)}`, value);
+  throw createDecodeError(`Cannot convert value to string: ${String(value)}`, value);
 };
 
 export const toStringValue = (value: unknown): string => {

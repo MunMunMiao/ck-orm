@@ -16,6 +16,19 @@ export const hasE2EEnv =
   Boolean(process.env.CLICKHOUSE_E2E_USERNAME) &&
   Boolean(process.env.CLICKHOUSE_E2E_PASSWORD);
 
+export const transportRoleFixtures = {
+  analyst: process.env.CLICKHOUSE_E2E_ROLE_ANALYST,
+  auditor: process.env.CLICKHOUSE_E2E_ROLE_AUDITOR,
+  username: process.env.CLICKHOUSE_E2E_ROLE_USERNAME,
+  password: process.env.CLICKHOUSE_E2E_ROLE_PASSWORD,
+} as const;
+
+export const hasTransportRoleFixtures =
+  Boolean(transportRoleFixtures.analyst) &&
+  Boolean(transportRoleFixtures.auditor) &&
+  Boolean(transportRoleFixtures.username) &&
+  Boolean(transportRoleFixtures.password);
+
 export const experimentalSettings = {
   allow_experimental_json_type: 1,
   allow_experimental_dynamic_type: 1,
@@ -153,6 +166,20 @@ export const auditEvents = chTable(
   }),
 );
 
+export const writePathBigInts = chTable(
+  "write_path_bigints",
+  {
+    id: chType.int32(),
+    label: chType.string(),
+    int64_value: chType.int64(),
+    uint64_value: chType.uint64(),
+  },
+  (table) => ({
+    engine: "MergeTree",
+    orderBy: [table.id],
+  }),
+);
+
 export const schemaPrimitives = chTable(
   "schema_primitives",
   {
@@ -253,6 +280,7 @@ export const e2eSchema = {
   quoteSnapshots,
   userDailySummary,
   auditEvents,
+  writePathBigInts,
   schemaPrimitives,
   schemaCompound,
   schemaAggregates,
@@ -268,6 +296,15 @@ export const getE2EConfig = () => {
     username: requiredEnv("CLICKHOUSE_E2E_USERNAME"),
     password: requiredEnv("CLICKHOUSE_E2E_PASSWORD"),
   };
+};
+
+export const getE2EDatabaseUrl = () => {
+  const config = getE2EConfig();
+  const url = new URL(config.host);
+  url.username = config.username;
+  url.password = config.password;
+  url.pathname = `/${config.database}`;
+  return url.toString();
 };
 
 export const createE2EDb = (
