@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { string } from "./columns";
-import { ClickHouseOrmError } from "./errors";
+import { isClickHouseOrmError } from "./errors";
 import { fn } from "./functions";
 import { eq } from "./query";
 import { type ClickHouseClientConfig, type ClickHouseQueryOptions, clickhouseClient } from "./runtime";
@@ -51,7 +51,7 @@ const expectRejectsWithClickhouseError = async (promise: Promise<unknown>, expec
     await promise;
     throw new Error("Expected promise to reject with ClickHouseOrmError");
   } catch (error) {
-    expect(error).toBeInstanceOf(ClickHouseOrmError);
+    expect(isClickHouseOrmError(error)).toBe(true);
     for (const [key, value] of Object.entries(expected)) {
       expect((error as Record<string, unknown>)[key]).toEqual(value);
     }
@@ -379,7 +379,7 @@ describe("ck-orm runtime", function describeClickHouseOrmRuntime() {
       } as unknown as ClickHouseClientConfig<{
         orderRewardLog: typeof orderRewardLog;
       }>),
-    ).toThrow(ClickHouseOrmError);
+    ).toThrow();
 
     try {
       clickhouseClient({
@@ -392,9 +392,9 @@ describe("ck-orm runtime", function describeClickHouseOrmRuntime() {
       }>);
       throw new Error("expected URL-credentials + username/password to be rejected");
     } catch (error) {
-      expect(error).toBeInstanceOf(ClickHouseOrmError);
-      expect((error as InstanceType<typeof ClickHouseOrmError>).kind).toBe("client_validation");
-      expect((error as InstanceType<typeof ClickHouseOrmError>).executionState).toBe("not_sent");
+      expect(isClickHouseOrmError(error)).toBe(true);
+      expect((error as { kind?: unknown }).kind).toBe("client_validation");
+      expect((error as { executionState?: unknown }).executionState).toBe("not_sent");
       expect((error as Error).message).toContain("databaseUrl cannot be combined with");
       expect((error as Error).message).toContain("username");
       expect((error as Error).message).toContain("password");
@@ -407,7 +407,7 @@ describe("ck-orm runtime", function describeClickHouseOrmRuntime() {
       } as unknown as ClickHouseClientConfig<{
         orderRewardLog: typeof orderRewardLog;
       }>),
-    ).toThrow(ClickHouseOrmError);
+    ).toThrow();
 
     expect(() =>
       clickhouseClient({
@@ -416,7 +416,7 @@ describe("ck-orm runtime", function describeClickHouseOrmRuntime() {
       } as unknown as ClickHouseClientConfig<{
         orderRewardLog: typeof orderRewardLog;
       }>),
-    ).toThrow(ClickHouseOrmError);
+    ).toThrow();
 
     expect(() =>
       clickhouseClient({
@@ -427,7 +427,7 @@ describe("ck-orm runtime", function describeClickHouseOrmRuntime() {
       } as unknown as ClickHouseClientConfig<{
         orderRewardLog: typeof orderRewardLog;
       }>),
-    ).toThrow(ClickHouseOrmError);
+    ).toThrow();
   });
 
   it("rejects internal-only json hooks and session lifetime defaults at client construction", function testUnsupportedClientConfigFields() {

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
+import { isDecodeError } from "./errors";
 import {
   compileValue,
   createExpression,
-  DecodeError,
   decodeValue,
   ensureExpression,
   getExpressionSourceKey,
@@ -112,7 +112,7 @@ describe("ck-orm query shared helpers", function describeClickHouseOrmQueryShare
       );
       throw new Error("Expected decodeValue to fail");
     } catch (error) {
-      expect(error).toBeInstanceOf(DecodeError);
+      expect(isDecodeError(error)).toBe(true);
       expect(error).toMatchObject({
         kind: "decode",
         executionState: "rejected",

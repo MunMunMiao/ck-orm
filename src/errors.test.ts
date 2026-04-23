@@ -1,12 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import {
-  ClickHouseOrmError,
   createAbortedError,
   createClientValidationError,
   createDecodeError,
+  createInternalError,
   createRequestFailedError,
   createTimeoutError,
-  DecodeError,
   isClickHouseOrmError,
   isDecodeError,
   normalizeTransportError,
@@ -14,7 +13,7 @@ import {
 } from "./errors";
 
 describe("ck-orm errors", function describeClickHouseOrmErrors() {
-  it("creates guard-detectable error objects and keeps instanceof compatibility", function testErrorGuards() {
+  it("creates guard-detectable error objects without runtime compatibility classes", function testErrorGuards() {
     const clientError = createClientValidationError("bad input");
     const requestError = createRequestFailedError({
       responseText: "Code: 62. DB::Exception: syntax error (SYNTAX_ERROR)",
@@ -22,24 +21,24 @@ describe("ck-orm errors", function describeClickHouseOrmErrors() {
       httpStatus: 400,
     });
     const decodeError = createDecodeError("Failed to decode row", { id: "bad" }, { path: "row.id" });
+    const internalError = createInternalError("broken invariant");
 
     expect(clientError).toBeInstanceOf(Error);
-    expect(clientError).toBeInstanceOf(ClickHouseOrmError);
-    expect(clientError).not.toBeInstanceOf(DecodeError);
     expect(isClickHouseOrmError(clientError)).toBe(true);
     expect(isDecodeError(clientError)).toBe(false);
 
     expect(requestError).toBeInstanceOf(Error);
-    expect(requestError).toBeInstanceOf(ClickHouseOrmError);
-    expect(requestError).not.toBeInstanceOf(DecodeError);
     expect(isClickHouseOrmError(requestError)).toBe(true);
     expect(isDecodeError(requestError)).toBe(false);
 
     expect(decodeError).toBeInstanceOf(Error);
-    expect(decodeError).toBeInstanceOf(ClickHouseOrmError);
-    expect(decodeError).toBeInstanceOf(DecodeError);
     expect(isClickHouseOrmError(decodeError)).toBe(true);
     expect(isDecodeError(decodeError)).toBe(true);
+
+    expect(internalError.kind).toBe("internal");
+    expect(internalError.executionState).toBe("not_sent");
+    expect(isClickHouseOrmError(internalError)).toBe(true);
+    expect(isDecodeError(internalError)).toBe(false);
   });
 
   it("withClickHouseOrmErrorContext clones only when it adds missing context", function testErrorContextCloning() {
@@ -79,7 +78,6 @@ describe("ck-orm errors", function describeClickHouseOrmErrors() {
       queryId: "query_2",
       sessionId: "session_2",
     });
-    expect(normalized).toBeInstanceOf(ClickHouseOrmError);
     expect(isClickHouseOrmError(normalized)).toBe(true);
     expect(normalized.kind).toBe("request_failed");
     expect(normalized.executionState).toBe("unknown");
@@ -93,7 +91,6 @@ describe("ck-orm errors", function describeClickHouseOrmErrors() {
     const original = createClientValidationError("unsafe query");
     const recontextualized = normalizeTransportError(original, { queryId: "query_3" });
     expect(recontextualized).not.toBe(original);
-    expect(recontextualized).toBeInstanceOf(ClickHouseOrmError);
     expect(isClickHouseOrmError(recontextualized)).toBe(true);
     expect(recontextualized.queryId).toBe("query_3");
     expect(recontextualized.kind).toBe("client_validation");
@@ -104,7 +101,6 @@ describe("ck-orm errors", function describeClickHouseOrmErrors() {
       queryId: "query_4",
       sessionId: "session_4",
     });
-    expect(primitive).toBeInstanceOf(ClickHouseOrmError);
     expect(isClickHouseOrmError(primitive)).toBe(true);
     expect(primitive.message).toContain("socket closed; execution state is unknown");
     expect(primitive.queryId).toBe("query_4");
@@ -119,8 +115,5 @@ describe("ck-orm errors", function describeClickHouseOrmErrors() {
     expect(abortedError.kind).toBe("aborted");
     expect(abortedError.executionState).toBe("unknown");
     expect(abortedError.sessionId).toBe("aborted_session");
-
-    expect(ClickHouseOrmError()).toBeUndefined();
-    expect(DecodeError()).toBeUndefined();
   });
 });

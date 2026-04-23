@@ -15,7 +15,7 @@ import {
   time64,
 } from "./columns";
 import { fn, tableFn } from "./functions";
-import { compileQuerySymbol, escapeLike, like, notLike, SelectBuilder } from "./query";
+import { compileQuerySymbol, createSelectBuilder, escapeLike, like, notLike } from "./query";
 import { normalizeSingleStatementSql } from "./runtime/sql-scan";
 import { chTable } from "./schema";
 import { compileSql, sql } from "./sql";
@@ -214,7 +214,7 @@ describe("ck-orm sql security", function describeSqlSecurity() {
 
   it("documents orderBy sql.raw behavior", function testOrderByRawBehavior() {
     const testTable = chTable("users", { id: int32(), name: string() });
-    const builder = new SelectBuilder({ fromSource: testTable });
+    const builder = createSelectBuilder({ fromSource: testTable });
     const rawExpr = sql.raw("1; DROP TABLE users; --");
     const query = builder.orderBy(rawExpr);
     const compiled = query[compileQuerySymbol]();
@@ -230,7 +230,7 @@ describe("ck-orm sql security", function describeSqlSecurity() {
 
   it("like compiles to parameterized query", function testLikeParameterization() {
     const testTable = chTable("users", { id: int32(), name: string() });
-    const builder = new SelectBuilder({ fromSource: testTable });
+    const builder = createSelectBuilder({ fromSource: testTable });
     const query = builder.where(like(testTable.name, "'; DROP TABLE users; --"));
     const compiled = query[compileQuerySymbol]();
     expect(compiled.statement).toContain("like");
@@ -240,7 +240,7 @@ describe("ck-orm sql security", function describeSqlSecurity() {
 
   it("notLike compiles to parameterized query", function testNotLikeParameterization() {
     const testTable = chTable("users", { id: int32(), name: string() });
-    const builder = new SelectBuilder({ fromSource: testTable });
+    const builder = createSelectBuilder({ fromSource: testTable });
     const query = builder.where(notLike(testTable.name, "admin%"));
     const compiled = query[compileQuerySymbol]();
     expect(compiled.statement).toContain("not like");

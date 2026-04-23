@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { int32, string } from "./columns";
-import { ClickHouseOrmError } from "./errors";
+import { isClickHouseOrmError } from "./errors";
 import { fn } from "./functions";
 import { alias, chTable } from "./schema";
 import { compileSql, sql } from "./sql";
@@ -56,7 +56,7 @@ describe("ck-orm sql", function describeClickHouseOrmSql() {
         compileSql(sql`select ${value}`);
         throw new Error("Expected compileSql to fail for nullish raw params");
       } catch (error) {
-        expect(error).toBeInstanceOf(ClickHouseOrmError);
+        expect(isClickHouseOrmError(error)).toBe(true);
         expect(error).toMatchObject({
           kind: "client_validation",
           executionState: "not_sent",

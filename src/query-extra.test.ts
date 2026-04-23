@@ -7,6 +7,9 @@ import {
   between,
   compileQuerySymbol,
   compileWithContextSymbol,
+  createInsertBuilder,
+  createQueryClient,
+  createSelectBuilder,
   createSessionId,
   decodeRow,
   desc,
@@ -18,7 +21,6 @@ import {
   has,
   hasAll,
   hasAny,
-  InsertBuilder,
   ilike,
   inArray,
   like,
@@ -31,8 +33,6 @@ import {
   notInArray,
   notLike,
   or,
-  QueryClient,
-  SelectBuilder,
 } from "./query";
 import type { Predicate } from "./query-shared";
 import { chTable } from "./schema";
@@ -73,7 +73,7 @@ const taggedOrders = chTable(
 
 describe("ck-orm query extras", function describeClickHouseOrmQueryExtras() {
   it("covers builder errors, default selection, operators and table-function sources", function testBuilderBranches() {
-    const db = new QueryClient({
+    const db = createQueryClient({
       schema: { orders },
     });
 
@@ -171,7 +171,7 @@ describe("ck-orm query extras", function describeClickHouseOrmQueryExtras() {
   });
 
   it("covers typed value params, decodeRow and session id helpers", function testNamedParamsAndHelpers() {
-    const db = new QueryClient({
+    const db = createQueryClient({
       schema: { orders },
     });
     const totals = db
@@ -374,7 +374,7 @@ describe("ck-orm query extras", function describeClickHouseOrmQueryExtras() {
   });
 
   it("validates insert rows before SQL compilation", function testInsertValidation() {
-    const db = new QueryClient({
+    const db = createQueryClient({
       schema: { orders },
     });
 
@@ -391,7 +391,7 @@ describe("ck-orm query extras", function describeClickHouseOrmQueryExtras() {
   });
 
   it("supports predicate arrays and variadic where() assembly", function testPredicateAssembly() {
-    const db = new QueryClient({
+    const db = createQueryClient({
       schema: { orders },
     });
 
@@ -481,7 +481,7 @@ describe("ck-orm query extras", function describeClickHouseOrmQueryExtras() {
   });
 
   it("compiles has-style predicates with array-aware parameter typing", function testHasPredicates() {
-    const db = new QueryClient({
+    const db = createQueryClient({
       schema: { taggedOrders },
     });
 
@@ -514,7 +514,7 @@ describe("ck-orm query extras", function describeClickHouseOrmQueryExtras() {
       statement: string;
       params: Record<string, unknown>;
     }> = [];
-    const db = new QueryClient({
+    const db = createQueryClient({
       schema: { orders },
       runner: {
         async execute<TResult extends Record<string, unknown>>(compiled: {
@@ -638,7 +638,7 @@ describe("ck-orm query extras", function describeClickHouseOrmQueryExtras() {
   });
 
   it("keeps select builder chains immutable across factory facades", function testBuilderImmutability() {
-    const db = new QueryClient({
+    const db = createQueryClient({
       schema: { orders },
     });
 
@@ -677,7 +677,7 @@ describe("ck-orm query extras", function describeClickHouseOrmQueryExtras() {
   });
 
   it("keeps derived query clients and queries from mutating their source", function testDerivedClientImmutability() {
-    const db = new QueryClient({
+    const db = createQueryClient({
       schema: { orders },
     });
     const baseQuery = db
@@ -740,7 +740,7 @@ describe("ck-orm query extras", function describeClickHouseOrmQueryExtras() {
   });
 
   it("covers compatibility factories and runner boundary errors", async function testCompatibilityFactoriesAndRunnerBoundaries() {
-    const selectBuilder = SelectBuilder<{ id: number }>({
+    const selectBuilder = createSelectBuilder<{ id: number }>({
       selection: {
         id: orders.id,
       },
@@ -749,14 +749,14 @@ describe("ck-orm query extras", function describeClickHouseOrmQueryExtras() {
       "execute() requires a clickhouseClient-backed query runner. Attach one with clickhouseClient(...).select(...) or clickhouseClient(...).from(table).",
     );
 
-    const insertBuilder = InsertBuilder(orders).values({
+    const insertBuilder = createInsertBuilder(orders).values({
       id: 1,
     });
     expect(() => insertBuilder.execute()).toThrow(
       "execute() requires a clickhouseClient-backed query runner. Attach one with clickhouseClient(...).select(...) or clickhouseClient(...).from(table).",
     );
 
-    const countDb = new QueryClient({
+    const countDb = createQueryClient({
       schema: { orders },
       runner: {
         async execute() {
@@ -772,8 +772,39 @@ describe("ck-orm query extras", function describeClickHouseOrmQueryExtras() {
     await expect(countDb.count(orders).execute()).rejects.toThrow("count() query did not return a result row");
   });
 
+  it("fails fast with an internal error when nested forced settings compile without active state", function testMissingCompileStateInvariant() {
+    const nestedQuery = {
+      [compileWithContextSymbol]() {
+        return {
+          kind: "compiled-query" as const,
+          mode: "query" as const,
+          statement: "select 1",
+          params: {},
+          selection: [],
+          forcedSettings: {
+            join_use_nulls: 1,
+          },
+        };
+      },
+      [compileQuerySymbol]() {
+        return nestedQuery[compileWithContextSymbol]({
+          params: {},
+          nextParamIndex: 0,
+        });
+      },
+    };
+
+    const existsPredicate = exists(nestedQuery as never);
+    expect(() =>
+      existsPredicate.compile({
+        params: {},
+        nextParamIndex: 0,
+      }),
+    ).toThrow("Missing active compile state while collecting forced settings");
+  });
+
   it("covers join-only metadata, insert DEFAULT rendering and array-function raw expressions", function testMetadataDefaultsAndArrayArgs() {
-    const db = new QueryClient({
+    const db = createQueryClient({
       schema: { orders, taggedOrders },
     });
 
@@ -791,7 +822,7 @@ describe("ck-orm query extras", function describeClickHouseOrmQueryExtras() {
     });
 
     const defaultInsert = buildCompiled(
-      InsertBuilder(orders)
+      createInsertBuilder(orders)
         .values({
           id: 3,
         })
@@ -833,7 +864,7 @@ describe("ck-orm query extras", function describeClickHouseOrmQueryExtras() {
   });
 
   it("covers thenable helper catch/finally paths and invalid count decoding", async function testThenableCatchAndFinally() {
-    const decodeDb = new QueryClient({
+    const decodeDb = createQueryClient({
       schema: { orders },
     });
 
@@ -842,7 +873,7 @@ describe("ck-orm query extras", function describeClickHouseOrmQueryExtras() {
     );
 
     const countFailure = new Error("count failure");
-    const countDb = new QueryClient({
+    const countDb = createQueryClient({
       schema: { orders },
       runner: {
         async execute() {
@@ -867,7 +898,7 @@ describe("ck-orm query extras", function describeClickHouseOrmQueryExtras() {
 
     const selectFailure = new Error("select failure");
     const insertFailure = new Error("insert failure");
-    const db = new QueryClient({
+    const db = createQueryClient({
       schema: { orders },
       runner: {
         async execute() {
@@ -931,7 +962,7 @@ describe("ck-orm query extras", function describeClickHouseOrmQueryExtras() {
 
   it("covers explicit then() calls and CTE sources", async function testThenAndCteSources() {
     const compiledStatements: string[] = [];
-    const db = new QueryClient({
+    const db = createQueryClient({
       schema: { orders },
       runner: {
         async execute<TResult extends Record<string, unknown>>(compiled: { statement: string }) {
@@ -991,7 +1022,7 @@ describe("ck-orm query extras", function describeClickHouseOrmQueryExtras() {
   });
 
   it("covers case-insensitive like predicates", function testIlikePredicates() {
-    const db = new QueryClient({
+    const db = createQueryClient({
       schema: { orders },
     });
 

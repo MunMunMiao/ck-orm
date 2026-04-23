@@ -45,7 +45,7 @@ import {
   uuid,
   variant,
 } from "./columns";
-import { DecodeError } from "./errors";
+import { type DecodeError, isDecodeError } from "./errors";
 import { compileSql, sql } from "./sql";
 
 const buildContext = () => ({
@@ -272,7 +272,7 @@ describe("ck-orm columns", function describeClickHouseOrmColumns() {
     } catch (error) {
       arrErr = error;
     }
-    expect(arrErr).toBeInstanceOf(DecodeError);
+    expect(isDecodeError(arrErr)).toBe(true);
     expect((arrErr as DecodeError).path).toBe("[1]");
     expect((arrErr as DecodeError).message).toMatch(/\(at \[1\]\)$/);
 
@@ -283,7 +283,7 @@ describe("ck-orm columns", function describeClickHouseOrmColumns() {
     } catch (error) {
       tupleErr = error;
     }
-    expect(tupleErr).toBeInstanceOf(DecodeError);
+    expect(isDecodeError(tupleErr)).toBe(true);
     expect((tupleErr as DecodeError).path).toBe("[1]");
 
     const profiles = nested({ id: int32(), email: string() });
@@ -296,7 +296,7 @@ describe("ck-orm columns", function describeClickHouseOrmColumns() {
     } catch (error) {
       nestedErr = error;
     }
-    expect(nestedErr).toBeInstanceOf(DecodeError);
+    expect(isDecodeError(nestedErr)).toBe(true);
     expect((nestedErr as DecodeError).path).toBe("[1].email");
     expect((nestedErr as DecodeError).message).toContain("[ck-orm]");
   });
@@ -310,7 +310,7 @@ describe("ck-orm columns", function describeClickHouseOrmColumns() {
     } catch (error) {
       mapErr = error;
     }
-    expect(mapErr).toBeInstanceOf(DecodeError);
+    expect(isDecodeError(mapErr)).toBe(true);
     expect((mapErr as DecodeError).path).toBe('["broken"]');
 
     // Non-DecodeError path: swap the inner column's decoder to throw a plain Error,
@@ -329,7 +329,7 @@ describe("ck-orm columns", function describeClickHouseOrmColumns() {
     } finally {
       (inner as { mapFromDriverValue: (v: unknown) => unknown }).mapFromDriverValue = original;
     }
-    expect(plainErr).toBeInstanceOf(DecodeError);
+    expect(isDecodeError(plainErr)).toBe(true);
     expect((plainErr as DecodeError).message).toContain("boom");
     expect((plainErr as DecodeError).path).toBe("[0]");
 
@@ -345,7 +345,7 @@ describe("ck-orm columns", function describeClickHouseOrmColumns() {
     } finally {
       (inner as { mapFromDriverValue: (v: unknown) => unknown }).mapFromDriverValue = original;
     }
-    expect(strErr).toBeInstanceOf(DecodeError);
+    expect(isDecodeError(strErr)).toBe(true);
     expect((strErr as DecodeError).message).toContain("string-thrown");
   });
 });

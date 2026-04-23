@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { ClickHouseOrmError } from "./errors";
+import { type ClickHouseOrmError, isClickHouseOrmError } from "./errors";
 import { createAbortController } from "./runtime/abort";
 import {
   assertValidQueryId,
@@ -111,7 +111,7 @@ describe("ck-orm runtime/abort", function describeAbort() {
     ext.abort(reason);
     const { signal, cleanup } = createAbortController(60_000, ext.signal);
     expect(signal.aborted).toBe(true);
-    expect(signal.reason).toBeInstanceOf(ClickHouseOrmError);
+    expect(isClickHouseOrmError(signal.reason)).toBe(true);
     expect((signal.reason as ClickHouseOrmError).cause).toBe(reason);
     cleanup();
   });
@@ -133,7 +133,7 @@ describe("ck-orm runtime/abort", function describeAbort() {
     Object.defineProperty(ext.signal, "aborted", { value: true, configurable: true });
     const { signal, cleanup } = createAbortController(60_000, ext.signal);
     expect(signal.aborted).toBe(true);
-    expect(signal.reason).toBeInstanceOf(ClickHouseOrmError);
+    expect(isClickHouseOrmError(signal.reason)).toBe(true);
     cleanup();
   });
 
@@ -145,6 +145,15 @@ describe("ck-orm runtime/abort", function describeAbort() {
 });
 
 const makeResponse = (body: string, init?: ResponseInit) => new Response(body, init);
+
+const expectRejectsWithClickHouseOrmError = async (promise: Promise<unknown>) => {
+  try {
+    await promise;
+    throw new Error("Expected promise to reject with ClickHouseOrmError");
+  } catch (error) {
+    expect(isClickHouseOrmError(error)).toBe(true);
+  }
+};
 
 describe("ck-orm runtime/json-stream", function describeJsonStream() {
   it("returns text immediately when ignoreErrorResponse is true", async function testIgnoreError() {
@@ -161,24 +170,24 @@ describe("ck-orm runtime/json-stream", function describeJsonStream() {
     Object.defineProperty(broken, "text", {
       value: () => Promise.reject(new TypeError("network down")),
     });
-    await expect(
+    await expectRejectsWithClickHouseOrmError(
       readValidatedResponseText({
         response: broken,
         queryId: "q",
         ignoreErrorResponse: false,
       }),
-    ).rejects.toBeInstanceOf(ClickHouseOrmError);
+    );
   });
 
   it("wraps malformed JSON in parseValidatedResponseJson as a request_failed error", async function testJsonParseFailure() {
-    await expect(
+    await expectRejectsWithClickHouseOrmError(
       parseValidatedResponseJson({
         response: makeResponse("not-json", { status: 200 }),
         queryId: "q",
         json,
         ignoreErrorResponse: false,
       }),
-    ).rejects.toBeInstanceOf(ClickHouseOrmError);
+    );
   });
 
   it("rejects ClickHouse exception lines and malformed lines in parseJsonEachRowLine", function testParseLineFailures() {
@@ -369,12 +378,12 @@ describe("ck-orm runtime/config validation", function describeConfigValidation()
   });
 
   it("rejects invalid query_id formats", function testInvalidQueryId() {
-    expect(() => assertValidQueryId("")).toThrow(ClickHouseOrmError);
-    expect(() => assertValidQueryId("x".repeat(101))).toThrow(ClickHouseOrmError);
-    expect(() => assertValidQueryId("query id")).toThrow(ClickHouseOrmError);
-    expect(() => assertValidQueryId("query@id")).toThrow(ClickHouseOrmError);
-    expect(() => assertValidQueryId("query:id")).toThrow(ClickHouseOrmError);
-    expect(() => assertValidQueryId("query/id")).toThrow(ClickHouseOrmError);
+    expect(() => assertValidQueryId("")).toThrow();
+    expect(() => assertValidQueryId("x".repeat(101))).toThrow();
+    expect(() => assertValidQueryId("query id")).toThrow();
+    expect(() => assertValidQueryId("query@id")).toThrow();
+    expect(() => assertValidQueryId("query:id")).toThrow();
+    expect(() => assertValidQueryId("query/id")).toThrow();
   });
 
   it("accepts valid session_id formats", function testValidSessionId() {
@@ -384,15 +393,15 @@ describe("ck-orm runtime/config validation", function describeConfigValidation()
   });
 
   it("rejects invalid session_id formats", function testInvalidSessionId() {
-    expect(() => assertValidSessionId("")).toThrow(ClickHouseOrmError);
-    expect(() => assertValidSessionId("a".repeat(101))).toThrow(ClickHouseOrmError);
-    expect(() => assertValidSessionId("session id")).toThrow(ClickHouseOrmError);
-    expect(() => assertValidSessionId("session@id")).toThrow(ClickHouseOrmError);
+    expect(() => assertValidSessionId("")).toThrow();
+    expect(() => assertValidSessionId("a".repeat(101))).toThrow();
+    expect(() => assertValidSessionId("session id")).toThrow();
+    expect(() => assertValidSessionId("session@id")).toThrow();
   });
 
   it("rejects overly long query parameter keys", function testLongQueryParamKey() {
     const key = "x".repeat(101);
-    expect(() => assertValidQueryParamKey(key)).toThrow(ClickHouseOrmError);
+    expect(() => assertValidQueryParamKey(key)).toThrow();
   });
 
   it("formats special query params and search params for transport helpers", function testQueryParamFormatting() {

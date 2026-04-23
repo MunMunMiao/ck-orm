@@ -6,7 +6,8 @@ export type ClickHouseOrmErrorKind =
   | "decode"
   | "timeout"
   | "aborted"
-  | "session";
+  | "session"
+  | "internal";
 
 type ClickHouseOrmErrorFields = {
   kind: ClickHouseOrmErrorKind;
@@ -109,24 +110,6 @@ export const isDecodeError = (error: unknown): error is DecodeError => {
   return isClickHouseOrmError(error) && error.kind === "decode" && "causeValue" in error;
 };
 
-export function ClickHouseOrmError() {
-  /* compatibility guard */
-}
-Object.defineProperty(ClickHouseOrmError, Symbol.hasInstance, {
-  value(value: unknown) {
-    return isClickHouseOrmError(value);
-  },
-});
-
-export function DecodeError() {
-  /* compatibility guard */
-}
-Object.defineProperty(DecodeError, Symbol.hasInstance, {
-  value(value: unknown) {
-    return isDecodeError(value);
-  },
-});
-
 export const withClickHouseOrmErrorContext = <TError extends ClickHouseOrmError>(
   error: TError,
   context: {
@@ -155,6 +138,11 @@ export const createSessionError = (
   message: string,
   options?: Omit<ClickHouseOrmErrorOptions, "kind" | "executionState">,
 ) => make("session", "not_sent", message, options);
+
+export const createInternalError = (
+  message: string,
+  options?: Omit<ClickHouseOrmErrorOptions, "kind" | "executionState">,
+) => make("internal", "not_sent", message, options);
 
 /**
  * Constructs a `DecodeError` (a `ClickHouseOrmError` of kind `"decode"`)

@@ -272,8 +272,10 @@ const pushCompileState = (ctx: BuildContext, state: CompileState): void => {
 
 const popCompileState = (ctx: BuildContext): void => {
   const stack = compileStateStackStore.get(ctx);
-  stack?.pop();
-  if (!stack || stack.length === 0) {
+  if (!stack || stack.length === 0) throw createInternalError("Query compile-state stack underflow");
+
+  stack.pop();
+  if (stack.length === 0) {
     compileStateStackStore.delete(ctx);
   }
 };

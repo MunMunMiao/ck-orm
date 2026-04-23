@@ -5,12 +5,12 @@ import {
   and,
   compileQuerySymbol,
   compileWithContextSymbol,
+  createQueryClient,
   desc,
   eq,
   exists,
   expr,
   inArray,
-  QueryClient,
 } from "./query";
 import { clickhouseClient } from "./runtime";
 import type { ClickHouseTableEngine } from "./schema";
@@ -82,7 +82,7 @@ type TestSchema = {
   pets: typeof pets;
 };
 
-const typeDb = new QueryClient<TestSchema, 1>({
+const typeDb = createQueryClient<TestSchema, 1>({
   schema: { users, pets },
   joinUseNulls: 1,
 });
@@ -97,7 +97,7 @@ const explicitLeftJoin = typeDb
   })
   .from(users)
   .leftJoin(pets, eq(users.id, pets.owner_id));
-const noNullsDb = new QueryClient<TestSchema, 0>({
+const noNullsDb = createQueryClient<TestSchema, 0>({
   schema: { users, pets },
   joinUseNulls: 0,
 });
@@ -249,7 +249,7 @@ describe("ck-orm query compile", function describeClickHouseOrmQueryCompile() {
     expect(aliasedLog.options.orderBy?.map((column) => column.tableAlias)).toEqual(["orl", "orl", "orl"]);
     expect(aliasedLog.options.versionColumn?.tableAlias).toBe("orl");
 
-    const db = new QueryClient({
+    const db = createQueryClient({
       schema: {
         orderRewardLog,
       },
@@ -289,7 +289,7 @@ describe("ck-orm query compile", function describeClickHouseOrmQueryCompile() {
   });
 
   it("compiles cte, subquery, tuple, arrayZip and limit by", function testCompileCteAndFunctions() {
-    const db = new QueryClient({
+    const db = createQueryClient({
       schema: {
         orderRewardLog,
         shipmentOrder,
@@ -347,7 +347,7 @@ describe("ck-orm query compile", function describeClickHouseOrmQueryCompile() {
   });
 
   it("compiles insert values using table schema types", function testCompileInsert() {
-    const db = new QueryClient({
+    const db = createQueryClient({
       schema: {
         orderRewardLog,
       },
@@ -384,7 +384,7 @@ describe("ck-orm query compile", function describeClickHouseOrmQueryCompile() {
   });
 
   it("supports drizzle-style orderBy(column, desc(expr)) and nested default left-join selection", function testOrderByAndJoinShape() {
-    const db = new QueryClient({
+    const db = createQueryClient({
       schema: {
         users,
         pets,

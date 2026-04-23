@@ -98,7 +98,9 @@ describeE2E("ck-orm e2e query basics", function describeQueryBasics() {
       limit 1
     `);
 
-    expect(ck.decodeRow<{ id: number; upperName: string }>(expectPresent(rawRow, "rawRow"), compiled.selection)).toEqual({
+    expect(
+      ck.decodeRow<{ id: number; upperName: string }>(expectPresent(rawRow, "rawRow"), compiled.selection),
+    ).toEqual({
       id: 1,
       upperName: "ALICE",
     });

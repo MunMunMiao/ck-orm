@@ -1,7 +1,7 @@
 import { createDecodeError } from "./errors";
 import { allocParam, type BuildContext, inferPrimitiveType, isSqlFragment, type SQLFragment, sql } from "./sql";
 
-export { DecodeError } from "./errors";
+export type { DecodeError } from "./errors";
 export type { BuildContext, QueryParams } from "./sql";
 
 const dataTypeSymbol = Symbol("clickhouseOrmDataType");
