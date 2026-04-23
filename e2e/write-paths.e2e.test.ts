@@ -1,6 +1,6 @@
 import { beforeEach, expect, it } from "bun:test";
-import { csql } from "./ck-orm";
-import { auditEvents, createE2EDb, writePathBigInts } from "./shared";
+import { chTable, chType, csql } from "./ck-orm";
+import { auditEvents, createE2EDb, createTempTableName, writePathBigInts } from "./shared";
 import { describeE2E } from "./test-helpers";
 
 describeE2E("ck-orm e2e write paths", function describeWritePaths() {
@@ -140,6 +140,116 @@ describeE2E("ck-orm e2e write paths", function describeWritePaths() {
         eventName: "async_insert_two",
       },
     ]);
+  });
+
+  it("treats empty JSONEachRow array inserts as no-ops", async function testInsertJsonEachRowEmptyArray() {
+    const db = createE2EDb();
+    await db.insertJsonEachRow(auditEvents, []);
+
+    expect(await db.count(auditEvents)).toBe(0);
+  });
+
+  it("writes JSONEachRow rows with defaults, nullable values and compound columns", async function testJsonEachRowComplexColumns() {
+    const db = createE2EDb();
+    const tempTable = createTempTableName("tmp_json_each_row_complex");
+    const scope = chTable(tempTable, {
+      id: chType.int32(),
+      note: chType.string().default(csql`'auto'`),
+      nullable_note: chType.nullable(chType.string()),
+      tags: chType.array(chType.nullable(chType.string())),
+      scores: chType.map(chType.string(), chType.int32()),
+      pair: chType.tuple(chType.string(), chType.int32()),
+      doubled: chType.int32().materialized(csql`id * 2`),
+      label: chType.string().aliasExpr(csql`concat('id=', toString(id))`),
+    });
+
+    await db.runInSession(async (session) => {
+      await session.createTemporaryTable(scope);
+      await session.insertJsonEachRow(scope, [
+        {
+          id: 1,
+          nullable_note: null,
+          tags: ["first", null],
+          scores: { gold: 3 },
+          pair: ["one", 11],
+        },
+        {
+          id: 2,
+          nullable_note: "present",
+          tags: [],
+          scores: {},
+          pair: ["two", 22],
+        },
+      ]);
+
+      const rows = await session
+        .select({
+          id: scope.id,
+          note: scope.note,
+          nullableNote: scope.nullable_note,
+          tags: scope.tags,
+          scores: scope.scores,
+          pair: scope.pair,
+          doubled: scope.doubled,
+          label: scope.label,
+        })
+        .from(scope)
+        .orderBy(scope.id);
+
+      expect(rows).toEqual([
+        {
+          id: 1,
+          note: "auto",
+          nullableNote: null,
+          tags: ["first", null],
+          scores: { gold: 3 },
+          pair: ["one", 11],
+          doubled: 2,
+          label: "id=1",
+        },
+        {
+          id: 2,
+          note: "auto",
+          nullableNote: "present",
+          tags: [],
+          scores: {},
+          pair: ["two", 22],
+          doubled: 4,
+          label: "id=2",
+        },
+      ]);
+    });
+  });
+
+  it("supports JSONEachRow unknown-field skipping when ClickHouse setting is enabled", async function testJsonEachRowSkipUnknownFields() {
+    const db = createE2EDb();
+    const tempTable = createTempTableName("tmp_json_each_row_unknown");
+    const scope = chTable(tempTable, {
+      id: chType.int32(),
+      label: chType.string(),
+    });
+
+    await db.runInSession(async (session) => {
+      await session.createTemporaryTable(scope);
+      await session.insertJsonEachRow(
+        scope,
+        [
+          {
+            id: 1,
+            label: "kept",
+            ignored_extra_field: "ignored",
+          },
+        ],
+        {
+          clickhouse_settings: {
+            input_format_skip_unknown_fields: 1,
+          },
+        },
+      );
+
+      const rows = await session.select().from(scope);
+      expect(rows).toEqual([{ id: 1, label: "kept" }]);
+    });
   });
 
   it("round-trips 64-bit schema columns through insert builder", async function testInsertBuilderBigIntRoundTrip() {

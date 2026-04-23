@@ -1,11 +1,21 @@
 import { createClientValidationError } from "../errors";
 
-type SqlScanState = "code" | "single_quote" | "double_quote" | "backtick" | "line_comment" | "block_comment";
+type SqlScanState =
+  | "code"
+  | "single_quote"
+  | "double_quote"
+  | "backtick"
+  | "line_comment"
+  | "block_comment"
+  | "heredoc";
+
+const heredocOpeningPattern = /^\$[A-Za-z_][A-Za-z0-9_]*\$/;
 
 const scanTopLevelSemicolons = (statement: string) => {
   const positions: number[] = [];
   let sawCodeAfterSemicolon = false;
   let state: SqlScanState = "code";
+  let heredocTerminator = "";
 
   for (let index = 0; index < statement.length; index += 1) {
     const char = statement[index];
@@ -26,6 +36,18 @@ const scanTopLevelSemicolons = (statement: string) => {
           state = "block_comment";
           index += 1;
           continue;
+        }
+        if (char === "$") {
+          const heredocOpening = heredocOpeningPattern.exec(statement.slice(index))?.[0];
+          if (heredocOpening) {
+            if (positions.length > 0) {
+              sawCodeAfterSemicolon = true;
+            }
+            heredocTerminator = heredocOpening;
+            state = "heredoc";
+            index += heredocOpening.length - 1;
+            continue;
+          }
         }
         if (char === ";") {
           positions.push(index);
@@ -100,6 +122,13 @@ const scanTopLevelSemicolons = (statement: string) => {
         if (char === "*" && nextChar === "/") {
           state = "code";
           index += 1;
+        }
+        continue;
+      case "heredoc":
+        if (heredocTerminator && statement.startsWith(heredocTerminator, index)) {
+          state = "code";
+          index += heredocTerminator.length - 1;
+          heredocTerminator = "";
         }
         continue;
     }

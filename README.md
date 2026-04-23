@@ -71,7 +71,7 @@ The examples below use a single table so the main flow stays easy to follow.
 ### 1. Define a schema
 
 ```ts
-import { chTable, chType, csql } from "ck-orm";
+import { chTable, chType } from "ck-orm";
 
 export const orderRewardLog = chTable(
   "order_reward_log",
@@ -106,8 +106,15 @@ import { clickhouseClient } from "ck-orm";
 import { commerceSchema } from "./schema";
 
 export const db = clickhouseClient({
-  host: "http://127.0.0.1:8123", database: "demo_store", username: "default", password: "<password>", schema: commerceSchema, clickhouse_settings: {
-    max_execution_time: 10, }, });
+  host: "http://127.0.0.1:8123",
+  database: "demo_store",
+  username: "default",
+  password: "<password>",
+  schema: commerceSchema,
+  clickhouse_settings: {
+    max_execution_time: 10,
+  },
+});
 ```
 
 ### 3. Query data
@@ -119,8 +126,11 @@ import { orderRewardLog } from "./schema";
 
 const query = db
   .select({
-    userId: orderRewardLog.user_id, totalRewardPoints: fn.sum(orderRewardLog.reward_points).as(
-      "total_reward_points", ), })
+    userId: orderRewardLog.user_id,
+    totalRewardPoints: fn.sum(orderRewardLog.reward_points).as(
+      "total_reward_points",
+    ),
+  })
   .from(orderRewardLog)
   .where(ck.eq(orderRewardLog.status, 1))
   .groupBy(orderRewardLog.user_id)
@@ -168,16 +178,27 @@ import { chTable, chType, ck } from "ck-orm";
 
 ```ts
 const orderRewardLog = chTable("order_reward_log", {
-  id: chType.int32(), user_id: chType.string(), reward_points: chType.decimal(20, 5), });
+  id: chType.int32(),
+  user_id: chType.string(),
+  reward_points: chType.decimal(20, 5),
+});
 ```
 
 The third argument can be a plain object or a factory function:
 
 ```ts
 const orderRewardLog = chTable(
-  "order_reward_log", {
-    id: chType.int32(), user_id: chType.string(), reward_points: chType.decimal(20, 5), }, (table) => ({
-    engine: "ReplacingMergeTree", orderBy: [table.user_id, table.id], }), );
+  "order_reward_log",
+  {
+    id: chType.int32(),
+    user_id: chType.string(),
+    reward_points: chType.decimal(20, 5),
+  },
+  (table) => ({
+    engine: "ReplacingMergeTree",
+    orderBy: [table.user_id, table.id],
+  }),
+);
 ```
 
 Public table options:
@@ -205,9 +226,20 @@ Example:
 
 ```ts
 const orderRewardLog = chTable(
-  "order_reward_log", {
-    id: chType.int32(), created_at: chType.dateTime(), shard_day: chType.date().materialized(csql`toDate(created_at)`), note: chType.string().default(csql`'pending'`), }, (table) => ({
-    engine: "ReplacingMergeTree", partitionBy: csql`toYYYYMM(created_at)`, orderBy: [table.id], versionColumn: table.created_at, }), );
+  "order_reward_log",
+  {
+    id: chType.int32(),
+    created_at: chType.dateTime(),
+    shard_day: chType.date().materialized(csql`toDate(created_at)`),
+    note: chType.string().default(csql`'pending'`),
+  },
+  (table) => ({
+    engine: "ReplacingMergeTree",
+    partitionBy: csql`toYYYYMM(created_at)`,
+    orderBy: [table.id],
+    versionColumn: table.created_at,
+  }),
+);
 ```
 
 ### Type inference
@@ -267,6 +299,8 @@ Use `chType.*` for schema column builders. The schema DSL covers the common Clic
 - geometry types: `point`, `ring`, `lineString`, `multiLineString`, `polygon`, `multiPolygon`
 
 `int64` and `uint64` default to TypeScript `string` in schema-driven reads, writes, and inferred models so 64-bit values stay exact across the ClickHouse JSON wire format and JavaScript runtimes. When you explicitly want `bigint`, opt in with your own decoder such as `mapWith((value) => BigInt(String(value)))`.
+
+ClickHouse does not support `Nullable(Array(...))`, `Nullable(Map(...))`, or `Nullable(Tuple(...))`. `ck-orm` rejects those shapes at schema-definition time. Put `nullable(...)` inside the composite type instead, for example `chType.array(chType.nullable(chType.string()))`.
 
 ## Client configuration
 
@@ -758,6 +792,8 @@ It accepts:
 - a regular array
 - an `AsyncIterable`
 
+An empty regular array is treated as a client-side no-op and still reports a successful insert lifecycle with `rowCount: 0` to instrumentation hooks. ClickHouse controls unknown-field behavior; pass settings such as `input_format_skip_unknown_fields: 1` when you want the server to ignore extra JSON fields.
+
 ## Raw SQL
 
 `ck-orm` includes its own SQL template API. Use it when builder syntax would be less direct than the SQL you already want to write.
@@ -795,7 +831,7 @@ const rows = await db.execute(
 ### Raw SQL with `query_params`
 
 ```ts
-import { ck } from "ck-orm";
+import { csql } from "ck-orm";
 
 const rows = await db.execute(
   csql`select user_id, reward_points from order_reward_log where user_id = {user_id:String} limit {limit:Int64}`,
@@ -811,6 +847,25 @@ const rows = await db.execute(
 Parameter transport is chosen automatically. You do not need to configure multipart handling for `query_params`.
 
 `query_params` keys that start with `orm_param` are rejected. That prefix is reserved for parameters generated internally by `` csql`...` ``.
+
+The value formatter supports primitive values, `Date`, `NaN`, `Infinity`, arrays, objects, and `Map` values for ClickHouse typed placeholders such as `{ids:Array(UInt64)}` or `{attrs:Map(String, String)}`. Use ClickHouse's `Identifier` placeholder type when the parameter is a table or column name:
+
+```ts
+const rows = await db.execute(
+  csql`
+    select {selected_column:Identifier}
+    from {target_table:Identifier}
+    where id = {id:Int32}
+  `,
+  {
+    query_params: {
+      selected_column: "name",
+      target_table: "users",
+      id: 1,
+    },
+  },
+);
+```
 
 ### `ck.expr()`
 
@@ -912,7 +967,7 @@ Inside a session callback, `ck-orm` gives you:
 ### `runInSession()`
 
 ```ts
-import { chTable, chType } from "ck-orm";
+import { chTable, chType, csql } from "ck-orm";
 
 const tmpScope = chTable("tmp_scope", {
   user_id: chType.string(),
@@ -1082,8 +1137,13 @@ import { commerceSchema } from "./schema";
 const tracer = myObservabilityStack.getTracer("ck-orm-example");
 
 const db = clickhouseClient({
-  databaseUrl: "http://127.0.0.1:8123/demo_store", schema: commerceSchema, tracing: {
-    tracer, dbName: "demo_store", }, });
+  databaseUrl: "http://127.0.0.1:8123/demo_store",
+  schema: commerceSchema,
+  tracing: {
+    tracer,
+    dbName: "demo_store",
+  },
+});
 ```
 
 ### Custom instrumentation
@@ -1168,9 +1228,9 @@ The built-in protections include:
 
 ### Trusted-only APIs
 
-`ck-orm` does not expose a general-purpose public raw SQL string escape hatch. The remaining trusted-only API is:
+`ck-orm` does not expose a general-purpose public raw SQL string escape hatch. The remaining trusted-only API is only available inside a `runInSession()` callback:
 
-- `db.createTemporaryTableRaw(name, definition)`
+- `session.createTemporaryTableRaw(name, definition)`
 
 `fn.call(name, ...)` and `fn.withParams(name, ...)` validate `name`, but you should still treat dynamically chosen function names as developer-controlled input rather than end-user input.
 

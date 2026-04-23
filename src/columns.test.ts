@@ -176,11 +176,21 @@ describe("ck-orm columns", function describeClickHouseOrmColumns() {
     expect(nullableString.mapFromDriverValue(7)).toBe("7");
     expect(nullableString.mapToDriverValue(null)).toBeNull();
     expect(nullableString.mapToDriverValue("ok")).toBe("ok");
+    expect(() => nullable(array(string()))).toThrow(
+      "Nullable(Array(String)) is not supported by ClickHouse; wrap Nullable around fields inside the composite type instead",
+    );
+    expect(() => nullable(map(string(), int32()))).toThrow(
+      "Nullable(Map(String, Int32)) is not supported by ClickHouse",
+    );
+    expect(() => nullable(tuple(string(), int32()))).toThrow("Nullable(Tuple(String, Int32)) is not supported");
 
     const stringArray = array(string());
     expect(stringArray.mapFromDriverValue(["a", 1])).toEqual(["a", "1"]);
     expect(stringArray.mapToDriverValue(["a", "b"])).toEqual(["a", "b"]);
     expect(() => stringArray.mapFromDriverValue("bad")).toThrow("Cannot convert value to array");
+    const nullableStringArray = array(nullable(string()));
+    expect(nullableStringArray.sqlType).toBe("Array(Nullable(String))");
+    expect(nullableStringArray.mapFromDriverValue(["a", null, undefined])).toEqual(["a", null, null]);
 
     const tupleColumn = tuple(string(), int32());
     expect(tupleColumn.sqlType).toBe("Tuple(String, Int32)");
@@ -206,6 +216,9 @@ describe("ck-orm columns", function describeClickHouseOrmColumns() {
     expect(lowCardinalityString.sqlType).toBe("LowCardinality(String)");
     expect(lowCardinalityString.mapFromDriverValue(9)).toBe("9");
     expect(lowCardinalityString.mapToDriverValue("x")).toBe("x");
+    expect(lowCardinality(uint32()).sqlType).toBe("LowCardinality(UInt32)");
+    expect(lowCardinality(dateTime()).sqlType).toBe("LowCardinality(DateTime)");
+    expect(lowCardinality(nullable(string())).sqlType).toBe("LowCardinality(Nullable(String))");
 
     const nestedColumn = nested({
       id: int32(),

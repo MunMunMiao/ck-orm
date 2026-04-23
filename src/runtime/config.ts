@@ -395,8 +395,6 @@ export const formatQueryParamValue = (
       .replaceAll("\n", "\\n")
       .replaceAll("\r", "\\r")
       .replaceAll("\v", "\\v")
-      .replaceAll("\u2028", "\\u2028")
-      .replaceAll("\u2029", "\\u2029")
       .replaceAll("'", "\\'");
     return wrapStringInQuotes ? `'${escaped}'` : escaped;
   }

@@ -463,6 +463,34 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
     expect(returnCount).toBe(1);
   });
 
+  it("treats empty JSONEachRow array inserts as instrumented no-ops", async function testEmptyJsonEachRowArrayInsert() {
+    const fetchSpy = mock(async () => new Response("", { status: 200 }));
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    const successes: Array<{ rowCount?: number; tableName?: string }> = [];
+
+    const db = clickhouseClient({
+      host: "http://localhost:8123",
+      schema: { users },
+      instrumentation: [
+        {
+          onQuerySuccess(event) {
+            successes.push({
+              rowCount: event.rowCount,
+              tableName: event.tableName,
+            });
+          },
+        },
+      ],
+    });
+
+    await db.insertJsonEachRow(users, [], {
+      query_id: "empty_insert",
+    });
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(successes).toEqual([{ rowCount: 0, tableName: "users" }]);
+  });
+
   it("keeps runtime sources free of node-only imports", async function testRuntimePortabilitySources() {
     const runtimeSource = await Bun.file(new URL("./runtime.ts", import.meta.url)).text();
     const querySource = await Bun.file(new URL("./query.ts", import.meta.url)).text();

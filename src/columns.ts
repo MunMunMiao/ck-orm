@@ -412,21 +412,29 @@ export const enum16 = <TData extends string = string>(values: Record<string, num
     mapFromDriverValue: toStringValue as Decoder<TData>,
   });
 export const nullable = <TInner extends AnyColumn>(inner: TInner): Nullable<TInner> =>
-  createColumnFactory<InferData<TInner> | null, string>({
-    sqlType: `Nullable(${inner.sqlType})`,
-    mapFromDriverValue: (value) => {
-      if (value === null || value === undefined) {
-        return null;
-      }
-      return inner.mapFromDriverValue(value) as InferData<TInner>;
-    },
-    mapToDriverValue: (value) => {
-      if (value === null) {
-        return null;
-      }
-      return inner.mapToDriverValue(value as InferData<TInner>);
-    },
-  });
+  (() => {
+    if (/^(Array|Map|Tuple)\(/.test(inner.sqlType)) {
+      throw createClientValidationError(
+        `Nullable(${inner.sqlType}) is not supported by ClickHouse; wrap Nullable around fields inside the composite type instead`,
+      );
+    }
+
+    return createColumnFactory<InferData<TInner> | null, string>({
+      sqlType: `Nullable(${inner.sqlType})`,
+      mapFromDriverValue: (value) => {
+        if (value === null || value === undefined) {
+          return null;
+        }
+        return inner.mapFromDriverValue(value) as InferData<TInner>;
+      },
+      mapToDriverValue: (value) => {
+        if (value === null) {
+          return null;
+        }
+        return inner.mapToDriverValue(value as InferData<TInner>);
+      },
+    });
+  })();
 export const array = <TInner extends AnyColumn>(inner: TInner): ArrayColumn<TInner> =>
   createColumnFactory<InferData<TInner>[], string>({
     sqlType: `Array(${inner.sqlType})`,

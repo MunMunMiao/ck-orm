@@ -514,6 +514,7 @@ export const createClickHouseOrmClient = <TSchema, TJoinUseNulls extends 0 | 1 =
       const mergedOptions = mergeOptions(options);
       const tableName = toClickHouseTableName(table);
       const tableIdentifier = compileSql(sql.identifier({ table: tableName })).query;
+      const arrayRowCount = Array.isArray(rows) ? rows.length : undefined;
       return runSerial(mergedOptions, async () => {
         await executeWithInstrumentation(
           {
@@ -526,10 +527,12 @@ export const createClickHouseOrmClient = <TSchema, TJoinUseNulls extends 0 | 1 =
             tableName,
           },
           async () => {
-            await config.client.insertJsonEachRow(tableName, rows, mergedOptions);
+            if (arrayRowCount !== 0) {
+              await config.client.insertJsonEachRow(tableName, rows, mergedOptions);
+            }
             return {
               value: undefined,
-              rowCount: Array.isArray(rows) ? rows.length : undefined,
+              rowCount: arrayRowCount,
             };
           },
         );

@@ -1,4 +1,4 @@
-import { chTable, chType, clickhouseClient } from "./ck-orm";
+import { chTable, chType, clickhouseClient, csql } from "./ck-orm";
 import { commerceSchema } from "./schema/commerce";
 
 const createCommerceDb = () => {
@@ -26,14 +26,11 @@ export const runSessionTempTableExample = async () => {
     await sessionDb.insertJsonEachRow(tmpScope, [{ user_id: "user_100" }, { user_id: "user_200" }]);
 
     return sessionDb.execute(
-      `
+      csql`
         SELECT user_id
         FROM order_reward_log
         WHERE user_id IN (SELECT user_id FROM tmp_scope)
       `,
-      {
-        format: "JSON",
-      },
     );
   });
 };

@@ -40,6 +40,7 @@ This matrix records coverage from the real ClickHouse E2E suite only. It does no
 | same explicit `session_id` is serialized by default | `session-concurrency.e2e.test.ts` |
 | different `session_id` values remain parallel | `session-concurrency.e2e.test.ts` |
 | client default `session_id` is serialized too | `session-concurrency.e2e.test.ts` |
+| same-session raw streams hold the slot until explicitly closed | `session-concurrency.e2e.test.ts` |
 | raising `session_max_concurrent_requests` above `1` can surface `SESSION_IS_LOCKED` | `session-concurrency.e2e.test.ts` |
 | nested child sessions use distinct ids and cannot reuse ancestor ids | `session-security.e2e.test.ts` |
 | sibling/child sessions stay isolated for temporary tables | `session-security.e2e.test.ts` |
@@ -171,6 +172,8 @@ This matrix records coverage from the real ClickHouse E2E suite only. It does no
 | missing table | `error-contracts.e2e.test.ts` |
 | accessing a temporary table after session end | `error-contracts.e2e.test.ts` |
 | `insertJsonEachRow()` type mismatch | `error-contracts.e2e.test.ts` |
+| `query_params` type mismatch | `error-contracts.e2e.test.ts` |
+| partial `JSONEachRow` insert failure inside a session | `error-contracts.e2e.test.ts` |
 | `system.query_log` failure-stage validation | `error-contracts.e2e.test.ts` |
 
 ## Security and injection contexts
@@ -180,6 +183,9 @@ This matrix records coverage from the real ClickHouse E2E suite only. It does no
 | classic payloads in builder equality filters | `sql-injection.e2e.test.ts` |
 | classic payloads in raw template literals | `sql-injection.e2e.test.ts` |
 | Unicode line separators in parameter values | `sql-injection.e2e.test.ts`, `injection-values.e2e.test.ts` |
+| literal, array, map, DateTime64, NaN and Infinity `query_params` | `query-params-edge-cases.e2e.test.ts` |
+| `Identifier` query parameters for table and column names | `query-params-edge-cases.e2e.test.ts` |
+| malicious `Identifier` query parameters leave seeded tables untouched | `query-params-edge-cases.e2e.test.ts` |
 | set-membership payloads | `injection-values.e2e.test.ts` |
 | LIKE / ILIKE payloads | `injection-values.e2e.test.ts` |
 | literal-text pattern matching via semantic helpers | `injection-values.e2e.test.ts` |

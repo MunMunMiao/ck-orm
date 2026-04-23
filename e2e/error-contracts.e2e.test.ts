@@ -112,4 +112,76 @@ describeE2E("ck-orm e2e error contracts", function describeErrorContracts() {
     expect(row.query_id).toBe(queryId);
     expect(row.exception_code).toBeGreaterThan(0);
   });
+
+  it("classifies query parameter type mismatches as rejected requests and records them in query_log", async function testQueryParamTypeMismatchErrors() {
+    const db = createE2EDb();
+    const queryId = `e2e_query_param_type_mismatch_${Date.now()}`;
+
+    await expectRejectsWithClickhouseError(
+      db.execute(csql`select {bad_id:Int32} as bad_id`, {
+        query_id: queryId,
+        query_params: {
+          bad_id: "not-an-int",
+        },
+      }),
+      {
+        kind: "request_failed",
+        executionState: "rejected",
+        queryId,
+      },
+    );
+
+    const row = await waitForQueryLogException(queryId);
+    expect(row.query_id).toBe(queryId);
+    expect(row.exception_code).toBeGreaterThan(0);
+  });
+
+  it("classifies partial JSONEachRow insert failures without breaking the session", async function testPartialJsonEachRowInsertFailure() {
+    const db = createE2EDb();
+    const queryId = `e2e_partial_json_each_row_${Date.now()}`;
+    const tempTable = createTempTableName("tmp_partial_json_each_row");
+    const scope = chTable(tempTable, {
+      id: chType.int32(),
+      label: chType.string(),
+      created_at: chType.dateTime64(3),
+    });
+
+    await db.runInSession(async (session) => {
+      await session.createTemporaryTable(scope);
+
+      await expectRejectsWithClickhouseError(
+        session.insertJsonEachRow(
+          scope,
+          [
+            {
+              id: 1,
+              label: "valid-before-failure",
+              created_at: "2026-04-24 01:02:03.456",
+            },
+            {
+              id: "bad-id",
+              label: "invalid-row",
+              created_at: "not-a-date",
+            } as unknown as Record<string, unknown>,
+          ],
+          {
+            query_id: queryId,
+          },
+        ),
+        {
+          kind: "request_failed",
+          executionState: "rejected",
+          queryId,
+          sessionId: session.sessionId,
+        },
+      );
+
+      expect(await session.execute(csql`select 1 as still_usable`)).toEqual([{ still_usable: 1 }]);
+    });
+
+    const row = await waitForQueryLogException(queryId);
+    expect(row.type).toBe("ExceptionWhileProcessing");
+    expect(row.query_id).toBe(queryId);
+    expect(row.exception_code).toBeGreaterThan(0);
+  });
 });

@@ -117,6 +117,8 @@ The current E2E suite covers:
 - write-path coverage
   - `insert()` via direct await and explicit `.execute()`
   - `insertJsonEachRow()` with array and async iterable sources
+  - empty `insertJsonEachRow()` array no-op handling
+  - `insertJsonEachRow()` with DEFAULT, MATERIALIZED, ALIAS, nullable, array, map, tuple, and unknown-field skipping
   - real `Int64` / `UInt64` schema round-trips on string-mapped columns
 - SQL injection coverage by context
   - foundations
@@ -144,6 +146,7 @@ The current E2E suite covers:
   - transport and trusted-only boundaries
     - `query_params` key validation
     - reserved `orm_param*` prefix rejection
+    - literal, `Identifier`, complex `Array` / `Map` / `DateTime64`, `NaN`, and `Infinity` `query_params`
     - `query_id` / `session_id` validation
     - per-request `session_timeout` and continued-session `session_check`
     - `createTemporaryTableRaw(name, definition)` single-statement boundary
@@ -161,6 +164,7 @@ The current E2E suite covers:
   - `createTemporaryTable()`
   - `createTemporaryTableRaw()`
   - session cleanup
+  - same-session raw stream slot retention until iterator close
 - observability
   - `logger`
   - `tracing`
@@ -170,6 +174,8 @@ The current E2E suite covers:
   - missing tables
   - accessing a temporary table after the session ends
   - `insertJsonEachRow()` type mismatch
+  - query parameter type mismatch
+  - partial `JSONEachRow` insert failure inside a session
   - validating `ExceptionBeforeStart` and `ExceptionWhileProcessing` through `system.query_log`
 - transport behavior
   - POST-only fetch runtime

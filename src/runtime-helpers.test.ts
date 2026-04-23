@@ -102,6 +102,16 @@ describe("ck-orm runtime/sql-scan", function describeSqlScan() {
     expect(normalizeSingleStatementSql("select 'a\\'b;c' ;", "x")).toBe("select 'a\\'b;c'");
     expect(normalizeSingleStatementSql('select "a\\"b;c" ;', "x")).toBe('select "a\\"b;c"');
   });
+
+  it("treats ClickHouse heredoc bodies as string literal boundaries", function testHeredocBoundary() {
+    expect(normalizeSingleStatementSql("select $sql$select 1; select 2$sql$ as body;", "x")).toBe(
+      "select $sql$select 1; select 2$sql$ as body",
+    );
+    expect(normalizeSingleStatementSql("select $tag_1$-- ;\n/* ; */$tag_1$;", "x")).toBe(
+      "select $tag_1$-- ;\n/* ; */$tag_1$",
+    );
+    expect(() => normalizeSingleStatementSql("select $sql$;$sql$; select 2", "boom")).toThrow("boom");
+  });
 });
 
 describe("ck-orm runtime/abort", function describeAbort() {
@@ -240,6 +250,22 @@ describe("ck-orm runtime/json-stream", function describeJsonStream() {
       collected.push(line);
     }
     expect(collected).toEqual(["first", "second"]);
+  });
+
+  it("creates stable JSONEachRow request bodies for empty arrays and empty async iterables", async function testEmptyJsonEachRowBodies() {
+    expect(createJsonEachRowBody([], json)).toEqual({ body: "" });
+
+    const result = await createJsonEachRowBody(
+      (async function* rows() {
+        // empty by design
+      })(),
+      json,
+    );
+    if (typeof result.body === "string") {
+      expect(result.body).toBe("");
+    } else {
+      expect(await new Response(result.body).text()).toBe("");
+    }
   });
 
   it("buffers async row iterables when stream uploads are unsupported", async function testBufferedAsyncBody() {
@@ -421,6 +447,20 @@ describe("ck-orm runtime/config validation", function describeConfigValidation()
     expect(formatQueryParamValue(fractionalSecond)).toBe(`${expectedWholeSecond}.123`);
     expect(formatQueryParamValue(["vip", null, false])).toBe("['vip',NULL,FALSE]");
     expect(formatQueryParamValue({ enabled: true, disabled: false })).toBe("{'enabled':TRUE,'disabled':FALSE}");
+    expect(formatQueryParamValue([], { nested: true })).toBe("[]");
+    expect(formatQueryParamValue(new Map())).toBe("{}");
+    expect(
+      formatQueryParamValue({
+        nested: {
+          quoted: "it's \\ complicated",
+          unicode: "line\u2028paragraph\u2029end",
+        },
+        flags: [true, false, null],
+      }),
+    ).toBe(
+      "{'nested':{'quoted':'it\\'s \\\\ complicated','unicode':'line\u2028paragraph\u2029end'},'flags':[TRUE,FALSE,NULL]}",
+    );
+    expect(formatQueryParamValue(new Map([["scores", new Map([["gold", 1]])]]))).toBe("{'scores':{'gold':1}}");
 
     const searchParams = buildSearchParams({
       query_id: "query_1",

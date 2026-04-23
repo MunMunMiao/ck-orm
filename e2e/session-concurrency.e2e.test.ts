@@ -112,6 +112,38 @@ describeE2E("ck-orm e2e session concurrency", function describeSessionConcurrenc
     expectSerializedDuration(elapsedMs, baselineMs);
   });
 
+  it("holds the same-session slot until a raw stream is explicitly closed", async function testRawStreamHoldsSessionSlot() {
+    const db = createE2EDb();
+    const sharedSessionId = createId("stream_lock_session");
+    const stream = db.stream(csql`SELECT number AS value FROM numbers(1000)`, {
+      query_id: createId("stream_lock_reader"),
+      session_id: sharedSessionId,
+    });
+    const iterator = stream[Symbol.asyncIterator]();
+
+    const first = await iterator.next();
+    expect(first.done).toBe(false);
+    expect(Number(first.value?.value)).toBe(0);
+
+    let followUpCompleted = false;
+    const followUp = db
+      .execute(csql`SELECT 1 AS value`, {
+        query_id: createId("stream_lock_follow_up"),
+        session_id: sharedSessionId,
+      })
+      .then((rows) => {
+        followUpCompleted = true;
+        return rows;
+      });
+
+    await Bun.sleep(300);
+    expect(followUpCompleted).toBe(false);
+
+    await iterator.return?.();
+    expect(await followUp).toEqual([{ value: 1 }]);
+    expect(followUpCompleted).toBe(true);
+  });
+
   it("surfaces ClickHouse session locking when same-session local concurrency is raised above one", async function testClickHouseSessionLockBoundary() {
     const db = createE2EDb({
       session_max_concurrent_requests: 2,
