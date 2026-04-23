@@ -83,7 +83,7 @@ describeE2E("ck-orm e2e injection values", function describeInjectionValues() {
     }
   });
 
-  it("requires escapeLike to match literal wildcard characters safely", async function testEscapeLikeLiteralWildcards() {
+  it("treats semantic pattern helpers as literal-text matching helpers", async function testLiteralPatternHelpers() {
     const db = createE2EDb();
     const tempTable = createTempTableName("pattern_scope");
     const patternScope = chTable(tempTable, {
@@ -97,6 +97,9 @@ describeE2E("ck-orm e2e injection values", function describeInjectionValues() {
         { name: "price100Xreal" },
         { name: "tag_user_1" },
         { name: "tag_userA1" },
+        { name: "Hello%world" },
+        { name: "HELLO%WORLD" },
+        { name: "HelloXworld" },
       ]);
 
       const unescapedPercentRows = await session
@@ -108,14 +111,14 @@ describeE2E("ck-orm e2e injection values", function describeInjectionValues() {
         .orderBy(patternScope.name);
       expect(unescapedPercentRows.map((row) => row.name)).toEqual(["price100%real", "price100Xreal"]);
 
-      const escapedPercentRows = await session
+      const containsPercentRows = await session
         .select({
           name: patternScope.name,
         })
         .from(patternScope)
-        .where(ck.like(patternScope.name, ck.escapeLike("price100%real")))
+        .where(ck.contains(patternScope.name, "price100%real"))
         .orderBy(patternScope.name);
-      expect(escapedPercentRows.map((row) => row.name)).toEqual(["price100%real"]);
+      expect(containsPercentRows.map((row) => row.name)).toEqual(["price100%real"]);
 
       const unescapedUnderscoreRows = await session
         .select({
@@ -126,14 +129,50 @@ describeE2E("ck-orm e2e injection values", function describeInjectionValues() {
         .orderBy(patternScope.name);
       expect(unescapedUnderscoreRows.map((row) => row.name)).toEqual(["tag_userA1", "tag_user_1"]);
 
-      const escapedUnderscoreRows = await session
+      const startsWithUnderscoreRows = await session
         .select({
           name: patternScope.name,
         })
         .from(patternScope)
-        .where(ck.like(patternScope.name, ck.escapeLike("tag_user_1")))
+        .where(ck.startsWith(patternScope.name, "tag_user_"))
         .orderBy(patternScope.name);
-      expect(escapedUnderscoreRows.map((row) => row.name)).toEqual(["tag_user_1"]);
+      expect(startsWithUnderscoreRows.map((row) => row.name)).toEqual(["tag_user_1"]);
+
+      const endsWithUnderscoreRows = await session
+        .select({
+          name: patternScope.name,
+        })
+        .from(patternScope)
+        .where(ck.endsWith(patternScope.name, "_1"))
+        .orderBy(patternScope.name);
+      expect(endsWithUnderscoreRows.map((row) => row.name)).toEqual(["tag_user_1"]);
+
+      const containsIgnoreCasePercentRows = await session
+        .select({
+          name: patternScope.name,
+        })
+        .from(patternScope)
+        .where(ck.containsIgnoreCase(patternScope.name, "hello%wo"))
+        .orderBy(patternScope.name);
+      expect(containsIgnoreCasePercentRows.map((row) => row.name)).toEqual(["HELLO%WORLD", "Hello%world"]);
+
+      const startsWithIgnoreCasePercentRows = await session
+        .select({
+          name: patternScope.name,
+        })
+        .from(patternScope)
+        .where(ck.startsWithIgnoreCase(patternScope.name, "hello%"))
+        .orderBy(patternScope.name);
+      expect(startsWithIgnoreCasePercentRows.map((row) => row.name)).toEqual(["HELLO%WORLD", "Hello%world"]);
+
+      const endsWithIgnoreCasePercentRows = await session
+        .select({
+          name: patternScope.name,
+        })
+        .from(patternScope)
+        .where(ck.endsWithIgnoreCase(patternScope.name, "%world"))
+        .orderBy(patternScope.name);
+      expect(endsWithIgnoreCasePercentRows.map((row) => row.name)).toEqual(["HELLO%WORLD", "Hello%world"]);
     });
   });
 });

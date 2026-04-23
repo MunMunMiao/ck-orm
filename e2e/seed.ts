@@ -1,4 +1,5 @@
-import { ck } from "./ck-orm";
+import { sql } from "../src/sql";
+import { csql } from "./ck-orm";
 import {
   auditEvents,
   buildCreateTableStatement,
@@ -36,22 +37,22 @@ const recreateDatabase = async () => {
   const adminDb = createAdminDb();
   const { database } = getE2EConfig();
 
-  await adminDb.command(ck.sql`DROP DATABASE IF EXISTS ${ck.sql.identifier(database)}`);
-  await adminDb.command(ck.sql`CREATE DATABASE ${ck.sql.identifier(database)}`);
+  await adminDb.command(csql`DROP DATABASE IF EXISTS ${csql.identifier(database)}`);
+  await adminDb.command(csql`CREATE DATABASE ${csql.identifier(database)}`);
 };
 
 const createTables = async () => {
   const db = createE2EDb();
 
   for (const table of [...scenarioTables, ...schemaTables]) {
-    await db.command(buildDropTableStatement(table.originalName));
-    await db.command(buildCreateTableStatement(table));
+    await db.command(sql(buildDropTableStatement(table.originalName)));
+    await db.command(sql(buildCreateTableStatement(table)));
   }
 };
 
 const insertUsers = async () => {
   const db = createE2EDb();
-  await db.command(`
+  await db.command(csql`
     INSERT INTO users
     SELECT
       toInt32(number + 1) AS id,
@@ -69,7 +70,7 @@ const insertUsers = async () => {
 
 const insertPets = async () => {
   const db = createE2EDb();
-  await db.command(`
+  await db.command(csql`
     INSERT INTO pets
     SELECT
       toInt32(number + 101) AS id,
@@ -86,7 +87,7 @@ const insertPets = async () => {
 
 const insertWebEvents = async () => {
   const db = createE2EDb();
-  await db.command(`
+  await db.command(csql`
     INSERT INTO web_events
     SELECT
       toUInt64(number + 1) AS event_id,
@@ -103,7 +104,7 @@ const insertWebEvents = async () => {
 
 const insertRewardEvents = async () => {
   const db = createE2EDb();
-  await db.command(`
+  await db.command(csql`
     INSERT INTO reward_events
     SELECT *
     FROM
@@ -153,7 +154,7 @@ const insertRewardEvents = async () => {
 
 const insertTradeFills = async () => {
   const db = createE2EDb();
-  await db.command(`
+  await db.command(csql`
     INSERT INTO trade_fills
     SELECT
       toUInt64(number + 1) AS trade_id,
@@ -167,7 +168,7 @@ const insertTradeFills = async () => {
 
 const insertQuoteSnapshots = async () => {
   const db = createE2EDb();
-  await db.command(`
+  await db.command(csql`
     INSERT INTO quote_snapshots
     SELECT
       arrayElement(['EURUSD', 'XAUUSD', 'BTCUSD', 'AAPL', 'TSLA'], (number % 5) + 1) AS symbol,
@@ -188,7 +189,7 @@ const insertQuoteSnapshots = async () => {
 
 const insertSchemaPrimitives = async () => {
   const db = createE2EDb();
-  await db.command(`
+  await db.command(csql`
     INSERT INTO schema_primitives
     SELECT
       toInt32(1),
@@ -243,7 +244,7 @@ const insertSchemaCompound = async () => {
 
 const insertSchemaAggregates = async () => {
   const db = createE2EDb();
-  await db.command(`
+  await db.command(csql`
     INSERT INTO schema_aggregates
     SELECT
       toUInt32(1),
@@ -254,7 +255,7 @@ const insertSchemaAggregates = async () => {
 
 const insertSchemaGeo = async () => {
   const db = createE2EDb();
-  await db.command(`
+  await db.command(csql`
     INSERT INTO schema_geo
     SELECT
       toInt32(1),

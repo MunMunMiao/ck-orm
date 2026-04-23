@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { chTable, chType, ck } from "./ck-orm";
+import { chTable, chType, ck, csql } from "./ck-orm";
 import { createE2EDb, createTempTableName, pets, rewardEvents, users } from "./shared";
 import { describeE2E, expectPresent, takeAsync } from "./test-helpers";
 
@@ -20,7 +20,7 @@ describeE2E("ck-orm e2e session, cdc and stream", function describeSessionCdcAnd
     );
 
     const rawRows = await takeAsync(
-      db.stream(ck.sql`select ${users.id} as id, ${users.name} as name from ${users} order by ${users.id}`),
+      db.stream(csql`select ${users.id} as id, ${users.name} as name from ${users} order by ${users.id}`),
       5,
     );
 
@@ -78,12 +78,12 @@ describeE2E("ck-orm e2e session, cdc and stream", function describeSessionCdcAnd
 
     const [physicalRows] = await db
       .select({
-        total: ck.sql<number>`count()`.mapWith((value) => Number(value)).as("total"),
+        total: csql<number>`count()`.mapWith((value) => Number(value)).as("total"),
       })
       .from(rewardEvents);
     const [logicalRows] = await db
       .select({
-        total: ck.sql<number>`count()`.mapWith((value) => Number(value)).as("total"),
+        total: csql<number>`count()`.mapWith((value) => Number(value)).as("total"),
       })
       .from(rewardEvents)
       .final()
@@ -104,7 +104,7 @@ describeE2E("ck-orm e2e session, cdc and stream", function describeSessionCdcAnd
 
     const scopedRows = await db.runInSession(
       async (session) => {
-        await session.command(`CREATE TEMPORARY TABLE ${manualTempTable} (user_id Int32)`);
+        await session.command(csql`CREATE TEMPORARY TABLE ${csql.identifier(manualTempTable)} (user_id Int32)`);
         session.registerTempTable(manualTempTable);
         await session.insertJsonEachRow(manualTempTable, [{ user_id: 1 }, { user_id: 2 }]);
 
@@ -118,11 +118,11 @@ describeE2E("ck-orm e2e session, cdc and stream", function describeSessionCdcAnd
           })
           .from(users)
           .where(
-            ck.expr(ck.sql`
+            ck.expr(csql`
               ${users.id} in (
-                select user_id from ${ck.sql.identifier(manualTempTable)}
+                select user_id from ${csql.identifier(manualTempTable)}
                 union all
-                select user_id from ${ck.sql.identifier(helperTempTable)}
+                select user_id from ${csql.identifier(helperTempTable)}
               )
             `),
           )
@@ -138,13 +138,13 @@ describeE2E("ck-orm e2e session, cdc and stream", function describeSessionCdcAnd
     ]);
 
     await expect(
-      db.execute(ck.sql`select count() as total from ${ck.sql.identifier(manualTempTable)}`, {
+      db.execute(csql`select count() as total from ${csql.identifier(manualTempTable)}`, {
         session_id: sessionId,
       }),
     ).rejects.toThrow(/doesn't exist|unknown table/i);
 
     await expect(
-      db.execute(ck.sql`select count() as total from ${ck.sql.identifier(helperTempTable)}`, {
+      db.execute(csql`select count() as total from ${csql.identifier(helperTempTable)}`, {
         session_id: sessionId,
       }),
     ).rejects.toThrow(/doesn't exist|unknown table/i);

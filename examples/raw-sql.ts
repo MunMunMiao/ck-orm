@@ -1,4 +1,4 @@
-import { ck, clickhouseClient, fn } from "./ck-orm";
+import { clickhouseClient, csql, fn } from "./ck-orm";
 import { commerceSchema, orderRewardLog } from "./schema/commerce";
 
 const createCommerceDb = () => {
@@ -34,7 +34,7 @@ export const runRawQueryExample = async () => {
   const commerceDb = createCommerceDb();
   const threshold = 10;
 
-  return commerceDb.execute(ck.sql`
+  return commerceDb.execute(csql`
     select
       ${orderRewardLog.user_id},
       ${fn.sum(orderRewardLog.reward_points)} as total_reward_points
@@ -46,7 +46,7 @@ export const runRawQueryExample = async () => {
 
 export const runPlainStringRawQueryExample = async () => {
   const commerceDb = createCommerceDb();
-  return commerceDb.execute(ck.sql("SELECT 1 AS one"));
+  return commerceDb.execute(csql`SELECT 1 AS one`);
 };
 
 export const buildTableFunctionExample = () => {

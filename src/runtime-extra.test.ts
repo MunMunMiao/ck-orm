@@ -133,21 +133,21 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
       .from(orderRewardLog)
       .limit(1);
 
-    expect(await db.execute("select 1")).toEqual([{ raw: "row" }]);
+    expect(await db.execute(sql`select 1`)).toEqual([{ raw: "row" }]);
     expect(await db.execute(sql`select ${users.id} from ${users} where ${users.id} = ${1}`)).toEqual([{ raw: "row" }]);
     expect(await db.execute(sql`select '2.5' as value`)).toEqual([{ value: "2.5" }]);
-    expect(await db.execute("select ';' as raw; -- trailing comment")).toEqual([{ raw: "row" }]);
+    expect(await db.execute(sql`select ';' as raw; -- trailing comment`)).toEqual([{ raw: "row" }]);
     expect(typedRows).toEqual([{ value: { wrapped: "2.5" } }]);
     expect(capturedBodies.some((body) => body.includes("select ';' as raw -- trailing comment"))).toBe(true);
 
-    await db.command("truncate table logs", { query_id: "cmd_1" });
+    await db.command(sql`truncate table logs`, { query_id: "cmd_1" });
     expect(capturedBodies).toContain("truncate table logs");
 
     await db.insert(users).values({ id: 7, name: "zoe" });
     expect(capturedBodies.some((body) => body.includes("insert into `users`"))).toBe(true);
 
     const streamRows: Record<string, unknown>[] = [];
-    for await (const row of db.stream("select 1")) {
+    for await (const row of db.stream(sql`select 1`)) {
       streamRows.push(row);
     }
     expect(streamRows).toEqual([{ raw: "first" }, { raw: "second" }]);
@@ -171,14 +171,14 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
       executionState: "not_sent",
       message: "[ck-orm] createTemporaryTable() requires runInSession()",
     });
-    await expectRejectsWithClickhouseError(db.execute("select 1", { format: "CSV" }), {
+    await expectRejectsWithClickhouseError(db.execute(sql`select 1`, { format: "CSV" }), {
       kind: "client_validation",
       executionState: "not_sent",
       message: "[ck-orm] Unsupported eager query format: CSV",
     });
     await expectRejectsWithClickhouseError(
       (async () => {
-        for await (const _row of db.stream("select 1", { format: "CSV" })) {
+        for await (const _row of db.stream(sql`select 1`, { format: "CSV" })) {
           // noop
         }
       })(),
@@ -188,7 +188,7 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
         message: "[ck-orm] Unsupported streaming query format: CSV",
       },
     );
-    await expectRejectsWithClickhouseError(db.command("select 1; select 2"), {
+    await expectRejectsWithClickhouseError(db.command(sql`select 1; select 2`), {
       kind: "client_validation",
       executionState: "not_sent",
       message: "[ck-orm] Query contains multiple statements; only a single statement is allowed per request",
@@ -313,7 +313,7 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
         for await (const _row of session.select().from(users).iterator()) {
           break;
         }
-        await session.command("select 1");
+        await session.command(sql`select 1`);
         return undefined;
       },
       { session_id: "session_iter" },
@@ -342,13 +342,13 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
     );
     expect(bodies.some((body) => body.includes('{"id":1,"name":"alice"}\n{"id":2,"name":"bob"}\n'))).toBe(true);
 
-    await expectRejectsWithClickhouseError(db.execute("select 1", { query_id: "timeout_case" }), {
+    await expectRejectsWithClickhouseError(db.execute(sql`select 1`, { query_id: "timeout_case" }), {
       kind: "timeout",
       executionState: "unknown",
       requestTimeoutMs: 5,
       queryId: "timeout_case",
     });
-    await expectRejectsWithClickhouseError(db.execute("select 1", { query_id: "body_timeout_case" }), {
+    await expectRejectsWithClickhouseError(db.execute(sql`select 1`, { query_id: "body_timeout_case" }), {
       kind: "timeout",
       executionState: "unknown",
       requestTimeoutMs: 5,
@@ -358,7 +358,7 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
     const streamedRows: Record<string, unknown>[] = [];
     await expectRejectsWithClickhouseError(
       (async () => {
-        for await (const row of db.stream("select 1", {
+        for await (const row of db.stream(sql`select 1`, {
           query_id: "stream_timeout_case",
         })) {
           streamedRows.push(row);
@@ -475,7 +475,7 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
       schema: { users },
     });
 
-    await expectRejectsWithClickhouseError(db.execute("select broken", { query_id: "embedded_json_error" }), {
+    await expectRejectsWithClickhouseError(db.execute(sql`select broken`, { query_id: "embedded_json_error" }), {
       kind: "request_failed",
       executionState: "rejected",
       httpStatus: 200,
@@ -487,7 +487,7 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
     const streamedRows: Record<string, unknown>[] = [];
     await expectRejectsWithClickhouseError(
       (async () => {
-        for await (const row of db.stream("select broken", {
+        for await (const row of db.stream(sql`select broken`, {
           query_id: "embedded_stream_error",
         })) {
           streamedRows.push(row);
@@ -515,7 +515,7 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
     });
 
     await expectRejectsWithClickhouseError(
-      db.execute("select 1", {
+      db.execute(sql`select 1`, {
         clickhouse_settings: {
           http_write_exception_in_output_format: 1,
         },
@@ -647,7 +647,7 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
     });
 
     await db.execute(
-      "select {filters:Array(String)} as filters, {score_map:Map(String, Int64)} as score_map, {payload:Map(String, String)} as payload",
+      sql`select {filters:Array(String)} as filters, {score_map:Map(String, Int64)} as score_map, {payload:Map(String, String)} as payload`,
       {
         query_id: "complex_query_params",
         query_params: {
@@ -664,7 +664,7 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
       },
     );
 
-    await db.execute("select 1", {
+    await db.execute(sql`select 1`, {
       query_id: "role_array_query",
       role: ["analyst", "auditor"],
     });
@@ -679,7 +679,7 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
 
     const sessionRows = await db.runInSession(
       async (session) => {
-        return await takeAsync(session.stream("select 1 as id, 'alice' as name"), 1);
+        return await takeAsync(session.stream(sql`select 1 as id, 'alice' as name`), 1);
       },
       { session_id: "raw_stream_session" },
     );
@@ -734,7 +734,7 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
     });
 
     await expectRejectsWithClickhouseError(
-      db.execute("select {user_id:String} as user_id", {
+      db.execute(sql`select {user_id:String} as user_id`, {
         query_params: {
           orm_param1: "unsafe",
         },
@@ -743,7 +743,7 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
         kind: "client_validation",
         executionState: "not_sent",
         message:
-          '[ck-orm] query_params key "orm_param1" uses reserved internal prefix "orm_param". This prefix is reserved for ck.sql`...` generated parameters.',
+          '[ck-orm] query_params key "orm_param1" uses reserved internal prefix "orm_param". This prefix is reserved for csql`...` generated parameters.',
       },
     );
 
@@ -757,7 +757,7 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
         kind: "client_validation",
         executionState: "not_sent",
         message:
-          '[ck-orm] query_params key "orm_param1" uses reserved internal prefix "orm_param". This prefix is reserved for ck.sql`...` generated parameters.',
+          '[ck-orm] query_params key "orm_param1" uses reserved internal prefix "orm_param". This prefix is reserved for csql`...` generated parameters.',
       },
     );
 
@@ -799,7 +799,7 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
         await session.runInSession(async (nestedSession) => {
           nestedSessionId = nestedSession.sessionId;
           expect(nestedSession.sessionId).not.toBe(session.sessionId);
-          await nestedSession.command("select 42");
+          await nestedSession.command(sql`select 42`);
           return undefined;
         });
 
@@ -807,7 +807,7 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
           max_threads: 2,
         });
 
-        await childDb.command("select 1");
+        await childDb.command(sql`select 1`);
         await childDb.ping();
         await childDb.replicasStatus();
       },
@@ -939,15 +939,15 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
 
     await db.runInSession(async (session) => {
       sessionIds.push(session.sessionId);
-      await session.command("select 1");
+      await session.command(sql`select 1`);
 
       await session.runInSession(async (nestedSession) => {
         sessionIds.push(nestedSession.sessionId);
-        await nestedSession.command("select 2");
+        await nestedSession.command(sql`select 2`);
 
         await nestedSession.runInSession(async (grandchildSession) => {
           sessionIds.push(grandchildSession.sessionId);
-          await grandchildSession.command("select 3");
+          await grandchildSession.command(sql`select 3`);
         });
       });
     });
@@ -1132,10 +1132,10 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
 
       await session.withSettings({ max_threads: 2 }).runInSession(async (childSession) => {
         childSessionId = childSession.sessionId;
-        await childSession.command("select 1");
+        await childSession.command(sql`select 1`);
       });
 
-      await session.command("select 2");
+      await session.command(sql`select 2`);
     });
 
     expect(childSessionId).not.toBe("");
@@ -1162,7 +1162,7 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
 
     expect(
       await takeAsync(
-        db.stream("select * from missing_table", {
+        db.stream(sql`select * from missing_table`, {
           ignore_error_response: true,
         }),
         1,
@@ -1400,14 +1400,14 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
     });
 
     // Success path: user-owned signal passed in, request resolves OK.
-    await db.execute("select 1", { query_id: "leak_ok", abort_signal: externalController.signal });
+    await db.execute(sql`select 1`, { query_id: "leak_ok", abort_signal: externalController.signal });
     expect(addCount).toBe(1);
     expect(removeCount).toBe(1);
 
     // Timeout path: even if the caller's finalize() chain were skipped, the
     // listener must come off the external signal once the inner controller aborts.
     await expectRejectsWithClickhouseError(
-      db.execute("select 1", { query_id: "leak_timeout", abort_signal: externalController.signal }),
+      db.execute(sql`select 1`, { query_id: "leak_timeout", abort_signal: externalController.signal }),
       {
         kind: "timeout",
         executionState: "unknown",

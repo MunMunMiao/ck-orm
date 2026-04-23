@@ -15,7 +15,19 @@ import {
   time64,
 } from "./columns";
 import { fn, tableFn } from "./functions";
-import { compileQuerySymbol, createSelectBuilder, escapeLike, like, notLike } from "./query";
+import {
+  compileQuerySymbol,
+  contains,
+  containsIgnoreCase,
+  createSelectBuilder,
+  endsWith,
+  endsWithIgnoreCase,
+  ilike,
+  like,
+  notLike,
+  startsWith,
+  startsWithIgnoreCase,
+} from "./query";
 import { normalizeSingleStatementSql } from "./runtime/sql-scan";
 import { chTable } from "./schema";
 import { compileSql, sql } from "./sql";
@@ -221,13 +233,6 @@ describe("ck-orm sql security", function describeSqlSecurity() {
     expect(compiled.statement).toContain("1; DROP TABLE users; --");
   });
 
-  it("escapeLike escapes wildcard characters", function testEscapeLike() {
-    expect(escapeLike("50%")).toBe("50\\%");
-    expect(escapeLike("hello_world")).toBe("hello\\_world");
-    expect(escapeLike("a\\b")).toBe("a\\\\b");
-    expect(escapeLike("%_\\")).toBe("\\%\\_\\\\");
-  });
-
   it("like compiles to parameterized query", function testLikeParameterization() {
     const testTable = chTable("users", { id: int32(), name: string() });
     const builder = createSelectBuilder({ fromSource: testTable });
@@ -238,6 +243,20 @@ describe("ck-orm sql security", function describeSqlSecurity() {
     expect(compiled.params.orm_param1).toBe("'; DROP TABLE users; --");
   });
 
+  it("keeps raw LIKE and ILIKE patterns unchanged", function testRawLikePatternSemantics() {
+    const testTable = chTable("users", { id: int32(), name: string() });
+    const builder = createSelectBuilder({ fromSource: testTable });
+    const rawPattern = "50%_\\";
+
+    const likeCompiled = builder.where(like(testTable.name, rawPattern))[compileQuerySymbol]();
+    expect(likeCompiled.statement).toContain("like");
+    expect(likeCompiled.params.orm_param1).toBe(rawPattern);
+
+    const ilikeCompiled = builder.where(ilike(testTable.name, rawPattern))[compileQuerySymbol]();
+    expect(ilikeCompiled.statement).toContain("ilike");
+    expect(ilikeCompiled.params.orm_param1).toBe(rawPattern);
+  });
+
   it("notLike compiles to parameterized query", function testNotLikeParameterization() {
     const testTable = chTable("users", { id: int32(), name: string() });
     const builder = createSelectBuilder({ fromSource: testTable });
@@ -246,5 +265,35 @@ describe("ck-orm sql security", function describeSqlSecurity() {
     expect(compiled.statement).toContain("not like");
     expect(compiled.statement).toContain("{orm_param1:String}");
     expect(compiled.params.orm_param1).toBe("admin%");
+  });
+
+  it("semantic pattern helpers escape wildcard characters internally", function testSemanticPatternHelpers() {
+    const testTable = chTable("users", { id: int32(), name: string() });
+    const builder = createSelectBuilder({ fromSource: testTable });
+    const literal = "50%_\\";
+
+    const containsCompiled = builder.where(contains(testTable.name, literal))[compileQuerySymbol]();
+    expect(containsCompiled.statement).toContain("like");
+    expect(containsCompiled.params.orm_param1).toBe("%50\\%\\_\\\\%");
+
+    const startsWithCompiled = builder.where(startsWith(testTable.name, literal))[compileQuerySymbol]();
+    expect(startsWithCompiled.params.orm_param1).toBe("50\\%\\_\\\\%");
+
+    const endsWithCompiled = builder.where(endsWith(testTable.name, literal))[compileQuerySymbol]();
+    expect(endsWithCompiled.params.orm_param1).toBe("%50\\%\\_\\\\");
+
+    const containsIgnoreCaseCompiled = builder.where(containsIgnoreCase(testTable.name, literal))[compileQuerySymbol]();
+    expect(containsIgnoreCaseCompiled.statement).toContain("ilike");
+    expect(containsIgnoreCaseCompiled.params.orm_param1).toBe("%50\\%\\_\\\\%");
+
+    const startsWithIgnoreCaseCompiled = builder
+      .where(startsWithIgnoreCase(testTable.name, literal))
+      [compileQuerySymbol]();
+    expect(startsWithIgnoreCaseCompiled.statement).toContain("ilike");
+    expect(startsWithIgnoreCaseCompiled.params.orm_param1).toBe("50\\%\\_\\\\%");
+
+    const endsWithIgnoreCaseCompiled = builder.where(endsWithIgnoreCase(testTable.name, literal))[compileQuerySymbol]();
+    expect(endsWithIgnoreCaseCompiled.statement).toContain("ilike");
+    expect(endsWithIgnoreCaseCompiled.params.orm_param1).toBe("%50\\%\\_\\\\");
   });
 });

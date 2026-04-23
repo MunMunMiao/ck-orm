@@ -1,11 +1,12 @@
 import { beforeEach, expect, it } from "bun:test";
+import { csql } from "./ck-orm";
 import { auditEvents, createE2EDb } from "./shared";
 import { describeE2E } from "./test-helpers";
 
 describeE2E("ck-orm e2e write paths", function describeWritePaths() {
   beforeEach(async function truncateAuditEvents() {
     const db = createE2EDb();
-    await db.command("TRUNCATE TABLE audit_events");
+    await db.command(csql`TRUNCATE TABLE audit_events`);
   });
 
   it("writes with insert builder via direct await", async function testInsertBuilderAwait() {

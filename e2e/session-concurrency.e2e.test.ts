@@ -1,8 +1,9 @@
 import { expect, it } from "bun:test";
+import { csql } from "./ck-orm";
 import { createE2EDb } from "./shared";
 import { describeE2E, expectClickhouseError } from "./test-helpers";
 
-const sleepQuery = "SELECT sleep(1) AS slept, 1 AS value";
+const sleepQuery = csql`SELECT sleep(1) AS slept, 1 AS value`;
 
 const createId = (prefix: string) => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 

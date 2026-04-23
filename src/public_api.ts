@@ -49,11 +49,14 @@ import {
   and,
   asc,
   between,
+  contains,
+  containsIgnoreCase,
   createSessionId,
   decodeRow,
   desc,
+  endsWith,
+  endsWithIgnoreCase,
   eq,
-  escapeLike,
   exists,
   expr,
   gt,
@@ -73,16 +76,16 @@ import {
   notInArray,
   notLike,
   or,
+  startsWith,
+  startsWithIgnoreCase,
 } from "./query";
-import { sql } from "./sql";
+import { type SQLFragment, sql } from "./sql";
 
 type CkNamespace = {
-  sql: typeof sql;
   fn: typeof fn;
   expr: typeof expr;
   createSessionId: typeof createSessionId;
   decodeRow: typeof decodeRow;
-  escapeLike: typeof escapeLike;
   and: typeof and;
   or: typeof or;
   not: typeof not;
@@ -95,6 +98,12 @@ type CkNamespace = {
   between: typeof between;
   inArray: typeof inArray;
   notInArray: typeof notInArray;
+  contains: typeof contains;
+  startsWith: typeof startsWith;
+  endsWith: typeof endsWith;
+  containsIgnoreCase: typeof containsIgnoreCase;
+  startsWithIgnoreCase: typeof startsWithIgnoreCase;
+  endsWithIgnoreCase: typeof endsWithIgnoreCase;
   like: typeof like;
   ilike: typeof ilike;
   notLike: typeof notLike;
@@ -106,6 +115,20 @@ type CkNamespace = {
   notExists: typeof notExists;
   asc: typeof asc;
   desc: typeof desc;
+};
+
+type CsqlNamespace = {
+  <TData = unknown>(strings: TemplateStringsArray, ...values: unknown[]): SQLFragment<TData>;
+  join(parts: readonly SQLFragment<unknown>[], separator?: string | SQLFragment<unknown>): SQLFragment;
+  identifier(
+    value:
+      | string
+      | {
+          readonly table?: string;
+          readonly column?: string;
+          readonly as?: string;
+        },
+  ): SQLFragment;
 };
 
 type ChTypeNamespace = {
@@ -194,6 +217,24 @@ export {
   type InferSelectModel,
   type InferSelectSchema,
 } from "./schema";
+export type { SQLFragment } from "./sql";
+
+const createCsqlNamespace = (): CsqlNamespace => {
+  const csqlFactory = (<TData = unknown>(strings: TemplateStringsArray, ...values: unknown[]): SQLFragment<TData> => {
+    if (!Array.isArray(strings) || !Array.isArray(strings.raw)) {
+      throw new TypeError('[ck-orm] csql only supports tagged-template usage. Use csql`...` instead of csql("...").');
+    }
+
+    return sql<TData>(strings, ...values);
+  }) as CsqlNamespace;
+
+  csqlFactory.join = (parts, separator = ", ") => sql.join(parts, separator);
+  csqlFactory.identifier = (value) => sql.identifier(value);
+
+  return csqlFactory;
+};
+
+export const csql = createCsqlNamespace();
 
 export const chType: ChTypeNamespace = {
   aggregateFunction,
@@ -243,12 +284,10 @@ export const chType: ChTypeNamespace = {
 };
 
 export const ck: CkNamespace = {
-  sql,
   fn,
   expr,
   createSessionId,
   decodeRow,
-  escapeLike,
   and,
   or,
   not,
@@ -261,6 +300,12 @@ export const ck: CkNamespace = {
   between,
   inArray,
   notInArray,
+  contains,
+  startsWith,
+  endsWith,
+  containsIgnoreCase,
+  startsWithIgnoreCase,
+  endsWithIgnoreCase,
   like,
   ilike,
   notLike,

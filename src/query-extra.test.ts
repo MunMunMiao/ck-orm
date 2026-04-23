@@ -7,12 +7,15 @@ import {
   between,
   compileQuerySymbol,
   compileWithContextSymbol,
+  contains,
+  containsIgnoreCase,
   createInsertBuilder,
   createQueryClient,
   createSelectBuilder,
   createSessionId,
   decodeRow,
   desc,
+  endsWith,
   eq,
   exists,
   expr,
@@ -33,6 +36,7 @@ import {
   notInArray,
   notLike,
   or,
+  startsWith,
 } from "./query";
 import type { Predicate } from "./query-shared";
 import { chTable } from "./schema";
@@ -1046,5 +1050,45 @@ describe("ck-orm query extras", function describeClickHouseOrmQueryExtras() {
     expect(notLike(orders.name, "%bot%").decoder(0)).toBe(false);
     expect(ilike(orders.name, "%AL%").decoder(1)).toBe(true);
     expect(notIlike(orders.name, "%bot%").decoder(0)).toBe(false);
+  });
+
+  it("covers literal-text pattern helpers", function testLiteralTextPatternHelpers() {
+    const db = createQueryClient({
+      schema: { orders },
+    });
+
+    const compiled = buildCompiled(
+      db
+        .select({
+          id: orders.id,
+        })
+        .from(orders)
+        .where(and(contains(orders.name, "50%"), startsWith(orders.name, "tag_"), endsWith(orders.name, "_done")))
+        [compileQuerySymbol](),
+    );
+
+    expect(normalizeSql(compiled.query)).toContain("`orders`.`name` like {orm_param1:String}");
+    expect(normalizeSql(compiled.query)).toContain("`orders`.`name` like {orm_param2:String}");
+    expect(normalizeSql(compiled.query)).toContain("`orders`.`name` like {orm_param3:String}");
+    expect(compiled.params).toEqual({
+      orm_param1: "%50\\%%",
+      orm_param2: "tag\\_%",
+      orm_param3: "%\\_done",
+    });
+
+    const caseInsensitive = buildCompiled(
+      db
+        .select({
+          id: orders.id,
+        })
+        .from(orders)
+        .where(containsIgnoreCase(orders.name, "AL%"))
+        [compileQuerySymbol](),
+    );
+
+    expect(normalizeSql(caseInsensitive.query)).toContain("`orders`.`name` ilike {orm_param1:String}");
+    expect(caseInsensitive.params).toEqual({
+      orm_param1: "%AL\\%%",
+    });
   });
 });

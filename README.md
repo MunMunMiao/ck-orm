@@ -71,7 +71,7 @@ The examples below use a single table so the main flow stays easy to follow.
 ### 1. Define a schema
 
 ```ts
-import { chTable, chType } from "ck-orm";
+import { chTable, chType, csql } from "ck-orm";
 
 export const orderRewardLog = chTable(
   "order_reward_log",
@@ -206,8 +206,8 @@ Example:
 ```ts
 const orderRewardLog = chTable(
   "order_reward_log", {
-    id: chType.int32(), created_at: chType.dateTime(), shard_day: chType.date().materialized(ck.sql`toDate(created_at)`), note: chType.string().default(ck.sql`'pending'`), }, (table) => ({
-    engine: "ReplacingMergeTree", partitionBy: ck.sql`toYYYYMM(created_at)`, orderBy: [table.id], versionColumn: table.created_at, }), );
+    id: chType.int32(), created_at: chType.dateTime(), shard_day: chType.date().materialized(csql`toDate(created_at)`), note: chType.string().default(csql`'pending'`), }, (table) => ({
+    engine: "ReplacingMergeTree", partitionBy: csql`toYYYYMM(created_at)`, orderBy: [table.id], versionColumn: table.created_at, }), );
 ```
 
 ### Type inference
@@ -425,11 +425,16 @@ Public condition helpers:
 - `ck.has`
 - `ck.hasAll`
 - `ck.hasAny`
+- `ck.contains`
+- `ck.startsWith`
+- `ck.endsWith`
+- `ck.containsIgnoreCase`
+- `ck.startsWithIgnoreCase`
+- `ck.endsWithIgnoreCase`
 - `ck.like`
 - `ck.notLike`
 - `ck.ilike`
 - `ck.notIlike`
-- `ck.escapeLike`
 - `ck.inArray`
 - `ck.notInArray`
 - `ck.exists`
@@ -500,13 +505,17 @@ const query = db
 
 `Predicate` is the public name for reusable boolean SQL clauses. You can use the same predicate objects in `where`, `having`, join `on` clauses, and boolean-aware helpers such as `ck.exists(...)`.
 
-`Selection` is the public name for reusable computed builder values such as `fn.sum(...)`, `fn.toString(...)`, and `ck.expr(ck.sql...)`. Use `.as(...)` to alias them and `.mapWith(...)` to override decoding. `Order` is the clause object returned by `ck.asc(...)` and `ck.desc(...)`.
+`Selection` is the public name for reusable computed builder values such as `fn.sum(...)`, `fn.toString(...)`, and `ck.expr(csql...)`. Use `.as(...)` to alias them and `.mapWith(...)` to override decoding. `Order` is the clause object returned by `ck.asc(...)` and `ck.desc(...)`.
 
 `ck.has(...)`, `ck.hasAll(...)`, and `ck.hasAny(...)` map directly to the native ClickHouse functions and keep ClickHouse's array, map, and JSON semantics.
 
 `where(...)` is variadic, while `having(...)` takes a single predicate. For multi-clause `having`, compose the predicate first with `ck.and(...)` or `ck.or(...)`.
 
-When you need to match literal `%` or `_` characters, escape the pattern before passing it to `ck.like(...)`:
+`ck.contains(...)`, `ck.startsWith(...)`, `ck.endsWith(...)` and their `*IgnoreCase` variants treat the input as literal text. They parameterize the value and escape LIKE wildcard characters (`%`, `_`, `\`) internally.
+
+Use `ck.like(...)` / `ck.ilike(...)` only when you intentionally want full pattern semantics. Those APIs still parameterize values for SQL safety, but `%` and `_` keep their wildcard meaning because LIKE is a pattern language.
+
+Literal-text search example:
 
 ```ts
 import { ck } from "ck-orm";
@@ -516,7 +525,20 @@ const rows = await db
     userId: orderRewardLog.user_id,
   })
   .from(orderRewardLog)
-  .where(ck.like(orderRewardLog.user_id, ck.escapeLike("user_100%")));
+  .where(ck.contains(orderRewardLog.user_id, "user_100%"));
+```
+
+Advanced pattern example:
+
+```ts
+import { ck } from "ck-orm";
+
+const rows = await db
+  .select({
+    userId: orderRewardLog.user_id,
+  })
+  .from(orderRewardLog)
+  .where(ck.like(orderRewardLog.user_id, "user_%"));
 ```
 
 ### `groupBy()`, `having()`, `orderBy()`, `limit()`, `offset()`
@@ -727,12 +749,12 @@ It accepts:
 
 `ck-orm` includes its own SQL template API. Use it when builder syntax would be less direct than the SQL you already want to write.
 
-### `ck.sql\`...\``
+### `` csql`...` ``
 
 ```ts
-import { ck, fn } from "ck-orm";
+import { csql, fn } from "ck-orm";
 
-const rows = await db.execute(ck.sql`
+const rows = await db.execute(csql`
   select
     ${orderRewardLog.user_id},
     ${fn.sum(orderRewardLog.reward_points)} as total_reward_points
@@ -742,25 +764,18 @@ const rows = await db.execute(ck.sql`
 `);
 ```
 
-### Plain strings and `ck.sql("...")`
+### `csql.join()` and `csql.identifier()`
 
 ```ts
-import { ck } from "ck-orm";
+import { csql } from "ck-orm";
 
-const rows = await db.execute("SELECT 1 AS one");
-const sameRows = await db.execute(ck.sql("SELECT 1 AS one"));
-```
-
-### `ck.sql.raw()`, `ck.sql.join()`, `ck.sql.identifier()`
-
-```ts
-const fields = ck.sql.join(
-  [ck.sql.identifier("user_id"), ck.sql.identifier("reward_points")],
+const fields = csql.join(
+  [csql.identifier("user_id"), csql.identifier("reward_points")],
   ", ",
 );
 
 const rows = await db.execute(
-  ck.sql`${ck.sql.raw("select ")}${fields}${ck.sql.raw(" from ")}${ck.sql.identifier("order_reward_log")}`,
+  csql`select ${fields} from ${csql.identifier("order_reward_log")}`,
 );
 ```
 
@@ -770,7 +785,7 @@ const rows = await db.execute(
 import { ck } from "ck-orm";
 
 const rows = await db.execute(
-  ck.sql`select user_id, reward_points from order_reward_log where user_id = {user_id:String} limit {limit:Int64}`,
+  csql`select user_id, reward_points from order_reward_log where user_id = {user_id:String} limit {limit:Int64}`,
   {
     query_params: {
       user_id: "user_100",
@@ -782,17 +797,17 @@ const rows = await db.execute(
 
 Parameter transport is chosen automatically. You do not need to configure multipart handling for `query_params`.
 
-`query_params` keys that start with `orm_param` are rejected. That prefix is reserved for parameters generated internally by `ck.sql\`...\``.
+`query_params` keys that start with `orm_param` are rejected. That prefix is reserved for parameters generated internally by `` csql`...` ``.
 
 ### `ck.expr()`
 
-Use `ck.expr()` to wrap a raw SQL fragment as a reusable `Selection`:
+Use `ck.expr()` to wrap a SQL fragment as a reusable `Selection`:
 
 ```ts
-import { ck } from "ck-orm";
+import { ck, csql } from "ck-orm";
 
 const query = db.select({
-  constantOne: ck.expr(ck.sql.raw("1")).as("constant_one"),
+  constantOne: ck.expr(csql`1`).as("constant_one"),
 });
 ```
 
@@ -801,7 +816,7 @@ const query = db.select({
 Raw eager queries only support `JSON` output:
 
 ```ts
-const rows = await db.execute("select 1", {
+const rows = await db.execute(csql`select 1`, {
   format: "JSON",
 });
 ```
@@ -809,7 +824,7 @@ const rows = await db.execute("select 1", {
 Raw streaming queries only support `JSONEachRow` output:
 
 ```ts
-for await (const row of db.stream("select 1", {
+for await (const row of db.stream(csql`select 1`, {
   format: "JSONEachRow",
 })) {
   console.log(row);
@@ -898,7 +913,7 @@ await db.runInSession(async (session) => {
     { user_id: "user_200" },
   ]);
 
-  return session.execute(`
+  return session.execute(csql`
     SELECT user_id
     FROM order_reward_log
     WHERE user_id IN (SELECT user_id FROM tmp_scope)
@@ -963,7 +978,7 @@ Any request that carries a `session_id` participates in the same per-session lim
 Execute a raw query and return `Record<string, unknown>[]`:
 
 ```ts
-const rows = await db.execute("SELECT 1 AS one");
+const rows = await db.execute(csql`SELECT 1 AS one`);
 ```
 
 ### `stream()`
@@ -971,7 +986,7 @@ const rows = await db.execute("SELECT 1 AS one");
 Stream raw query results:
 
 ```ts
-for await (const row of db.stream("SELECT number FROM numbers(10)")) {
+for await (const row of db.stream(csql`SELECT number FROM numbers(10)`)) {
   console.log(row);
 }
 ```
@@ -983,7 +998,7 @@ If `stream()` targets a `session_id`, the same-session slot is released only aft
 Execute a command that does not return a row set:
 
 ```ts
-await db.command("SYSTEM FLUSH LOGS");
+await db.command(csql`SYSTEM FLUSH LOGS`);
 ```
 
 ### `withSettings()`
@@ -1129,25 +1144,24 @@ Current public `kind` values:
 
 The built-in protections include:
 
-- identifiers passed to `ck.sql.identifier()` are validated and quoted
+- identifiers passed to `csql.identifier()` are validated and quoted
 - function names used by `fn.call(...)`, `fn.withParams(...)`, `chType.aggregateFunction(...)`, `chType.simpleAggregateFunction(...)`, and `chType.nested({...})` keys are validated
-- values interpolated into `sql\`...\`` become ClickHouse named parameters rather than raw SQL text
+- values interpolated into `` csql`...` `` become ClickHouse named parameters rather than raw SQL text
 - `query_params` keys that start with `orm_param` are rejected because that prefix is reserved for internal SQL-template parameters
 - only a single top-level statement is allowed per request
 - authorization headers derived from connection config cannot be overridden by user-supplied `http_headers`
 - structured connection config rejects credentials embedded in `host`
 - tracing destination data is normalized before it is attached to spans
 
-### Unsafe APIs
+### Trusted-only APIs
 
-Treat the following APIs like `eval`: only pass developer-controlled strings, never user-derived input.
+`ck-orm` does not expose a general-purpose public raw SQL string escape hatch. The remaining trusted-only API is:
 
-- `ck.sql.raw(value)`
 - `db.createTemporaryTableRaw(name, definition)`
 
 `fn.call(name, ...)` and `fn.withParams(name, ...)` validate `name`, but you should still treat dynamically chosen function names as developer-controlled input rather than end-user input.
 
-`ck.sql.identifier(...)` validates on the compile/execute boundary. Constructing the fragment is cheap; the error appears when the fragment is compiled into a query.
+`csql.identifier(...)` validates on the compile/execute boundary. Constructing the fragment is cheap; the error appears when the fragment is compiled into a query.
 
 ### Tracing data exposure
 

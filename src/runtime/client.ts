@@ -550,7 +550,7 @@ export const createClickHouseOrmClient = <TSchema, TJoinUseNulls extends 0 | 1 =
       }
       const statement = buildCreateTemporaryTableStatement(table, options?.mode);
       registerValidatedTempTable(table.originalName);
-      await client.command(statement);
+      await client.command(sql(statement));
     },
 
     async createTemporaryTableRaw(name: string, definition: string) {
@@ -563,7 +563,7 @@ export const createClickHouseOrmClient = <TSchema, TJoinUseNulls extends 0 | 1 =
       );
       const identifier = renderTempTableIdentifier(name);
       registerValidatedTempTable(name);
-      await client.command(`CREATE TEMPORARY TABLE ${identifier} ${normalizedDefinition}`);
+      await client.command(sql(`CREATE TEMPORARY TABLE ${identifier} ${normalizedDefinition}`));
     },
 
     async runInSession<TResult>(
@@ -609,7 +609,7 @@ export const createClickHouseOrmClient = <TSchema, TJoinUseNulls extends 0 | 1 =
       for (const tableName of childSessionController.listTempTablesForCleanup()) {
         try {
           const identifier = renderTempTableIdentifier(tableName);
-          await sessionClient.command(`DROP TABLE IF EXISTS ${identifier}`, {
+          await sessionClient.command(sql(`DROP TABLE IF EXISTS ${identifier}`), {
             ignore_error_response: true,
           });
         } catch (error) {

@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { chTable, chType, ck } from "./ck-orm";
+import { chTable, chType, csql } from "./ck-orm";
 import { createE2EDb, createTempTableName } from "./shared";
 import { describeE2E, expectRejectsWithClickhouseError } from "./test-helpers";
 
@@ -54,18 +54,18 @@ describeE2E("ck-orm e2e session security", function describeSessionSecurity() {
 
     await db.runInSession(async (outer) => {
       sessionIds.push(outer.sessionId);
-      expect(Number((await outer.execute("SELECT 1 AS value"))[0]?.value)).toBe(1);
+      expect(Number((await outer.execute(csql`SELECT 1 AS value`))[0]?.value)).toBe(1);
 
       await outer.runInSession(async (child) => {
         sessionIds.push(child.sessionId);
         expect(child.sessionId).not.toBe(outer.sessionId);
-        expect(Number((await child.execute("SELECT 1 AS value"))[0]?.value)).toBe(1);
+        expect(Number((await child.execute(csql`SELECT 1 AS value`))[0]?.value)).toBe(1);
 
         await child.runInSession(async (grandchild) => {
           sessionIds.push(grandchild.sessionId);
           expect(grandchild.sessionId).not.toBe(child.sessionId);
           expect(grandchild.sessionId).not.toBe(outer.sessionId);
-          expect(Number((await grandchild.execute("SELECT 1 AS value"))[0]?.value)).toBe(1);
+          expect(Number((await grandchild.execute(csql`SELECT 1 AS value`))[0]?.value)).toBe(1);
 
           await expectRejectsWithClickhouseError(
             grandchild.runInSession(
@@ -107,7 +107,7 @@ describeE2E("ck-orm e2e session security", function describeSessionSecurity() {
     await db.runInSession(
       async (session) => {
         const error = await expectRejectsWithClickhouseError(
-          session.execute(ck.sql`select * from ${ck.sql.identifier(isolatedTable)}`),
+          session.execute(csql`select * from ${csql.identifier(isolatedTable)}`),
           {
             kind: "request_failed",
             executionState: "rejected",
@@ -133,14 +133,12 @@ describeE2E("ck-orm e2e session security", function describeSessionSecurity() {
         await session.createTemporaryTable(outerScope);
         await session.insertJsonEachRow(outerScope, [{ id: 1 }]);
         expect(
-          Number(
-            (await session.execute(ck.sql`select count() as total from ${ck.sql.identifier(outerTable)}`))[0]?.total,
-          ),
+          Number((await session.execute(csql`select count() as total from ${csql.identifier(outerTable)}`))[0]?.total),
         ).toBe(1);
 
         await session.runInSession(async (childOne) => {
           const missingOuter = await expectRejectsWithClickhouseError(
-            childOne.execute(ck.sql`select count() as total from ${ck.sql.identifier(outerTable)}`),
+            childOne.execute(csql`select count() as total from ${csql.identifier(outerTable)}`),
             {
               kind: "request_failed",
               executionState: "rejected",
@@ -152,14 +150,13 @@ describeE2E("ck-orm e2e session security", function describeSessionSecurity() {
           await childOne.insertJsonEachRow(childOneScope, [{ id: 11 }]);
           expect(
             Number(
-              (await childOne.execute(ck.sql`select count() as total from ${ck.sql.identifier(childOneTable)}`))[0]
-                ?.total,
+              (await childOne.execute(csql`select count() as total from ${csql.identifier(childOneTable)}`))[0]?.total,
             ),
           ).toBe(1);
         });
 
         const missingChildOneFromOuter = await expectRejectsWithClickhouseError(
-          session.execute(ck.sql`select count() as total from ${ck.sql.identifier(childOneTable)}`),
+          session.execute(csql`select count() as total from ${csql.identifier(childOneTable)}`),
           {
             kind: "request_failed",
             executionState: "rejected",
@@ -167,14 +164,12 @@ describeE2E("ck-orm e2e session security", function describeSessionSecurity() {
         );
         expect(missingChildOneFromOuter.message).toMatch(new RegExp(childOneTable, "i"));
         expect(
-          Number(
-            (await session.execute(ck.sql`select count() as total from ${ck.sql.identifier(outerTable)}`))[0]?.total,
-          ),
+          Number((await session.execute(csql`select count() as total from ${csql.identifier(outerTable)}`))[0]?.total),
         ).toBe(1);
 
         await session.runInSession(async (childTwo) => {
           const missingOuter = await expectRejectsWithClickhouseError(
-            childTwo.execute(ck.sql`select count() as total from ${ck.sql.identifier(outerTable)}`),
+            childTwo.execute(csql`select count() as total from ${csql.identifier(outerTable)}`),
             {
               kind: "request_failed",
               executionState: "rejected",
@@ -183,7 +178,7 @@ describeE2E("ck-orm e2e session security", function describeSessionSecurity() {
           expect(missingOuter.message).toMatch(new RegExp(outerTable, "i"));
 
           const missingChildOne = await expectRejectsWithClickhouseError(
-            childTwo.execute(ck.sql`select count() as total from ${ck.sql.identifier(childOneTable)}`),
+            childTwo.execute(csql`select count() as total from ${csql.identifier(childOneTable)}`),
             {
               kind: "request_failed",
               executionState: "rejected",
@@ -195,16 +190,13 @@ describeE2E("ck-orm e2e session security", function describeSessionSecurity() {
           await childTwo.insertJsonEachRow(childTwoScope, [{ id: 21 }]);
           expect(
             Number(
-              (await childTwo.execute(ck.sql`select count() as total from ${ck.sql.identifier(childTwoTable)}`))[0]
-                ?.total,
+              (await childTwo.execute(csql`select count() as total from ${csql.identifier(childTwoTable)}`))[0]?.total,
             ),
           ).toBe(1);
         });
 
         expect(
-          Number(
-            (await session.execute(ck.sql`select count() as total from ${ck.sql.identifier(outerTable)}`))[0]?.total,
-          ),
+          Number((await session.execute(csql`select count() as total from ${csql.identifier(outerTable)}`))[0]?.total),
         ).toBe(1);
       },
       { session_id: `test_sibling_${Date.now()}` },
@@ -223,7 +215,7 @@ describeE2E("ck-orm e2e session security", function describeSessionSecurity() {
         await session.insertJsonEachRow(cleanupScope, [{ id: 1 }]);
         expect(
           Number(
-            (await session.execute(ck.sql`select count() as total from ${ck.sql.identifier(cleanupTable)}`))[0]?.total,
+            (await session.execute(csql`select count() as total from ${csql.identifier(cleanupTable)}`))[0]?.total,
           ),
         ).toBe(1);
       },
@@ -231,7 +223,7 @@ describeE2E("ck-orm e2e session security", function describeSessionSecurity() {
     );
 
     const error = await expectRejectsWithClickhouseError(
-      db.execute(ck.sql`select count() as total from ${ck.sql.identifier(cleanupTable)}`, {
+      db.execute(csql`select count() as total from ${csql.identifier(cleanupTable)}`, {
         session_id: sessionId,
       }),
       {
@@ -246,17 +238,17 @@ describeE2E("ck-orm e2e session security", function describeSessionSecurity() {
     const db = createE2EDb();
 
     await db.runInSession(async (session) => {
-      const [outerBefore] = await session.execute("select getSetting('max_threads') as max_threads");
+      const [outerBefore] = await session.execute(csql`select getSetting('max_threads') as max_threads`);
 
       const childResult = await session.withSettings({ max_threads: 2 }).runInSession(async (child) => {
-        const [childSetting] = await child.execute("select getSetting('max_threads') as max_threads");
+        const [childSetting] = await child.execute(csql`select getSetting('max_threads') as max_threads`);
         return {
           sessionId: child.sessionId,
           maxThreads: Number(childSetting?.max_threads),
         };
       });
 
-      const [outerAfter] = await session.execute("select getSetting('max_threads') as max_threads");
+      const [outerAfter] = await session.execute(csql`select getSetting('max_threads') as max_threads`);
       expect(childResult.sessionId).not.toBe(session.sessionId);
       expect(childResult.maxThreads).toBe(2);
       expect(Number(outerAfter?.max_threads)).toBe(Number(outerBefore?.max_threads));

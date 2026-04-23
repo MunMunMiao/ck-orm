@@ -1,6 +1,7 @@
 // Type-only contract file. It exists to keep the public runtime API honest
 // under `tsc --noEmit`; it is not runtime library code.
 import { int32, string } from "./columns";
+import { csql } from "./public_api";
 import { clickhouseClient, type Session } from "./runtime";
 import { chTable } from "./schema";
 
@@ -23,11 +24,11 @@ db.runInSession(
   async (session: Session) => {
     await session.createTemporaryTable(tempUsers, { mode: "if_not_exists" });
     await session.createTemporaryTableRaw("tmp_users_raw", "(id Int32)");
-    await session.execute("select 1", {
+    await session.execute(csql`select 1`, {
       session_timeout: 30,
       session_check: 1,
     });
-    return await session.execute("select 1", {
+    return await session.execute(csql`select 1`, {
       session_timeout: 30,
       session_check: 1,
     });
@@ -47,7 +48,7 @@ db.runInSession(async (session: Session) => {
   });
 
   await session.withSettings({ max_threads: 2 }).runInSession(async (nestedSession) => {
-    await nestedSession.command("select 1");
+    await nestedSession.command(csql`select 1`);
   });
 });
 
@@ -62,11 +63,11 @@ db.insert(users).values([
   },
 ]);
 
-db.execute("select 1", {
+db.execute(csql`select 1`, {
   format: "JSON",
 });
 
-db.stream("select 1", {
+db.stream(csql`select 1`, {
   format: "JSONEachRow",
 });
 
@@ -82,10 +83,19 @@ db.select({
 db.insert(users).values({ typo_name: "alice" });
 
 // @ts-expect-error raw eager queries only support JSON output
-db.execute("select 1", { format: "JSONEachRow" });
+db.execute(csql`select 1`, { format: "JSONEachRow" });
 
 // @ts-expect-error raw streaming queries only support JSONEachRow output
-db.stream("select 1", { format: "JSON" });
+db.stream(csql`select 1`, { format: "JSON" });
+
+// @ts-expect-error raw query execution no longer accepts plain strings
+db.execute("select 1");
+
+// @ts-expect-error raw command execution no longer accepts plain strings
+db.command("select 1");
+
+// @ts-expect-error raw streaming no longer accepts plain strings
+db.stream("select 1");
 
 // @ts-expect-error typed builder queries do not expose format overrides
 db.select({ id: users.id }).from(users).execute({ format: "JSON" });

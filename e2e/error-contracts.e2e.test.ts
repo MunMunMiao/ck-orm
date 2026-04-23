@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { chTable, chType, ck } from "./ck-orm";
+import { chTable, chType, ck, csql } from "./ck-orm";
 import { auditEvents, createE2EDb, createTempTableName } from "./shared";
 import { describeE2E, expectRejectsWithClickhouseError, waitForQueryLogException } from "./test-helpers";
 
@@ -8,7 +8,7 @@ describeE2E("ck-orm e2e error contracts", function describeErrorContracts() {
     const db = createE2EDb();
     const queryId = `e2e_syntax_error_${Date.now()}`;
 
-    await expectRejectsWithClickhouseError(db.execute("SELCT 1", { query_id: queryId }), {
+    await expectRejectsWithClickhouseError(db.execute(csql`SELCT 1`, { query_id: queryId }), {
       kind: "request_failed",
       executionState: "rejected",
       httpStatus: 400,
@@ -28,7 +28,7 @@ describeE2E("ck-orm e2e error contracts", function describeErrorContracts() {
     const queryId = `e2e_unknown_table_${Date.now()}`;
 
     await expectRejectsWithClickhouseError(
-      db.execute(ck.sql`select count() as total from ${ck.sql.identifier("missing_error_contract_table")}`, {
+      db.execute(csql`select count() as total from ${csql.identifier("missing_error_contract_table")}`, {
         query_id: queryId,
       }),
       {
@@ -62,7 +62,7 @@ describeE2E("ck-orm e2e error contracts", function describeErrorContracts() {
 
     const queryId = `e2e_expired_temp_${Date.now()}`;
     await expectRejectsWithClickhouseError(
-      db.execute(ck.sql`select count() as total from ${ck.sql.identifier(tempTable)}`, {
+      db.execute(csql`select count() as total from ${csql.identifier(tempTable)}`, {
         query_id: queryId,
         session_id: sessionId,
       }),

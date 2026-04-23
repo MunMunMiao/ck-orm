@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { ck, fn } from "./ck-orm";
+import { ck, csql, fn } from "./ck-orm";
 import { createE2EDb, users, webEvents } from "./shared";
 import { describeE2E, expectDate, expectPresent } from "./test-helpers";
 
@@ -95,7 +95,7 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
 
     const [row] = await db
       .select({
-        safeTier: fn.coalesce(users.tier, ck.sql.raw(`'missing'`)).as("safe_tier"),
+        safeTier: fn.coalesce(users.tier, csql`'missing'`).as("safe_tier"),
         tupleValue: fn.tuple(users.id, users.name).as("tuple_value"),
         zippedTags: fn.arrayZip(webEvents.tags, webEvents.tag_scores).as("zipped_tags"),
         isNotVip: fn.not(ck.eq(users.tier, "vip")).as("is_not_vip"),
@@ -122,10 +122,10 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
 
     const rows = await db
       .select({
-        value: ck.expr(ck.sql<bigint>`number`.mapWith((value) => BigInt(String(value)))),
+        value: ck.expr(csql<bigint>`number`.mapWith((value) => BigInt(String(value)))),
       })
       .from(numbers)
-      .orderBy(ck.expr(ck.sql`number`));
+      .orderBy(ck.expr(csql`number`));
 
     expect(rows).toEqual([{ value: 0 }, { value: 1 }, { value: 2 }, { value: 3 }, { value: 4 }]);
   });

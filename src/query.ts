@@ -1492,61 +1492,71 @@ export const lt = makeBinary("<");
 export const lte = makeBinary("<=");
 
 const LIKE_ESCAPE_CHAR = "\\";
+type LikeOperator = "like" | "not like" | "ilike" | "not ilike";
+type LikeLiteralMode = "contains" | "startsWith" | "endsWith";
 
-/**
- * Escapes `%` and `_` wildcard characters in a LIKE pattern so they are
- * treated as literal characters.
- *
- * ClickHouse's `LIKE` operator uses `\` as the default escape character.
- * ClickHouse does **not** support the standard SQL `ESCAPE` keyword, so the
- * backslash is the only available escape character.
- *
- * Use this when matching user input that may contain these characters:
- * ```ts
- * db.select().from(users).where(like(users.name, escapeLike("50%")))
- * ```
- */
-export const escapeLike = (value: string): string => {
+const escapeLikePattern = (value: string): string => {
   return value
     .replaceAll(LIKE_ESCAPE_CHAR, LIKE_ESCAPE_CHAR + LIKE_ESCAPE_CHAR)
     .replaceAll("%", `${LIKE_ESCAPE_CHAR}%`)
     .replaceAll("_", `${LIKE_ESCAPE_CHAR}_`);
 };
 
-export const like = (left: unknown, right: string): Predicate => {
+const toLiteralLikePattern = (value: string, mode: LikeLiteralMode): string => {
+  const escaped = escapeLikePattern(value);
+  if (mode === "startsWith") {
+    return `${escaped}%`;
+  }
+  if (mode === "endsWith") {
+    return `%${escaped}`;
+  }
+  return `%${escaped}%`;
+};
+
+const createLikePredicate = (left: unknown, right: string, operator: LikeOperator): Predicate => {
   const leftExpression = ensureComparableExpression(left);
   return createExpression<boolean>({
-    compile: (ctx) => sql`${leftExpression.compile(ctx)}${sql.raw(" like ")}${compileValue(right, ctx, "String")}`,
+    compile: (ctx) =>
+      sql`${leftExpression.compile(ctx)}${sql.raw(` ${operator} `)}${compileValue(right, ctx, "String")}`,
     decoder: (value) => Boolean(value),
     sqlType: "Bool",
   });
 };
+
+export const like = (left: unknown, right: string): Predicate => createLikePredicate(left, right, "like");
 
 export const notLike = (left: unknown, right: string): Predicate => {
-  const leftExpression = ensureComparableExpression(left);
-  return createExpression<boolean>({
-    compile: (ctx) => sql`${leftExpression.compile(ctx)}${sql.raw(" not like ")}${compileValue(right, ctx, "String")}`,
-    decoder: (value) => Boolean(value),
-    sqlType: "Bool",
-  });
+  return createLikePredicate(left, right, "not like");
 };
 
-export const ilike = (left: unknown, right: string): Predicate => {
-  const leftExpression = ensureComparableExpression(left);
-  return createExpression<boolean>({
-    compile: (ctx) => sql`${leftExpression.compile(ctx)}${sql.raw(" ilike ")}${compileValue(right, ctx, "String")}`,
-    decoder: (value) => Boolean(value),
-    sqlType: "Bool",
-  });
-};
+export const ilike = (left: unknown, right: string): Predicate => createLikePredicate(left, right, "ilike");
 
 export const notIlike = (left: unknown, right: string): Predicate => {
-  const leftExpression = ensureComparableExpression(left);
-  return createExpression<boolean>({
-    compile: (ctx) => sql`${leftExpression.compile(ctx)}${sql.raw(" not ilike ")}${compileValue(right, ctx, "String")}`,
-    decoder: (value) => Boolean(value),
-    sqlType: "Bool",
-  });
+  return createLikePredicate(left, right, "not ilike");
+};
+
+export const contains = (left: unknown, right: string): Predicate => {
+  return like(left, toLiteralLikePattern(right, "contains"));
+};
+
+export const startsWith = (left: unknown, right: string): Predicate => {
+  return like(left, toLiteralLikePattern(right, "startsWith"));
+};
+
+export const endsWith = (left: unknown, right: string): Predicate => {
+  return like(left, toLiteralLikePattern(right, "endsWith"));
+};
+
+export const containsIgnoreCase = (left: unknown, right: string): Predicate => {
+  return ilike(left, toLiteralLikePattern(right, "contains"));
+};
+
+export const startsWithIgnoreCase = (left: unknown, right: string): Predicate => {
+  return ilike(left, toLiteralLikePattern(right, "startsWith"));
+};
+
+export const endsWithIgnoreCase = (left: unknown, right: string): Predicate => {
+  return ilike(left, toLiteralLikePattern(right, "endsWith"));
 };
 
 export const between = (expression: unknown, start: unknown, end: unknown): Predicate => {

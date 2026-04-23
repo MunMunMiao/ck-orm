@@ -247,7 +247,7 @@ describe("ck-orm observability", function describeClickHouseOrmObservability() {
     });
 
     await db.execute(sql`select 1 as one`);
-    await expect(db.execute("select broken")).rejects.toMatchObject({
+    await expect(db.execute(sql`select broken`)).rejects.toMatchObject({
       kind: "request_failed",
       executionState: "rejected",
       httpStatus: 500,

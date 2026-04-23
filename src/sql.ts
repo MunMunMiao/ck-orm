@@ -185,7 +185,7 @@ const createSqlFragment = <TData = unknown>(config: {
 export const allocParam = (ctx: BuildContext, value: unknown, sqlType?: string): string => {
   if (value === null || value === undefined) {
     throw createClientValidationError(
-      "Raw SQL parameters do not support null or undefined. Use sql.raw('NULL') or builder expressions instead.",
+      "Raw SQL parameters do not support null or undefined. Use csql`NULL` or builder expressions instead.",
     );
   }
   ctx.nextParamIndex += 1;

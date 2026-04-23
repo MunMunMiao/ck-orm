@@ -204,7 +204,7 @@ export type ResolveJoinUseNulls<TSettings, TFallback extends 0 | 1> = TSettings 
     : TFallback
   : TFallback;
 
-export type RawQueryInput = string | SQLFragment;
+export type RawQueryInput = SQLFragment;
 
 export type NormalizedClientConfig = {
   readonly url: URL;
@@ -267,7 +267,7 @@ const assertValidUserQueryParams = (queryParams: Record<string, unknown> | undef
     if (key.startsWith(RESERVED_INTERNAL_QUERY_PARAM_PREFIX)) {
       throw createClientValidationError(
         `query_params key "${key}" uses reserved internal prefix "${RESERVED_INTERNAL_QUERY_PARAM_PREFIX}". ` +
-          "This prefix is reserved for ck.sql`...` generated parameters.",
+          "This prefix is reserved for csql`...` generated parameters.",
       );
     }
   }
@@ -295,13 +295,6 @@ export const buildQueryParams = (
 };
 
 export const normalizeRawQueryInput = (query: RawQueryInput) => {
-  if (typeof query === "string") {
-    return {
-      query,
-      params: {},
-    };
-  }
-
   const compiled = compileSql(query);
   return {
     query: compiled.query,

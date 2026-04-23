@@ -51,11 +51,16 @@ This matrix records coverage from the real ClickHouse E2E suite only. It does no
 | `ck.hasAny` | `operators.e2e.test.ts` |
 | `ck.lt` | `operators.e2e.test.ts`, `builder-analytics.e2e.test.ts` |
 | `ck.lte` | `operators.e2e.test.ts` |
+| `ck.contains` | `injection-values.e2e.test.ts` |
+| `ck.startsWith` | `injection-values.e2e.test.ts` |
+| `ck.endsWith` | `injection-values.e2e.test.ts` |
+| `ck.containsIgnoreCase` | `injection-values.e2e.test.ts` |
+| `ck.startsWithIgnoreCase` | `injection-values.e2e.test.ts` |
+| `ck.endsWithIgnoreCase` | `injection-values.e2e.test.ts` |
 | `ck.like` | `injection-values.e2e.test.ts` |
 | `ck.notLike` | `injection-values.e2e.test.ts` |
 | `ck.ilike` | `injection-values.e2e.test.ts` |
 | `ck.notIlike` | `injection-values.e2e.test.ts` |
-| `ck.escapeLike` | `injection-values.e2e.test.ts` |
 | `ck.between` | `operators.e2e.test.ts` |
 | `ck.inArray` | `operators.e2e.test.ts`, `builder-analytics.e2e.test.ts`, `injection-values.e2e.test.ts` |
 | `ck.notInArray` | `operators.e2e.test.ts` |
@@ -83,11 +88,9 @@ This matrix records coverage from the real ClickHouse E2E suite only. It does no
 
 | API | Coverage location |
 | --- | --- |
-| `ck.sql('...')` | `query-basics.e2e.test.ts` |
-| `` ck.sql`...` `` | most E2E files |
-| `ck.sql.raw` | `query-basics.e2e.test.ts`, `injection-raw-sql.e2e.test.ts` |
-| `ck.sql.join` | `query-basics.e2e.test.ts`, `injection-transport-and-boundaries.e2e.test.ts` |
-| `ck.sql.identifier` | `query-basics.e2e.test.ts`, `session-cdc-stream.e2e.test.ts`, `injection-identifiers.e2e.test.ts`, `injection-transport-and-boundaries.e2e.test.ts` |
+| `` csql`...` `` | most E2E files |
+| `csql.join` | `query-basics.e2e.test.ts`, `injection-transport-and-boundaries.e2e.test.ts` |
+| `csql.identifier` | `query-basics.e2e.test.ts`, `session-cdc-stream.e2e.test.ts`, `injection-identifiers.e2e.test.ts`, `injection-transport-and-boundaries.e2e.test.ts` |
 
 ## Function API
 
@@ -170,7 +173,7 @@ This matrix records coverage from the real ClickHouse E2E suite only. It does no
 | Unicode line separators in parameter values | `sql-injection.e2e.test.ts`, `injection-values.e2e.test.ts` |
 | set-membership payloads | `injection-values.e2e.test.ts` |
 | LIKE / ILIKE payloads | `injection-values.e2e.test.ts` |
-| literal wildcard matching via `ck.escapeLike()` | `injection-values.e2e.test.ts` |
+| literal-text pattern matching via semantic helpers | `injection-values.e2e.test.ts` |
 | string and object identifier rejection | `injection-identifiers.e2e.test.ts` |
 | alias, temporary-table, and function-name rejection | `injection-identifiers.e2e.test.ts` |
 | stacked raw SQL rejection and no-mutation checks | `injection-raw-sql.e2e.test.ts` |
@@ -178,4 +181,4 @@ This matrix records coverage from the real ClickHouse E2E suite only. It does no
 | `query_params`, `query_id`, and `session_id` validation | `injection-transport-and-boundaries.e2e.test.ts` |
 | per-request `session_timeout` and continued-session `session_check` | `injection-transport-and-boundaries.e2e.test.ts` |
 | `createTemporaryTableRaw()` trusted-only boundary | `injection-transport-and-boundaries.e2e.test.ts` |
-| `ck.sql.join()` separator validation | `injection-transport-and-boundaries.e2e.test.ts` |
+| `csql.join()` separator validation | `injection-transport-and-boundaries.e2e.test.ts` |

@@ -77,18 +77,17 @@ The current E2E suite covers:
   - `alias`
   - aliased table interpolation in `` sql`...` ``
 - basic API
-  - `ck.sql('...')`
-  - `` ck.sql`...` ``
-  - `ck.sql.raw`
-  - `ck.sql.join`
-  - `ck.sql.identifier`
+  - `` csql`...` ``
+  - `csql.join`
+  - `csql.identifier`
   - `ck.decodeRow`
   - `ck.createSessionId`
 - query and builder behavior
   - `ck.and`, `ck.or`, `ck.not`
   - `ck.eq`, `ck.ne`, `ck.gt`, `ck.gte`, `ck.lt`, `ck.lte`
+  - `ck.contains`, `ck.startsWith`, `ck.endsWith`
+  - `ck.containsIgnoreCase`, `ck.startsWithIgnoreCase`, `ck.endsWithIgnoreCase`
   - `ck.like`, `ck.notLike`, `ck.ilike`, `ck.notIlike`
-  - `ck.escapeLike`
   - `ck.between`
   - `ck.inArray`, `ck.notInArray`
   - `ck.exists`, `ck.notExists`
@@ -116,19 +115,21 @@ The current E2E suite covers:
     - Unicode line separators passed as parameter values
   - value contexts
     - `ck.inArray(...)`
+    - `ck.contains`, `ck.startsWith`, `ck.endsWith`
+    - `ck.containsIgnoreCase`, `ck.startsWithIgnoreCase`, `ck.endsWithIgnoreCase`
     - `ck.like`, `ck.notLike`, `ck.ilike`, `ck.notIlike`
-    - `ck.escapeLike(...)` for literal `%` and `_`
+    - semantic helpers for literal `%`, `_`, and `\`
   - identifier contexts
-    - `ck.sql.identifier('...')`
-    - `ck.sql.identifier({ table, column, as })`
+    - `csql.identifier('...')`
+    - `csql.identifier({ table, column, as })`
     - `alias(...)`
     - temporary table names
     - `fn.withParams(...)` function names
     - `fn.table.call(...)` function names
   - raw SQL contexts
-    - `execute(string)`
-    - `command(string)`
-    - `ck.sql.raw(...)` fragments that would create stacked statements
+    - `` execute(csql`...`) ``
+    - `` command(csql`...`) ``
+    - stacked statements inside `` csql`...` ``
     - no-mutation checks after rejected stacked-query attempts
   - transport and trusted-only boundaries
     - `query_params` key validation
@@ -136,7 +137,7 @@ The current E2E suite covers:
     - `query_id` / `session_id` validation
     - per-request `session_timeout` and continued-session `session_check`
     - `createTemporaryTableRaw(name, definition)` single-statement boundary
-    - `ck.sql.join(...)` separator validation
+    - `csql.join(...)` separator validation
 - advanced ClickHouse SQL
   - scalar `WITH`
   - `ARRAY JOIN`

@@ -61,7 +61,7 @@ describe("ck-orm sql", function describeClickHouseOrmSql() {
           kind: "client_validation",
           executionState: "not_sent",
           message:
-            "[ck-orm] Raw SQL parameters do not support null or undefined. Use sql.raw('NULL') or builder expressions instead.",
+            "[ck-orm] Raw SQL parameters do not support null or undefined. Use csql`NULL` or builder expressions instead.",
         });
       }
     }

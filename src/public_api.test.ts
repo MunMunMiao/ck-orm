@@ -13,6 +13,7 @@ describe("ck-orm public api", function describePublicApi() {
 
   it("keeps core schema and query builders available from the package root", function testPublicBuilders() {
     expect("ck" in publicApi).toBe(true);
+    expect("csql" in publicApi).toBe(true);
     expect("chType" in publicApi).toBe(true);
     expect("chTable" in publicApi).toBe(true);
     expect("clickhouseClient" in publicApi).toBe(true);
@@ -35,7 +36,18 @@ describe("ck-orm public api", function describePublicApi() {
     expect(publicApi.ck.fn).toBe(publicApi.fn);
     expect(typeof publicApi.ck.eq).toBe("function");
     expect(typeof publicApi.ck.desc).toBe("function");
-    expect(typeof publicApi.ck.sql.raw).toBe("function");
+    expect(typeof publicApi.ck.contains).toBe("function");
+    expect(typeof publicApi.ck.startsWith).toBe("function");
+    expect(typeof publicApi.ck.endsWith).toBe("function");
+    expect(typeof publicApi.ck.containsIgnoreCase).toBe("function");
+    expect(typeof publicApi.ck.startsWithIgnoreCase).toBe("function");
+    expect(typeof publicApi.ck.endsWithIgnoreCase).toBe("function");
+    expect("escapeLike" in publicApi.ck).toBe(false);
+    expect("sql" in publicApi.ck).toBe(false);
+    expect(typeof publicApi.csql).toBe("function");
+    expect(typeof publicApi.csql.identifier).toBe("function");
+    expect(typeof publicApi.csql.join).toBe("function");
+    expect("raw" in publicApi.csql).toBe(false);
     expect(typeof publicApi.fn.table.call).toBe("function");
   });
 
@@ -46,6 +58,7 @@ describe("ck-orm public api", function describePublicApi() {
     expectType<RootApi.Predicate | undefined>(undefined);
     expectType<RootApi.Selection | undefined>(undefined);
     expectType<RootApi.Session | undefined>(undefined);
+    expectType<RootApi.SQLFragment | undefined>(undefined);
     // @ts-expect-error Grouping should remain private to clause internals
     expectType<RootApi.Grouping | undefined>(undefined);
   });

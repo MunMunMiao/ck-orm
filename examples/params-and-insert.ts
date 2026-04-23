@@ -1,4 +1,4 @@
-import { ck, clickhouseClient } from "./ck-orm";
+import { ck, clickhouseClient, csql } from "./ck-orm";
 import { commerceSchema, customerInvoice, orderRewardLog } from "./schema/commerce";
 
 const createCommerceDb = () => {
@@ -40,7 +40,7 @@ export const runRawQueryParamsExample = async () => {
   const commerceDb = createCommerceDb();
 
   return commerceDb.execute(
-    ck.sql`select user_id, reward_points from order_reward_log where user_id = {user_id:String} limit {limit:Int64}`,
+    csql`select user_id, reward_points from order_reward_log where user_id = {user_id:String} limit {limit:Int64}`,
     {
       query_params: {
         user_id: "user_100",

@@ -5,6 +5,7 @@ import { fn } from "./functions";
 import { eq } from "./query";
 import { type ClickHouseClientConfig, type ClickHouseQueryOptions, clickhouseClient } from "./runtime";
 import { chTable } from "./schema";
+import { sql } from "./sql";
 import { orderRewardLog } from "./test-schema/commerce";
 
 const originalFetch = globalThis.fetch;
@@ -287,7 +288,7 @@ describe("ck-orm runtime", function describeClickHouseOrmRuntime() {
         async (session) => {
           await session.createTemporaryTable(tmpScope);
           session.registerTempTable("tmp_manual");
-          await session.command("select 1");
+          await session.command(sql`select 1`);
           throw new Error("boom");
         },
         { session_id: "session_under_test" },
@@ -332,11 +333,11 @@ describe("ck-orm runtime", function describeClickHouseOrmRuntime() {
       schema: { orderRewardLog },
     });
 
-    const first = db.execute("select 1", {
+    const first = db.execute(sql`select 1`, {
       query_id: "shared_session_q1",
       session_id: "shared_session",
     });
-    const second = db.execute("select 2", {
+    const second = db.execute(sql`select 2`, {
       query_id: "shared_session_q2",
       session_id: "shared_session",
     });
@@ -387,10 +388,10 @@ describe("ck-orm runtime", function describeClickHouseOrmRuntime() {
       session_id: "default_session",
     });
 
-    const first = db.execute("select 1", {
+    const first = db.execute(sql`select 1`, {
       query_id: "default_session_q1",
     });
-    const second = db.execute("select 2", {
+    const second = db.execute(sql`select 2`, {
       query_id: "default_session_q2",
     });
 
@@ -435,13 +436,13 @@ describe("ck-orm runtime", function describeClickHouseOrmRuntime() {
       schema: { orderRewardLog },
     });
 
-    const outside = db.execute("select 1", {
+    const outside = db.execute(sql`select 1`, {
       query_id: "outside_shared_session",
       session_id: "shared_session",
     });
     const inside = db.runInSession(
       async (session) => {
-        await session.execute("select 2", {
+        await session.execute(sql`select 2`, {
           query_id: "inside_shared_session",
         });
       },
@@ -493,11 +494,11 @@ describe("ck-orm runtime", function describeClickHouseOrmRuntime() {
       session_max_concurrent_requests: 2,
     });
 
-    const first = db.execute("select 1", {
+    const first = db.execute(sql`select 1`, {
       query_id: "parallel_session_q1",
       session_id: "parallel_session",
     });
-    const second = db.execute("select 2", {
+    const second = db.execute(sql`select 2`, {
       query_id: "parallel_session_q2",
       session_id: "parallel_session",
     });
@@ -537,7 +538,7 @@ describe("ck-orm runtime", function describeClickHouseOrmRuntime() {
       password: "demo-pass",
     });
 
-    await db.execute("select 1");
+    await db.execute(sql`select 1`);
 
     const headers = new Headers(calls[0]?.init.headers);
     expect(headers.get("Authorization")).toBe("Basic ZGVtby11c2VyOmRlbW8tcGFzcw==");
@@ -554,7 +555,7 @@ describe("ck-orm runtime", function describeClickHouseOrmRuntime() {
       schema: { orderRewardLog },
     });
 
-    await db.execute("select 1");
+    await db.execute(sql`select 1`);
 
     const headers = new Headers(calls[0]?.init.headers);
     expect(headers.get("Authorization")).toBe("Basic ZGVtby11c2VyOmRlbW8tcGFzcw==");
@@ -577,7 +578,7 @@ describe("ck-orm runtime", function describeClickHouseOrmRuntime() {
       password: "demo-pass",
     });
 
-    await db.execute("select 1");
+    await db.execute(sql`select 1`);
 
     const headers = new Headers(calls[0]?.init.headers);
     expect(headers.get("Authorization")).toBe("Basic ZGVtby11c2VyOmRlbW8tcGFzcw==");
@@ -804,7 +805,7 @@ describe("ck-orm runtime", function describeClickHouseOrmRuntime() {
       },
     });
 
-    await db.execute("select 1", {
+    await db.execute(sql`select 1`, {
       http_headers: {
         Authorization: "Bearer per-call-attacker-token",
       },

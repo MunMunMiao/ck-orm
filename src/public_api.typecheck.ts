@@ -4,6 +4,7 @@ import {
   chType,
   ck,
   clickhouseClient,
+  csql,
   fn,
   type Order,
   type Predicate,
@@ -17,7 +18,7 @@ const users = chTable("users", {
 });
 const tempUsers = chTable("tmp_users", {
   id: chType.int32(),
-  name: chType.string().default(ck.sql`'anonymous'`),
+  name: chType.string().default(csql`'anonymous'`),
 });
 const stringArray = chType.array(chType.string());
 const nestedUsers = chType.nested({
@@ -36,17 +37,17 @@ db.runInSession(async (session: Session) => {
 });
 
 const nameSelection: Selection<string> = fn.toString(users.name);
-const constantSelection: Selection<number> = ck.expr(ck.sql.raw("1"), {
+const constantSelection: Selection<number> = ck.expr(csql`1`, {
   decoder: (value) => Number(value),
   sqlType: "UInt8",
 });
-const groupedSelection: Selection<number> = ck.expr(ck.sql.raw("toUInt8(1)"), {
+const groupedSelection: Selection<number> = ck.expr(csql`toUInt8(1)`, {
   decoder: (value) => Number(value),
   sqlType: "UInt8",
 });
 const idPredicate: Predicate = ck.eq(users.id, 1);
 const sortOrder: Order = ck.asc(nameSelection);
-const namespaceFlag: Selection<boolean> = ck.expr<boolean>(ck.sql.raw("1"), {
+const namespaceFlag: Selection<boolean> = ck.expr<boolean>(csql`1`, {
   decoder: (value) => Number(value) === 1,
   sqlType: "UInt8",
 });
@@ -54,6 +55,12 @@ const namespacePredicate: Predicate = ck.eq(users.id, 1);
 const namespacePredicateGroup: Predicate = ck.and(namespacePredicate, ck.eq(users.id, 2));
 const namespaceSortOrder: Order = ck.desc(namespaceFlag);
 const namespaceCount: Selection<string> = ck.fn.count();
+const namespaceContains: Predicate = ck.contains(users.name, "user_100%");
+const namespaceStartsWith: Predicate = ck.startsWith(users.name, "arch_");
+const namespaceEndsWith: Predicate = ck.endsWith(users.name, "_done");
+const namespaceContainsIgnoreCase: Predicate = ck.containsIgnoreCase(users.name, "user_100%");
+const namespaceStartsWithIgnoreCase: Predicate = ck.startsWithIgnoreCase(users.name, "arch_");
+const namespaceEndsWithIgnoreCase: Predicate = ck.endsWithIgnoreCase(users.name, "_done");
 
 const groupedSelections = [users.id, groupedSelection] satisfies Selection[];
 const orderedSelections = [sortOrder, ck.asc(users.id), ck.asc(groupedSelection)] satisfies Order[];
@@ -73,6 +80,12 @@ const builder = db
 void builder;
 void namespacePredicateGroup;
 void namespaceCount;
+void namespaceContains;
+void namespaceStartsWith;
+void namespaceEndsWith;
+void namespaceContainsIgnoreCase;
+void namespaceStartsWithIgnoreCase;
+void namespaceEndsWithIgnoreCase;
 void stringArray;
 void nestedUsers;
 
@@ -117,6 +130,15 @@ nameSelection.sourceKey;
 idPredicate.compile;
 // @ts-expect-error Predicate should not expose decoder
 idPredicate.decoder;
+
+// @ts-expect-error escapeLike should no longer be part of the public ck namespace
+ck.escapeLike("literal");
+
+// @ts-expect-error ck.sql should no longer be part of the public ck namespace
+ck.sql;
+
+// @ts-expect-error csql only supports tagged-template usage
+csql("select 1");
 
 // @ts-expect-error SqlExpression should remain internal to the package root
 const hiddenSqlExpression: RootApi.SqlExpression | undefined = undefined;
