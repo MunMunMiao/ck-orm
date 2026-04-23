@@ -61,6 +61,21 @@ const namespaceEndsWith: Predicate = ck.endsWith(users.name, "_done");
 const namespaceContainsIgnoreCase: Predicate = ck.containsIgnoreCase(users.name, "user_100%");
 const namespaceStartsWithIgnoreCase: Predicate = ck.startsWithIgnoreCase(users.name, "arch_");
 const namespaceEndsWithIgnoreCase: Predicate = ck.endsWithIgnoreCase(users.name, "_done");
+const jsonArraySelection: Selection<string[]> = fn.jsonExtract(csql`payload`, stringArray, "regulatory");
+const namespaceJsonArraySelection: Selection<string[]> = ck.fn.jsonExtract(csql`payload`, stringArray);
+const arraySelection: Selection<string[]> = fn.array<string>("vip", "pro");
+const arrayConcatSelection: Selection<string[]> = fn.arrayConcat<string>(["vip"], ["pro"]);
+const arrayElementSelection: Selection<string> = fn.arrayElement<string>(arraySelection, 1);
+const arrayElementOrNullSelection: Selection<string | null> = fn.arrayElementOrNull<string>(arraySelection, 2);
+const arraySliceSelection: Selection<string[]> = fn.arraySlice<string>(arraySelection, 1, 2);
+const arrayFlattenSelection: Selection<string[]> = fn.arrayFlatten<string>([["vip"], ["pro"]]);
+const arrayIntersectSelection: Selection<string[]> = fn.arrayIntersect<string>(["vip"], ["pro", "vip"]);
+const arrayIndexSelection: Selection<string> = fn.indexOf(arraySelection, "vip");
+const arrayLengthSelection: Selection<string> = fn.length(arraySelection);
+const notEmptySelection: Selection<boolean> = fn.notEmpty(arraySelection);
+const targetOrderTupleSelection: Selection<unknown> = fn.arrayJoin(fn.arrayZip([10001], [9001]));
+const tupleElementSelection: Selection<string> = fn.tupleElement<string>(fn.tuple(users.id, users.name), 2);
+const namespaceTupleElementSelection: Selection<number> = ck.fn.tupleElement<number>(fn.tuple(users.id, users.name), 1);
 
 const groupedSelections = [users.id, groupedSelection] satisfies Selection[];
 const orderedSelections = [sortOrder, ck.asc(users.id), ck.asc(groupedSelection)] satisfies Order[];
@@ -86,6 +101,21 @@ void namespaceEndsWith;
 void namespaceContainsIgnoreCase;
 void namespaceStartsWithIgnoreCase;
 void namespaceEndsWithIgnoreCase;
+void jsonArraySelection;
+void namespaceJsonArraySelection;
+void arraySelection;
+void arrayConcatSelection;
+void arrayElementSelection;
+void arrayElementOrNullSelection;
+void arraySliceSelection;
+void arrayFlattenSelection;
+void arrayIntersectSelection;
+void arrayIndexSelection;
+void arrayLengthSelection;
+void notEmptySelection;
+void targetOrderTupleSelection;
+void tupleElementSelection;
+void namespaceTupleElementSelection;
 void stringArray;
 void nestedUsers;
 
@@ -139,6 +169,9 @@ ck.sql;
 
 // @ts-expect-error csql only supports tagged-template usage
 csql("select 1");
+
+// @ts-expect-error jsonExtract return type must come from chType
+fn.jsonExtract(csql`payload`, "Array(String)");
 
 // @ts-expect-error SqlExpression should remain internal to the package root
 const hiddenSqlExpression: RootApi.SqlExpression | undefined = undefined;

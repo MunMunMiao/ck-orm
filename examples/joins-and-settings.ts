@@ -28,7 +28,7 @@ export const buildDefaultLeftJoinExample = () => {
 
 export const runDefaultLeftJoinExample = async () => {
   const { query } = buildDefaultLeftJoinExample();
-  return query;
+  return query.execute();
 };
 
 export const runClickHouseDefaultJoinExample = async () => {
@@ -40,7 +40,8 @@ export const runClickHouseDefaultJoinExample = async () => {
   return rawDefaultDb
     .select()
     .from(customerInvoice)
-    .leftJoin(orderRewardLog, ck.eq(customerInvoice.user_id, orderRewardLog.user_id));
+    .leftJoin(orderRewardLog, ck.eq(customerInvoice.user_id, orderRewardLog.user_id))
+    .execute();
 };
 
 export const buildExplicitSelectJoinExample = () => {

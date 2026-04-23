@@ -33,7 +33,7 @@ export const buildDirectValueQueryExample = () => {
 
 export const runDirectValueQueryExample = async () => {
   const { query } = buildDirectValueQueryExample();
-  return query;
+  return query.execute();
 };
 
 export const runRawQueryParamsExample = async () => {

@@ -54,5 +54,5 @@ export const buildRewardSummaryWithLatestEventExample = () => {
 
 export const runRewardSummaryWithLatestEventExample = async () => {
   const { query } = buildRewardSummaryWithLatestEventExample();
-  return query;
+  return query.execute();
 };

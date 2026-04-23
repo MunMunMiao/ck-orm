@@ -186,6 +186,7 @@ export type {
   DecodeError,
 } from "./errors";
 export { isClickHouseOrmError, isDecodeError } from "./errors";
+export type { JsonPathSegment } from "./functions";
 export { fn } from "./functions";
 export type {
   ClickHouseOrmInstrumentation,

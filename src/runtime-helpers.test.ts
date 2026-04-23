@@ -104,6 +104,7 @@ describe("ck-orm runtime/sql-scan", function describeSqlScan() {
   });
 
   it("treats ClickHouse heredoc bodies as string literal boundaries", function testHeredocBoundary() {
+    expect(normalizeSingleStatementSql("select $ as dollar;", "x")).toBe("select $ as dollar");
     expect(normalizeSingleStatementSql("select $sql$select 1; select 2$sql$ as body;", "x")).toBe(
       "select $sql$select 1; select 2$sql$ as body",
     );
@@ -111,6 +112,7 @@ describe("ck-orm runtime/sql-scan", function describeSqlScan() {
       "select $tag_1$-- ;\n/* ; */$tag_1$",
     );
     expect(() => normalizeSingleStatementSql("select $sql$;$sql$; select 2", "boom")).toThrow("boom");
+    expect(() => normalizeSingleStatementSql("select 1; $sql$select 2$sql$", "boom")).toThrow("boom");
   });
 });
 

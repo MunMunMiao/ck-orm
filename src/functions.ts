@@ -4,6 +4,7 @@ import {
   toNumber as toNumberCoercion,
   toStringValue as toStringCoercion,
 } from "./coercion";
+import type { AnyColumn } from "./columns";
 import { createDecodeError } from "./errors";
 import { assertValidSqlIdentifier } from "./internal/identifier";
 import { createTableFunctionSource } from "./query";
@@ -13,6 +14,7 @@ import {
   createExpression,
   type Decoder,
   ensureExpression,
+  type InferData,
   joinSqlParts,
   passThroughDecoder,
   type Selection,
@@ -20,6 +22,8 @@ import {
 import { sql } from "./sql";
 
 /* ── shared helpers ────────────────────────────────────────────── */
+
+export type JsonPathSegment = string | number | bigint;
 
 const compileFunctionCall = (name: string, args: readonly unknown[], ctx: BuildContext) => {
   assertValidSqlIdentifier(name, "function");
@@ -72,12 +76,44 @@ const stringDecoder: Decoder<string> = toStringCoercion;
 const dateDecoder: Decoder<Date> = toDateCoercion;
 const booleanDecoder: Decoder<boolean> = toBooleanCoercion;
 
+const arrayDecoder = <TData>(label: string): Decoder<TData[]> => {
+  return (value) => {
+    if (!Array.isArray(value)) {
+      throw createDecodeError(`Cannot convert value to ${label} array: ${String(value)}`, value);
+    }
+    return value as TData[];
+  };
+};
+
 const resolveAggregateDecoder = (expression?: unknown): Decoder<number | string> => {
   const wrapped = expression ? ensureExpression(expression) : undefined;
   if (wrapped && isFloatingSqlType(wrapped.sqlType)) {
     return numberDecoder;
   }
   return stringDecoder;
+};
+
+const createArrayExpression = <TData>(
+  name: string,
+  args: readonly unknown[],
+  sqlType = "Array",
+): Selection<TData[]> => {
+  return createFunctionExpression<TData[]>(name, args, {
+    decoder: arrayDecoder<TData>(name),
+    sqlType,
+  });
+};
+
+const createJsonExtractExpression = <TColumn extends AnyColumn>(
+  json: unknown,
+  returnType: TColumn,
+  path: readonly JsonPathSegment[],
+): Selection<InferData<TColumn>> => {
+  return createExpression({
+    compile: (ctx) => compileFunctionCall("JSONExtract", [json, ...path, returnType.sqlType], ctx),
+    decoder: (value) => returnType.mapFromDriverValue(value) as InferData<TColumn>,
+    sqlType: returnType.sqlType,
+  });
 };
 
 /* ── scalar functions ──────────────────────────────────────────── */
@@ -88,6 +124,13 @@ const scalarFns = {
   },
   withParams<TData = unknown>(name: string, parameters: readonly unknown[], ...args: unknown[]): Selection<TData> {
     return createParameterizedFunctionExpression<TData>(name, parameters, args);
+  },
+  jsonExtract<TColumn extends AnyColumn>(
+    json: unknown,
+    returnType: TColumn,
+    ...path: JsonPathSegment[]
+  ): Selection<InferData<TColumn>> {
+    return createJsonExtractExpression(json, returnType, path);
   },
   toString(expression: unknown, timezone?: unknown): Selection<string> {
     const args = timezone === undefined ? [expression] : [expression, timezone];
@@ -136,15 +179,58 @@ const scalarFns = {
     });
   },
   arrayZip(...args: unknown[]): Selection<unknown[]> {
-    return createFunctionExpression("arrayZip", args, {
-      decoder: (value) => {
-        if (!Array.isArray(value)) {
-          throw createDecodeError(`Cannot convert value to arrayZip array: ${String(value)}`, value);
-        }
-        return value;
-      },
-      sqlType: "Array",
+    return createArrayExpression<unknown>("arrayZip", args);
+  },
+  array<TData = unknown>(first: unknown, ...rest: unknown[]): Selection<TData[]> {
+    return createArrayExpression<TData>("array", [first, ...rest]);
+  },
+  arrayConcat<TData = unknown>(...arrays: unknown[]): Selection<TData[]> {
+    return createArrayExpression<TData>("arrayConcat", arrays);
+  },
+  arrayElement<TData = unknown>(array: unknown, index: unknown): Selection<TData> {
+    return createFunctionExpression<TData>("arrayElement", [array, index]);
+  },
+  arrayElementOrNull<TData = unknown>(array: unknown, index: unknown): Selection<TData | null> {
+    return createFunctionExpression<TData | null>("arrayElementOrNull", [array, index]);
+  },
+  arraySlice<TData = unknown>(array: unknown, offset: unknown, length?: unknown): Selection<TData[]> {
+    const args = length === undefined ? [array, offset] : [array, offset, length];
+    return createArrayExpression<TData>("arraySlice", args);
+  },
+  arrayFlatten<TData = unknown>(array: unknown): Selection<TData[]> {
+    return createArrayExpression<TData>("arrayFlatten", [array]);
+  },
+  arrayIntersect<TData = unknown>(first: unknown, ...rest: unknown[]): Selection<TData[]> {
+    return createArrayExpression<TData>("arrayIntersect", [first, ...rest]);
+  },
+  indexOf(array: unknown, value: unknown): Selection<string> {
+    return createFunctionExpression("indexOf", [array, value], {
+      decoder: stringDecoder,
+      sqlType: "UInt64",
     });
+  },
+  length(value: unknown): Selection<string> {
+    return createFunctionExpression("length", [value], {
+      decoder: stringDecoder,
+      sqlType: "UInt64",
+    });
+  },
+  notEmpty(value: unknown): Selection<boolean> {
+    return createFunctionExpression("notEmpty", [value], {
+      decoder: booleanDecoder,
+      sqlType: "Bool",
+    });
+  },
+  arrayJoin<TData = unknown>(array: unknown): Selection<TData> {
+    return createFunctionExpression<TData>("arrayJoin", [array]);
+  },
+  tupleElement<TData = unknown>(
+    tuple: unknown,
+    indexOrName: JsonPathSegment,
+    defaultValue?: unknown,
+  ): Selection<TData> {
+    const args = defaultValue === undefined ? [tuple, indexOrName] : [tuple, indexOrName, defaultValue];
+    return createFunctionExpression<TData>("tupleElement", args);
   },
   not(expression: unknown): Selection<boolean> {
     return createFunctionExpression("not", [expression], {

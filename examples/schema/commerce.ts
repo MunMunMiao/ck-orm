@@ -39,6 +39,19 @@ export const orderRewardLog = chTable(
     event_type: chType.string(),
     status: chType.int16(),
     region: chType.string(),
+    tags: chType.array(chType.string()),
+    attributes: chType.map(chType.string(), chType.string()),
+    metadata: chType.json<{
+      regulatory?: string[];
+      risk?: {
+        score?: number;
+        level?: string;
+      };
+      orders?: Array<{
+        ticket: string;
+        login: string;
+      }>;
+    }>(),
     created_at: chType.int32(),
     event_date: chType.int32(),
     _peerdb_synced_at: chType.dateTime64(9),

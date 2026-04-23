@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { ck, csql, fn } from "./ck-orm";
+import { chType, ck, csql, fn } from "./ck-orm";
 import { createE2EDb, users, webEvents } from "./shared";
 import { describeE2E, expectDate, expectPresent } from "./test-helpers";
 
@@ -114,6 +114,119 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
       ["segment_0", 4],
     ]);
     expect(presentCompositeRow.isNotVip).toBe(false);
+  });
+
+  it("supports typed JSONExtract, arrayJoin and array helper functions", async function testStructuredFunctionHelpers() {
+    const db = createE2EDb();
+    const payload = JSON.stringify({
+      account: {
+        audits: [
+          {
+            region: "EU",
+          },
+          {
+            region: null,
+          },
+        ],
+        tags: ["vip", "pro"],
+        score: 12.5,
+      },
+      orders: [
+        {
+          ticket: 10001,
+        },
+        {
+          ticket: 10002,
+        },
+      ],
+    });
+
+    const [jsonRow] = await db.select({
+      tags: fn.jsonExtract(payload, chType.array(chType.string()), "account", "tags").as("tags"),
+      score: fn.jsonExtract(payload, chType.float64(), "account", "score").as("score"),
+      firstTicket: fn.jsonExtract(payload, chType.int64(), "orders", 1, "ticket").as("first_ticket"),
+      secondTicket: fn.jsonExtract(payload, chType.int64(), "orders", 2, "ticket").as("second_ticket"),
+      nullableRegion: fn
+        .jsonExtract(payload, chType.nullable(chType.string()), "account", "audits", 2, "region")
+        .as("nullable_region"),
+    });
+
+    expect(expectPresent(jsonRow, "json row")).toEqual({
+      tags: ["vip", "pro"],
+      score: 12.5,
+      firstTicket: "10001",
+      secondTicket: "10002",
+      nullableRegion: null,
+    });
+
+    const [arrayRow] = await db.select({
+      concat: fn.arrayConcat<string>(["vip"], ["pro"]).as("concat"),
+      secondItem: fn.arrayElement<string>(fn.array("vip", "pro"), 2).as("second_item"),
+      missingItem: fn.arrayElementOrNull<string>(fn.array("vip"), 2).as("missing_item"),
+      slice: fn.arraySlice<string>(["vip", "pro", "raw"], 2, 2).as("slice"),
+      openEndedSlice: fn.arraySlice<string>(["vip", "pro", "raw"], 2).as("open_ended_slice"),
+      flattened: fn.arrayFlatten<string>([["vip"], ["pro"]]).as("flattened"),
+      intersected: fn.arrayIntersect<string>(["vip", "pro"], ["pro", "raw"]).as("intersected"),
+      proIndex: fn.indexOf(["vip", "pro"], "pro").as("pro_index"),
+      tagCount: fn.length(["vip", "pro"]).as("tag_count"),
+      hasTags: fn.notEmpty(["vip"]).as("has_tags"),
+    });
+
+    expect(expectPresent(arrayRow, "array row")).toEqual({
+      concat: ["vip", "pro"],
+      secondItem: "pro",
+      missingItem: null,
+      slice: ["pro", "raw"],
+      openEndedSlice: ["pro", "raw"],
+      flattened: ["vip", "pro"],
+      intersected: ["pro"],
+      proIndex: "2",
+      tagCount: "2",
+      hasTags: true,
+    });
+
+    const targetOrderTuples = db.$with("target_order_tuples").as(
+      db.select({
+        targetOrder: fn.arrayJoin(fn.arrayZip([10001, 10002], [9001, 9002])).as("target_order"),
+      }),
+    );
+
+    const tupleRows = await db
+      .with(targetOrderTuples)
+      .select({
+        orderTicket: fn.tupleElement<string>(targetOrderTuples.targetOrder, 1).as("order_ticket"),
+        login: fn.tupleElement<string>(targetOrderTuples.targetOrder, 2).as("login"),
+      })
+      .from(targetOrderTuples);
+
+    expect(tupleRows).toEqual([
+      {
+        orderTicket: "10001",
+        login: "9001",
+      },
+      {
+        orderTicket: "10002",
+        login: "9002",
+      },
+    ]);
+
+    const [tupleElementRow] = await db.select({
+      namedValue: fn
+        .tupleElement<string>(csql`CAST(('alice', 7), 'Tuple(name String, score UInt8)')`, "name")
+        .as("named_value"),
+      defaultedValue: fn.tupleElement<string>(csql`tuple('only')`, 2, "fallback").as("defaulted_value"),
+    });
+
+    expect(expectPresent(tupleElementRow, "tuple element row")).toEqual({
+      namedValue: "alice",
+      defaultedValue: "fallback",
+    });
+
+    const emptyJoinRows = await db.select({
+      value: fn.arrayJoin<string>([]).as("value"),
+    });
+
+    expect(emptyJoinRows).toEqual([]);
   });
 
   it("supports tableFn.call against the numbers table function", async function testTableFunction() {

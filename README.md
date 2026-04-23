@@ -33,6 +33,7 @@ The design goal is straightforward: make everyday ClickHouse access easier to st
 
 - [Installation](#installation)
 - [Quick start](#quick-start)
+- [Examples](#examples)
 - [Mental model](#mental-model)
 - [Schema DSL](#schema-dsl)
 - [Client configuration](#client-configuration)
@@ -56,13 +57,6 @@ bun add ck-orm
 ```bash
 npm install ck-orm
 ```
-
-When you change public behavior, update these files together so the docs do not drift away from the tested contract:
-
-- [`README.md`](./README.md)
-- [`examples/README.md`](./examples/README.md) and any touched example files
-- [`src/runtime.typecheck.ts`](./src/runtime.typecheck.ts)
-- [`e2e/api-matrix.md`](./e2e/api-matrix.md)
 
 ## Quick start
 
@@ -142,6 +136,46 @@ const rows = await query;
 
 Builder queries are thenable, so `await query` executes the query directly.
 
+## Examples
+
+The README is the reference path. The [`examples/`](./examples) directory is the copy-and-adapt path.
+
+Start here by task:
+
+| Task | Example |
+| --- | --- |
+| Basic builder query, filters, aggregate, `FINAL` | [`examples/basic-select.ts`](./examples/basic-select.ts) |
+| Schema options, column metadata, inferred row/insert types | [`examples/schema-and-types.ts`](./examples/schema-and-types.ts) |
+| Inserts, raw `query_params`, direct value binding | [`examples/params-and-insert.ts`](./examples/params-and-insert.ts) |
+| Raw SQL templates, identifiers, table functions | [`examples/raw-sql.ts`](./examples/raw-sql.ts) |
+| JSON extraction, array helpers, `arrayJoin(arrayZip(...))`, tuple scopes | [`examples/json-array-functions.ts`](./examples/json-array-functions.ts) |
+| CTEs, subqueries, joins | [`examples/cte-and-subquery.ts`](./examples/cte-and-subquery.ts) |
+| Left join null semantics and `withSettings()` | [`examples/joins-and-settings.ts`](./examples/joins-and-settings.ts) |
+| Session temporary tables | [`examples/session-temp-table.ts`](./examples/session-temp-table.ts) |
+| Large filter scopes with session temp tables and streaming export | [`examples/large-scope-session.ts`](./examples/large-scope-session.ts) |
+| Runtime methods, logger, instrumentation, endpoint helpers | [`examples/runtime-observability.ts`](./examples/runtime-observability.ts) |
+| Advanced compiled-query integration | [`examples/advanced-compiled-query.ts`](./examples/advanced-compiled-query.ts) |
+| Count modes and error guards | [`examples/count-and-errors.ts`](./examples/count-and-errors.ts) |
+| Cross-system enrichment with two ClickHouse clients | [`examples/cross-system-order-enrichment.ts`](./examples/cross-system-order-enrichment.ts) |
+| Multi-CTE analytical lifecycle query | [`examples/fulfillment-order-lifecycle.ts`](./examples/fulfillment-order-lifecycle.ts) |
+
+Public API coverage by guide:
+
+| API family | README section | Example files |
+| --- | --- | --- |
+| `chType`, `chTable`, `alias`, model inference | [Schema DSL](#schema-dsl) | [`schema-and-types.ts`](./examples/schema-and-types.ts), [`schema/commerce.ts`](./examples/schema/commerce.ts), [`schema/fulfillment.ts`](./examples/schema/fulfillment.ts) |
+| `clickhouseClient`, connection config, settings | [Client configuration](#client-configuration) | [`basic-select.ts`](./examples/basic-select.ts), [`runtime-observability.ts`](./examples/runtime-observability.ts) |
+| `select`, joins, filters, grouping, ordering, `limitBy`, CTEs | [Query builder](#query-builder) | [`basic-select.ts`](./examples/basic-select.ts), [`cte-and-subquery.ts`](./examples/cte-and-subquery.ts), [`fulfillment-order-lifecycle.ts`](./examples/fulfillment-order-lifecycle.ts) |
+| `count`, `count().toSafe()`, `count().toMixed()` | [`db.count()`](#dbcount) | [`count-and-errors.ts`](./examples/count-and-errors.ts) |
+| `insert`, `insertJsonEachRow` | [Writes](#writes) | [`params-and-insert.ts`](./examples/params-and-insert.ts), [`large-scope-session.ts`](./examples/large-scope-session.ts) |
+| `csql`, `ck.expr`, `query_params`, identifiers | [Raw SQL](#raw-sql) | [`raw-sql.ts`](./examples/raw-sql.ts), [`params-and-insert.ts`](./examples/params-and-insert.ts) |
+| `fn.*` scalar, aggregate, JSON, array, tuple, table helpers | [Functions and table functions](#functions-and-table-functions) | [`json-array-functions.ts`](./examples/json-array-functions.ts), [`raw-sql.ts`](./examples/raw-sql.ts), [`activity-monthly-export.ts`](./examples/activity-monthly-export.ts) |
+| `runInSession`, temporary tables, session concurrency | [Sessions and temporary tables](#sessions-and-temporary-tables) | [`session-temp-table.ts`](./examples/session-temp-table.ts), [`large-scope-session.ts`](./examples/large-scope-session.ts) |
+| `execute`, `stream`, `command`, `ping`, `replicasStatus`, `withSettings` | [Runtime methods](#runtime-methods) | [`runtime-observability.ts`](./examples/runtime-observability.ts), [`raw-sql.ts`](./examples/raw-sql.ts) |
+| `executeCompiled`, `iteratorCompiled`, `ck.decodeRow`, `ck.createSessionId`, `CompiledQuery` | [Runtime methods](#runtime-methods) | [`advanced-compiled-query.ts`](./examples/advanced-compiled-query.ts) |
+| logger, tracing, instrumentation | [Observability](#observability) | [`runtime-observability.ts`](./examples/runtime-observability.ts) |
+| error guards and error fields | [Error model](#error-model) | [`count-and-errors.ts`](./examples/count-and-errors.ts) |
+
 ## Mental model
 
 Use `ck-orm` with these boundaries in mind:
@@ -173,14 +207,17 @@ Use `chTable(name, columns, options?)` to define a table.
 Examples in this section assume:
 
 ```ts
-import { chTable, chType, ck } from "ck-orm";
+import { chTable, chType, csql } from "ck-orm";
 ```
 
 ```ts
 const orderRewardLog = chTable("order_reward_log", {
   id: chType.int32(),
   user_id: chType.string(),
+  order_id: chType.int64(),
   reward_points: chType.decimal(20, 5),
+  created_at: chType.int32(),
+  _peerdb_version: chType.uint64(),
 });
 ```
 
@@ -192,11 +229,15 @@ const orderRewardLog = chTable(
   {
     id: chType.int32(),
     user_id: chType.string(),
+    order_id: chType.int64(),
     reward_points: chType.decimal(20, 5),
+    created_at: chType.int32(),
+    _peerdb_version: chType.uint64(),
   },
   (table) => ({
     engine: "ReplacingMergeTree",
-    orderBy: [table.user_id, table.id],
+    orderBy: [table.user_id, table.created_at, table.id],
+    versionColumn: table._peerdb_version,
   }),
 );
 ```
@@ -221,6 +262,13 @@ Column definitions can also carry DDL metadata directly:
 - `.comment(text)`
 - `.codec(expr)`
 - `.ttl(expr)`
+
+Schema metadata has two jobs in `ck-orm`:
+
+- it drives typed queries, insert validation, and result decoding
+- it can render structured DDL for session temporary tables
+
+It does not automatically migrate or synchronize production ClickHouse tables. Keep production DDL in your migration tool, and keep `chTable(...)` aligned with the schema your application reads and writes.
 
 Example:
 
@@ -301,6 +349,25 @@ Use `chType.*` for schema column builders. The schema DSL covers the common Clic
 `int64` and `uint64` default to TypeScript `string` in schema-driven reads, writes, and inferred models so 64-bit values stay exact across the ClickHouse JSON wire format and JavaScript runtimes. When you explicitly want `bigint`, opt in with your own decoder such as `mapWith((value) => BigInt(String(value)))`.
 
 ClickHouse does not support `Nullable(Array(...))`, `Nullable(Map(...))`, or `Nullable(Tuple(...))`. `ck-orm` rejects those shapes at schema-definition time. Put `nullable(...)` inside the composite type instead, for example `chType.array(chType.nullable(chType.string()))`.
+
+### Column Type Cookbook
+
+Common schema shapes and their TypeScript values:
+
+| ClickHouse shape | Schema | TypeScript value shape |
+| --- | --- | --- |
+| enum | `chType.enum8<"new" | "paid">({ new: 1, paid: 2 })` | `"new" | "paid"` |
+| low-cardinality string | `chType.lowCardinality(chType.string())` | `string` |
+| nullable decimal | `chType.nullable(chType.decimal(18, 5))` | `string | null` |
+| array | `chType.array(chType.string())` | `string[]` |
+| nullable array item | `chType.array(chType.nullable(chType.string()))` | `(string | null)[]` |
+| tuple | `chType.tuple(chType.string(), chType.int32())` | `[string, number]` |
+| map | `chType.map(chType.string(), chType.string())` | `Record<string, string>` |
+| nested object array | `chType.nested({ sku: chType.string(), quantity: chType.float64() })` | `{ sku: string; quantity: number }[]` |
+| variant | `chType.variant(chType.string(), chType.int32())` | `string | number` |
+| JSON | `chType.json<{ risk?: { score?: number } }>()` | `{ risk?: { score?: number } }` |
+
+Insert rows use the same inferred shape as `typeof table.$inferInsert`, except columns with ClickHouse defaults or generated expressions can be omitted when you call `insert(table).values(...)`.
 
 ## Client configuration
 
@@ -650,6 +717,8 @@ for await (const row of query.iterator()) {
 }
 ```
 
+Use `.execute()` in application examples when you want the execution point to be visually obvious. Direct `await query` is supported for Drizzle-style ergonomics and is useful once the team is familiar with builder queries being thenable.
+
 `query.iterator()` uses the same session-aware concurrency rules as `db.stream()`: if the query targets a `session_id`, the slot stays occupied until iteration finishes or the iterator is closed early.
 
 ### Subqueries and CTEs
@@ -920,23 +989,150 @@ Common helpers include:
 - `fn.max()`
 - `fn.uniqExact()`
 - `fn.coalesce()`
+- `fn.jsonExtract()`
 - `fn.tuple()`
 - `fn.arrayZip()`
+- `fn.arrayJoin()`
+- `fn.tupleElement()`
+- `fn.array()`
+- `fn.arrayConcat()`
+- `fn.arrayElement()`
+- `fn.arrayElementOrNull()`
+- `fn.arraySlice()`
+- `fn.arrayFlatten()`
+- `fn.arrayIntersect()`
+- `fn.indexOf()`
+- `fn.length()`
+- `fn.notEmpty()`
 - `fn.not()`
 
 `fn.call(name, ...)` and `fn.withParams(name, ...)` validate `name` as a SQL identifier before compilation.
+
+`fn.jsonExtract(json, returnType, ...path)` only accepts `chType.*` return types, so the ClickHouse return type and the TypeScript decoder stay together:
+
+The JSON and array snippets below use the richer example schema from [`examples/schema/commerce.ts`](./examples/schema/commerce.ts), where `orderRewardLog.metadata` is a `JSON` column and `orderRewardLog.tags` is `Array(String)`.
+
+```ts
+import { chType, ck, fn } from "ck-orm";
+
+const regulatory = fn.jsonExtract(
+  orderRewardLog.metadata,
+  chType.array(chType.string()),
+  "regulatory",
+);
+
+const riskScore = fn.jsonExtract(
+  orderRewardLog.metadata,
+  chType.nullable(chType.float64()),
+  "risk",
+  "score",
+);
+
+const filtered = db
+  .select({
+    orderId: orderRewardLog.order_id,
+    regulatoryRegions: regulatory.as("regulatory_regions"),
+    riskScore: riskScore.as("risk_score"),
+  })
+  .from(orderRewardLog)
+  .where(ck.hasAny(regulatory, ["AU", "EU"]), ck.gte(riskScore, 80));
+```
+
+Path segments are ClickHouse JSON path arguments. Use string keys for object fields and number or bigint indexes for array positions:
+
+```ts
+// Reads metadata.orders[1].ticket from a JSON document such as:
+// { "orders": [{ "ticket": "900001" }, { "ticket": "900002" }] }
+const firstTicket = fn.jsonExtract(
+  orderRewardLog.metadata,
+  chType.int64(),
+  "orders",
+  1,
+  "ticket",
+);
+```
+
+`fn.arrayJoin(array)` maps to ClickHouse `arrayJoin` and expands one input row into one row per array element. Pair it with `fn.arrayZip(...)` and `fn.tupleElement(...)` when two arrays must stay positionally matched:
+
+```ts
+import { ck, fn } from "ck-orm";
+
+const orderIds = ["900001", "900002"];
+const userIds = ["user_100", "user_200"];
+
+const targetPairs = db.$with("target_pairs").as(
+  db.select({
+    pair: fn.arrayJoin(fn.arrayZip(orderIds, userIds)).as("pair"),
+  }),
+);
+
+const targetOrders = db.$with("target_orders").as(
+  db
+    .with(targetPairs)
+    .select({
+      orderId: fn.tupleElement<string>(targetPairs.pair, 1).as("order_id"),
+      userId: fn.tupleElement<string>(targetPairs.pair, 2).as("user_id"),
+    })
+    .from(targetPairs),
+);
+
+const scopedPairs = db
+  .select({
+    pair: fn.tuple(targetOrders.orderId, targetOrders.userId).as("pair"),
+  })
+  .from(targetOrders)
+  .as("scoped_pairs");
+
+const query = db
+  .with(targetPairs, targetOrders)
+  .select({
+    orderId: orderRewardLog.order_id,
+    userId: orderRewardLog.user_id,
+  })
+  .from(orderRewardLog)
+  .where(
+    ck.inArray(fn.tuple(orderRewardLog.order_id, orderRewardLog.user_id), scopedPairs),
+  );
+```
+
+The important part is the semantics: `arrayZip(orderIds, userIds)` preserves positional pairs, `arrayJoin(...)` expands them into rows, and `tupleElement(..., 1/2)` reads each side of the pair.
+
+Use tuple membership for compound keys. Two independent `IN` predicates produce a cross product and can match pairs that were never requested:
+
+```ts
+// Avoid this when orderId and userId must stay paired.
+const wrong = ck.and(
+  ck.inArray(orderRewardLog.order_id, orderIds),
+  ck.inArray(orderRewardLog.user_id, userIds),
+);
+```
+
+For pair semantics, compare one tuple against a tuple-producing subquery:
+
+```ts
+const right = ck.inArray(
+  fn.tuple(orderRewardLog.order_id, orderRewardLog.user_id),
+  scopedPairs,
+);
+```
+
+Array helpers return typed `Selection` values, so they compose in projections, filters, groups, and joins:
 
 ```ts
 import { ck, fn } from "ck-orm";
 
 const query = db
   .select({
-    month: fn.toStartOfMonth(orderRewardLog.created_at).as("month"),
-    totalRewardPoints: fn.sum(orderRewardLog.reward_points).as(
-      "total_reward_points",
+    firstTag: fn.arrayElement<string>(orderRewardLog.tags, 1).as("first_tag"),
+    maybeSecondTag: fn.arrayElementOrNull<string>(orderRewardLog.tags, 2).as(
+      "maybe_second_tag",
     ),
+    topTags: fn.arraySlice<string>(orderRewardLog.tags, 1, 3).as("top_tags"),
+    tagCount: fn.length(orderRewardLog.tags).as("tag_count"),
+    hasTags: fn.notEmpty(orderRewardLog.tags).as("has_tags"),
   })
-  .from(orderRewardLog);
+  .from(orderRewardLog)
+  .where(ck.hasAny(orderRewardLog.tags, ["vip", "reward"]));
 ```
 
 ### `fn.table`
@@ -986,6 +1182,44 @@ await db.runInSession(async (session) => {
     FROM order_reward_log
     WHERE user_id IN (SELECT user_id FROM tmp_scope)
   `);
+});
+```
+
+Use `registerTempTable(name)` when the temporary table is created by a command you control but you still want `ck-orm` to drop it during session cleanup:
+
+```ts
+await db.runInSession(async (session) => {
+  await session.command(csql`
+    CREATE TEMPORARY TABLE tmp_external_scope
+    (
+      user_id String
+    )
+    ENGINE = Memory
+  `);
+
+  session.registerTempTable("tmp_external_scope");
+
+  await session.insertJsonEachRow("tmp_external_scope", [
+    { user_id: "user_100" },
+  ]);
+});
+```
+
+Use `createTemporaryTableRaw(name, definition)` only for trusted, developer-controlled table definitions that cannot be expressed with `chTable(...)`:
+
+```ts
+await db.runInSession(async (session) => {
+  await session.createTemporaryTableRaw(
+    "tmp_raw_scope",
+    `
+      CREATE TEMPORARY TABLE tmp_raw_scope
+      (
+        user_id String,
+        created_at DateTime64(3, 'UTC')
+      )
+      ENGINE = Memory
+    `,
+  );
 });
 ```
 
@@ -1082,6 +1316,35 @@ const reportDb = db.withSettings({
 
 The returned client keeps the same schema, transport, and session concurrency controller as the parent client.
 
+### Compiled query integration
+
+Most applications should use the builder directly. Use `executeCompiled()` and `iteratorCompiled()` when you are integrating another layer that already produces a `CompiledQuery`.
+
+```ts
+import { ck, type CompiledQuery } from "ck-orm";
+
+const oneQuery = {
+  kind: "compiled-query",
+  mode: "query",
+  statement: "SELECT 1 AS one",
+  params: {},
+  selection: [
+    {
+      key: "one",
+      sqlAlias: "one",
+      path: ["one"],
+      decoder: (value: unknown) => Number(value),
+    },
+  ],
+} satisfies CompiledQuery<{ one: number }>;
+
+const rows = await db.executeCompiled(oneQuery, {
+  session_id: ck.createSessionId(),
+});
+
+const decoded = ck.decodeRow<{ one: number }>({ one: "1" }, oneQuery.selection);
+```
+
 ### `ping()` and `replicasStatus()`
 
 ```ts
@@ -1132,19 +1395,22 @@ const db = clickhouseClient({
 
 ```ts
 import { clickhouseClient } from "ck-orm";
+import { trace } from "@opentelemetry/api";
 import { commerceSchema } from "./schema";
-
-const tracer = myObservabilityStack.getTracer("ck-orm-example");
 
 const db = clickhouseClient({
   databaseUrl: "http://127.0.0.1:8123/demo_store",
   schema: commerceSchema,
   tracing: {
-    tracer,
+    tracer: trace.getTracer("ck-orm-example"),
     dbName: "demo_store",
+    includeStatement: false,
+    includeRowCount: true,
   },
 });
 ```
+
+`includeStatement: false` is the safer default for shared tracing backends. Keep it off when table names, column names, or query shape should not leave the service boundary. Bound values are not embedded in the compacted statement, but SQL shape can still be operationally sensitive.
 
 ### Custom instrumentation
 
@@ -1210,6 +1476,43 @@ Current public `kind` values:
 - `timeout`
 - `aborted`
 - `session`
+
+Use the full error context for server-side logs, then return a small public error to application callers:
+
+```ts
+import { isClickHouseOrmError, isDecodeError } from "ck-orm";
+
+const toPublicQueryError = (error: unknown) => {
+  if (isDecodeError(error)) {
+    console.error("ClickHouse decode failed", {
+      path: error.path,
+      causeValue: error.causeValue,
+    });
+
+    return { message: "The query result could not be decoded." };
+  }
+
+  if (isClickHouseOrmError(error)) {
+    console.error("ClickHouse request failed", {
+      kind: error.kind,
+      executionState: error.executionState,
+      queryId: error.queryId,
+      sessionId: error.sessionId,
+      httpStatus: error.httpStatus,
+      clickhouseCode: error.clickhouseCode,
+      clickhouseName: error.clickhouseName,
+      requestTimeoutMs: error.requestTimeoutMs,
+    });
+
+    if (error.kind === "timeout") return { message: "The query timed out." };
+    if (error.kind === "aborted") return { message: "The query was cancelled." };
+  }
+
+  return { message: "The query failed." };
+};
+```
+
+Do not return `responseText` or the raw error `message` to untrusted clients. ClickHouse can include SQL fragments and object names in error text.
 
 ## Security
 

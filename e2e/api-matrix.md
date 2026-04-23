@@ -121,8 +121,21 @@ This matrix records coverage from the real ClickHouse E2E suite only. It does no
 | `fn.max` | `functions.e2e.test.ts` |
 | `fn.uniqExact` | `functions.e2e.test.ts` |
 | `fn.coalesce` | `functions.e2e.test.ts` |
+| `fn.jsonExtract` | `functions.e2e.test.ts` |
 | `fn.tuple` | `functions.e2e.test.ts` |
 | `fn.arrayZip` | `functions.e2e.test.ts` |
+| `fn.arrayJoin` | `functions.e2e.test.ts` |
+| `fn.tupleElement` | `functions.e2e.test.ts` |
+| `fn.array` | `functions.e2e.test.ts` |
+| `fn.arrayConcat` | `functions.e2e.test.ts` |
+| `fn.arrayElement` | `functions.e2e.test.ts` |
+| `fn.arrayElementOrNull` | `functions.e2e.test.ts` |
+| `fn.arraySlice` | `functions.e2e.test.ts` |
+| `fn.arrayFlatten` | `functions.e2e.test.ts` |
+| `fn.arrayIntersect` | `functions.e2e.test.ts` |
+| `fn.indexOf` | `functions.e2e.test.ts` |
+| `fn.length` | `functions.e2e.test.ts` |
+| `fn.notEmpty` | `functions.e2e.test.ts` |
 | `fn.not` | `functions.e2e.test.ts` |
 | `fn.table.call` | `functions.e2e.test.ts`, `injection-identifiers.e2e.test.ts` |
 

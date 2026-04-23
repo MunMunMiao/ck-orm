@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { dateTime, float64, int32, string } from "./columns";
+import { array as arrayColumn, dateTime, float64, int32, nullable, string } from "./columns";
 import { fn, tableFn } from "./functions";
 import { compileSql, sql } from "./sql";
 
@@ -69,6 +69,98 @@ describe("ck-orm functions", function describeClickHouseOrmFunctions() {
     expect(maxBuilt.query).toContain("max(`orders`.`name`)");
   });
 
+  it("compiles typed JSON, array and tuple helpers", function testCompileStructuredHelpers() {
+    const jsonBuilt = compileExpression(
+      fn.jsonExtract(sql.raw("payload"), arrayColumn(string()), "account", "regulatory"),
+    );
+    expect(jsonBuilt.query).toContain(
+      "JSONExtract(payload, {orm_param1:String}, {orm_param2:String}, {orm_param3:String})",
+    );
+    expect(jsonBuilt.params).toEqual({
+      orm_param1: "account",
+      orm_param2: "regulatory",
+      orm_param3: "Array(String)",
+    });
+
+    const jsonPathBuilt = compileExpression(fn.jsonExtract(sql.raw("payload"), nullable(string()), "orders", 2, 3n));
+    expect(jsonPathBuilt.query).toContain(
+      "JSONExtract(payload, {orm_param1:String}, {orm_param2:Int64}, {orm_param3:Int64}, {orm_param4:String})",
+    );
+    expect(jsonPathBuilt.params).toEqual({
+      orm_param1: "orders",
+      orm_param2: 2,
+      orm_param3: 3n,
+      orm_param4: "Nullable(String)",
+    });
+
+    const targetOrderBuilt = compileExpression(fn.arrayJoin(fn.arrayZip([10001, 10002], [9001, 9002])));
+    expect(targetOrderBuilt.query).toContain(
+      "arrayJoin(arrayZip({orm_param1:Array(Int64)}, {orm_param2:Array(Int64)}))",
+    );
+    expect(targetOrderBuilt.params).toEqual({
+      orm_param1: [10001, 10002],
+      orm_param2: [9001, 9002],
+    });
+
+    const tupleElementBuilt = compileExpression(fn.tupleElement(fn.tuple("ticket", 9001), 1));
+    expect(tupleElementBuilt.query).toContain(
+      "tupleElement(tuple({orm_param1:String}, {orm_param2:Int64}), {orm_param3:Int64})",
+    );
+
+    const tupleElementByNameBuilt = compileExpression(
+      fn.tupleElement<string>(sql.raw("target_order"), "ticket", "missing"),
+    );
+    expect(tupleElementByNameBuilt.query).toContain(
+      "tupleElement(target_order, {orm_param1:String}, {orm_param2:String})",
+    );
+    expect(tupleElementByNameBuilt.params).toEqual({
+      orm_param1: "ticket",
+      orm_param2: "missing",
+    });
+
+    const arrayBuilt = compileExpression(fn.array("vip", "pro"));
+    expect(arrayBuilt.query).toContain("array({orm_param1:String}, {orm_param2:String})");
+
+    const emptyArrayConcatBuilt = compileExpression(fn.arrayConcat());
+    expect(emptyArrayConcatBuilt.query).toContain("arrayConcat()");
+
+    const arrayConcatBuilt = compileExpression(fn.arrayConcat(["vip"], ["pro"]));
+    expect(arrayConcatBuilt.query).toContain("arrayConcat({orm_param1:Array(String)}, {orm_param2:Array(String)})");
+
+    const arrayElementBuilt = compileExpression(fn.arrayElement(["vip", "pro"], 2));
+    expect(arrayElementBuilt.query).toContain("arrayElement({orm_param1:Array(String)}, {orm_param2:Int64})");
+
+    const arrayElementOrNullBuilt = compileExpression(fn.arrayElementOrNull(["vip"], 2));
+    expect(arrayElementOrNullBuilt.query).toContain(
+      "arrayElementOrNull({orm_param1:Array(String)}, {orm_param2:Int64})",
+    );
+
+    const arraySliceBuilt = compileExpression(fn.arraySlice(["vip", "pro", "raw"], 2, 1));
+    expect(arraySliceBuilt.query).toContain(
+      "arraySlice({orm_param1:Array(String)}, {orm_param2:Int64}, {orm_param3:Int64})",
+    );
+
+    const openEndedArraySliceBuilt = compileExpression(fn.arraySlice(["vip", "pro", "raw"], 2));
+    expect(openEndedArraySliceBuilt.query).toContain("arraySlice({orm_param1:Array(String)}, {orm_param2:Int64})");
+
+    const arrayFlattenBuilt = compileExpression(fn.arrayFlatten([["vip"], ["pro"]]));
+    expect(arrayFlattenBuilt.query).toContain("arrayFlatten({orm_param1:Array(Array(String))})");
+
+    const arrayIntersectBuilt = compileExpression(fn.arrayIntersect(["vip", "pro"], ["pro"]));
+    expect(arrayIntersectBuilt.query).toContain(
+      "arrayIntersect({orm_param1:Array(String)}, {orm_param2:Array(String)})",
+    );
+
+    const indexOfBuilt = compileExpression(fn.indexOf(["vip", "pro"], "pro"));
+    expect(indexOfBuilt.query).toContain("indexOf({orm_param1:Array(String)}, {orm_param2:String})");
+
+    const lengthBuilt = compileExpression(fn.length(["vip", "pro"]));
+    expect(lengthBuilt.query).toContain("length({orm_param1:Array(String)})");
+
+    const notEmptyBuilt = compileExpression(fn.notEmpty(["vip"]));
+    expect(notEmptyBuilt.query).toContain("notEmpty({orm_param1:Array(String)})");
+  });
+
   it("uses conservative aggregate decoders and covers not/coalesce/tuple/arrayZip", function testDecoders() {
     expect(fn.toString(int32()).decoder(12)).toBe("12");
     expect(fn.toDate(string()).decoder("2026-04-21")).toEqual(new Date("2026-04-21"));
@@ -114,6 +206,25 @@ describe("ck-orm functions", function describeClickHouseOrmFunctions() {
 
     expect(fn.arrayZip().decoder([[1, 2]])).toEqual([[1, 2]]);
     expect(() => fn.arrayZip().decoder("bad")).toThrow("Cannot convert value to arrayZip array");
+
+    expect(fn.jsonExtract(sql.raw("payload"), arrayColumn(string())).decoder(["vip", 1])).toEqual(["vip", "1"]);
+    expect(fn.array("vip").decoder(["vip"])).toEqual(["vip"]);
+    expect(() => fn.array("vip").decoder("bad")).toThrow("Cannot convert value to array array");
+    expect(fn.arrayConcat("vip").decoder(["vip"])).toEqual(["vip"]);
+    expect(() => fn.arrayConcat("vip").decoder("bad")).toThrow("Cannot convert value to arrayConcat array");
+    expect(fn.arraySlice("vip", 1).decoder(["vip"])).toEqual(["vip"]);
+    expect(() => fn.arraySlice("vip", 1).decoder("bad")).toThrow("Cannot convert value to arraySlice array");
+    expect(fn.arrayFlatten("vip").decoder(["vip"])).toEqual(["vip"]);
+    expect(() => fn.arrayFlatten("vip").decoder("bad")).toThrow("Cannot convert value to arrayFlatten array");
+    expect(fn.arrayIntersect("vip").decoder(["vip"])).toEqual(["vip"]);
+    expect(() => fn.arrayIntersect("vip").decoder("bad")).toThrow("Cannot convert value to arrayIntersect array");
+    expect(fn.arrayJoin<string>(["vip"]).decoder("vip")).toBe("vip");
+    expect(fn.tupleElement<string>(fn.tuple("ticket"), 1).decoder("ticket")).toBe("ticket");
+    expect(fn.jsonExtract(sql.raw("payload"), nullable(string())).decoder(null)).toBeNull();
+    expect(fn.jsonExtract(sql.raw("payload"), nullable(string())).decoder("vip")).toBe("vip");
+    expect(fn.indexOf(["vip"], "vip").decoder(1)).toBe("1");
+    expect(fn.length(["vip"]).decoder(1n)).toBe("1");
+    expect(fn.notEmpty(["vip"]).decoder(1)).toBe(true);
   });
 
   it("compiles table functions with and without alias", function testTableFunctions() {

@@ -1,6 +1,6 @@
 {
   "name": "ck-orm",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "type": "module",
   "main": "src/index.ts",
   "types": "src/index.ts",
@@ -19,6 +19,7 @@
     "test:coverage": "rm -rf coverage && bun test ./src --coverage --coverage-reporter lcov",
     "test:e2e": "bash ./e2e/run.sh",
     "type-check": "tsc --noEmit",
+    "type-check:examples": "tsc --noEmit -p tsconfig.examples.json",
     "type-check:watch": "tsc --noEmit --watch"
   },
   "peerDependencies": {

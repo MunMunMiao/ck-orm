@@ -49,6 +49,20 @@ export const runPlainStringRawQueryExample = async () => {
   return commerceDb.execute(csql`SELECT 1 AS one`);
 };
 
+export const runIdentifierQueryExample = async () => {
+  const commerceDb = createCommerceDb();
+  const selectedColumns = csql.join([csql.identifier("user_id"), csql.identifier("reward_points")], ", ");
+
+  return commerceDb.execute(
+    csql`
+      SELECT ${selectedColumns}
+      FROM ${csql.identifier("order_reward_log")}
+      WHERE ${csql.identifier("region")} = ${"AU"}
+      LIMIT ${10}
+    `,
+  );
+};
+
 export const buildTableFunctionExample = () => {
   const commerceDb = createCommerceDb();
   const numbers = fn.table.call("numbers", 10).as("n");
