@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { chTable, ck, int32 } from "./ck-orm";
+import { chTable, chType, ck } from "./ck-orm";
 import { createE2EDb, createTempTableName, pets, rewardEvents, users } from "./shared";
 import { describeE2E, expectPresent, takeAsync } from "./test-helpers";
 
@@ -99,7 +99,7 @@ describeE2E("ck-orm e2e session, cdc and stream", function describeSessionCdcAnd
     const db = createE2EDb();
     const manualTempTable = createTempTableName("manual_scope");
     const helperTempTable = createTempTableName("helper_scope");
-    const helperTempScope = chTable(helperTempTable, { user_id: int32() });
+    const helperTempScope = chTable(helperTempTable, { user_id: chType.int32() });
     const sessionId = ck.createSessionId();
 
     const scopedRows = await db.runInSession(

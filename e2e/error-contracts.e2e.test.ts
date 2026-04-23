@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { chTable, ck, int32 } from "./ck-orm";
+import { chTable, chType, ck } from "./ck-orm";
 import { auditEvents, createE2EDb, createTempTableName } from "./shared";
 import { describeE2E, expectRejectsWithClickhouseError, waitForQueryLogException } from "./test-helpers";
 
@@ -50,7 +50,7 @@ describeE2E("ck-orm e2e error contracts", function describeErrorContracts() {
     const db = createE2EDb();
     const sessionId = ck.createSessionId();
     const tempTable = createTempTableName("expired_scope");
-    const tempScope = chTable(tempTable, { id: int32() });
+    const tempScope = chTable(tempTable, { id: chType.int32() });
 
     await db.runInSession(
       async (session) => {

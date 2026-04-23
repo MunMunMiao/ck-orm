@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { chTable, ck, int32, type Predicate } from "./ck-orm";
+import { chTable, chType, ck, type Predicate } from "./ck-orm";
 import { createE2EDb, createTempTableName, pets, rewardEvents, users, webEvents } from "./shared";
 import { describeE2E } from "./test-helpers";
 
@@ -114,7 +114,7 @@ describeE2E("ck-orm e2e count and dynamic filters", function describeCountAndDyn
     const tempScope = chTable(
       tempTableName,
       {
-        user_id: int32(),
+        user_id: chType.int32(),
       },
       (table) => ({
         engine: "MergeTree",

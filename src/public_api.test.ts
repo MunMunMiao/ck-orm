@@ -13,6 +13,7 @@ describe("ck-orm public api", function describePublicApi() {
 
   it("keeps core schema and query builders available from the package root", function testPublicBuilders() {
     expect("ck" in publicApi).toBe(true);
+    expect("chType" in publicApi).toBe(true);
     expect("chTable" in publicApi).toBe(true);
     expect("clickhouseClient" in publicApi).toBe(true);
     expect("Grouping" in publicApi).toBe(false);
@@ -24,7 +25,13 @@ describe("ck-orm public api", function describePublicApi() {
     expect("sql" in publicApi).toBe(false);
     expect("eq" in publicApi).toBe(false);
     expect("desc" in publicApi).toBe(false);
+    expect("int32" in publicApi).toBe(false);
+    expect("string" in publicApi).toBe(false);
+    expect("decimal" in publicApi).toBe(false);
+    expect("array" in publicApi).toBe(false);
     expect("tableFn" in publicApi).toBe(false);
+    expect(typeof publicApi.chType.int32).toBe("function");
+    expect(typeof publicApi.chType.string).toBe("function");
     expect(publicApi.ck.fn).toBe(publicApi.fn);
     expect(typeof publicApi.ck.eq).toBe("function");
     expect(typeof publicApi.ck.desc).toBe("function");

@@ -4,7 +4,20 @@
   <img src="bunner.png" alt="ck-orm - TypeScript ORM for ClickHouse" width="100%" />
 </p>
 
-`ck-orm` is a typed ClickHouse query layer for modern JavaScript runtimes.
+<p align="center">
+  <a href="https://npmjs.com/package/ck-orm"><img src="https://img.shields.io/npm/v/ck-orm?style=flat-square&labelColor=%23151A1F&color=%23151A1F" alt="npm package"></a>
+  <a href="https://npmjs.com/package/ck-orm"><img src="https://img.shields.io/npm/dm/ck-orm?style=flat-square&labelColor=%23151A1F&color=%23151A1F" alt="monthly downloads"></a>
+  <a href="https://github.com/MunMunMiao/ck-orm/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/MunMunMiao/ck-orm/ci.yml?branch=main&style=flat-square&labelColor=%23151A1F&color=%23151A1F" alt="build status"></a>
+  <a href="https://github.com/MunMunMiao/ck-orm/blob/main/LICENSE"><img src="https://img.shields.io/github/license/MunMunMiao/ck-orm?style=flat-square&labelColor=%23151A1F&color=%23151A1F" alt="license"></a>
+</p>
+
+<p align="center">
+  <a href="https://deepwiki.com/MunMunMiao/ck-orm"><img src="https://img.shields.io/badge/Ask_DeepWiki-151A1F?style=flat-square&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHZpZXdCb3g9JzAgMCAzMiAzMic%2BPGcgZmlsbD0nI0Y4QzAwMCc%2BPGNpcmNsZSBjeD0nNi41JyBjeT0nMTYnIHI9JzUuMjUnLz48Y2lyY2xlIGN4PScxMS41JyBjeT0nOScgcj0nNScgb3BhY2l0eT0nLjg0Jy8%2BPGNpcmNsZSBjeD0nMjAnIGN5PSc3LjUnIHI9JzUnIG9wYWNpdHk9Jy43MicvPjxjaXJjbGUgY3g9JzI1LjUnIGN5PScxMy41JyByPSc1JyBvcGFjaXR5PScuODgnLz48Y2lyY2xlIGN4PScxNC41JyBjeT0nMTYuNScgcj0nNS4yNScvPjxjaXJjbGUgY3g9JzknIGN5PScyNCcgcj0nNScgb3BhY2l0eT0nLjc4Jy8%2BPGNpcmNsZSBjeD0nMTguNScgY3k9JzIzLjUnIHI9JzUnIG9wYWNpdHk9Jy44MicvPjxjaXJjbGUgY3g9JzI0JyBjeT0nMTknIHI9JzUnIG9wYWNpdHk9Jy43NCcvPjwvZz48L3N2Zz4%3D" alt="Ask DeepWiki"></a>
+</p>
+
+<p align="center">
+  A typed ClickHouse query layer for modern JavaScript runtimes.
+</p>
 
 It gives you:
 
@@ -131,22 +144,21 @@ The examples below use a single table so the main flow stays easy to follow.
 ### 1. Define a schema
 
 ```ts
-import {
-  chTable, dateTime64, decimal, int16, int32, int64, string, uint8, uint64 } from "ck-orm";
+import { chTable, chType } from "ck-orm";
 
 export const orderRewardLog = chTable(
   "order_reward_log",
   {
-    id: int32(),
-    user_id: string(),
-    campaign_id: int32(),
-    order_id: int64(),
-    reward_points: decimal(20, 5),
-    status: int16(),
-    created_at: int32(),
-    _peerdb_synced_at: dateTime64(9),
-    _peerdb_is_deleted: uint8(),
-    _peerdb_version: uint64(),
+    id: chType.int32(),
+    user_id: chType.string(),
+    campaign_id: chType.int32(),
+    order_id: chType.int64(),
+    reward_points: chType.decimal(20, 5),
+    status: chType.int16(),
+    created_at: chType.int32(),
+    _peerdb_synced_at: chType.dateTime64(9),
+    _peerdb_is_deleted: chType.uint8(),
+    _peerdb_version: chType.uint64(),
   },
   (table) => ({
     engine: "ReplacingMergeTree",
@@ -197,6 +209,10 @@ Builder queries are thenable, so `await query` executes the query directly.
 
 Use `ck-orm` with these boundaries in mind:
 
+- `chType.*` defines schema column types
+- `chTable(...)` defines table schemas
+- `ck.*` is the query-helper namespace
+- `fn.*` is the SQL function-helper namespace
 - schema describes tables and columns, not the database name
 - the database connection lives on `clickhouseClient(...)`
 - builder queries are the default path, raw SQL is the escape hatch
@@ -217,9 +233,15 @@ Use `ck-orm` with these boundaries in mind:
 
 Use `chTable(name, columns, options?)` to define a table.
 
+Examples in this section assume:
+
+```ts
+import { chTable, chType, ck } from "ck-orm";
+```
+
 ```ts
 const orderRewardLog = chTable("order_reward_log", {
-  id: int32(), user_id: string(), reward_points: decimal(20, 5), });
+  id: chType.int32(), user_id: chType.string(), reward_points: chType.decimal(20, 5), });
 ```
 
 The third argument can be a plain object or a factory function:
@@ -227,7 +249,7 @@ The third argument can be a plain object or a factory function:
 ```ts
 const orderRewardLog = chTable(
   "order_reward_log", {
-    id: int32(), user_id: string(), reward_points: decimal(20, 5), }, (table) => ({
+    id: chType.int32(), user_id: chType.string(), reward_points: chType.decimal(20, 5), }, (table) => ({
     engine: "ReplacingMergeTree", orderBy: [table.user_id, table.id], }), );
 ```
 
@@ -257,7 +279,7 @@ Example:
 ```ts
 const orderRewardLog = chTable(
   "order_reward_log", {
-    id: int32(), created_at: dateTime(), shard_day: date().materialized(ck.sql`toDate(created_at)`), note: string().default(ck.sql`'pending'`), }, (table) => ({
+    id: chType.int32(), created_at: chType.dateTime(), shard_day: chType.date().materialized(ck.sql`toDate(created_at)`), note: chType.string().default(ck.sql`'pending'`), }, (table) => ({
     engine: "ReplacingMergeTree", partitionBy: ck.sql`toYYYYMM(created_at)`, orderBy: [table.id], versionColumn: table.created_at, }), );
 ```
 
@@ -303,7 +325,7 @@ Aliased columns are rebound automatically to the alias.
 
 ### Column builders
 
-The schema DSL covers the common ClickHouse type families:
+Use `chType.*` for schema column builders. The schema DSL covers the common ClickHouse type families:
 
 - integers: `int8`, `int16`, `int32`, `int64`, `uint8`, `uint16`, `uint32`, `uint64`
 - floating point and decimal: `float32`, `float64`, `bfloat16`, `decimal`
@@ -929,8 +951,10 @@ Inside a session callback, `ck-orm` gives you:
 ### `runInSession()`
 
 ```ts
+import { chTable, chType } from "ck-orm";
+
 const tmpScope = chTable("tmp_scope", {
-  user_id: string(),
+  user_id: chType.string(),
 });
 
 await db.runInSession(async (session) => {
@@ -1068,7 +1092,9 @@ const db = clickhouseClient({
 ### Tracing
 
 ```ts
-import { fn, ck, trace } from "@opentelemetry/api";
+import { trace } from "@opentelemetry/api";
+import { clickhouseClient } from "ck-orm";
+import { commerceSchema } from "./schema";
 
 const db = clickhouseClient({
   databaseUrl: "http://127.0.0.1:8123/demo_store", schema: commerceSchema, tracing: {
@@ -1147,7 +1173,7 @@ Current public `kind` values:
 The built-in protections include:
 
 - identifiers passed to `ck.sql.identifier()` are validated and quoted
-- function names used by `fn.call(...)`, `fn.withParams(...)`, `aggregateFunction(...)`, `simpleAggregateFunction(...)`, and `nested({...})` keys are validated
+- function names used by `fn.call(...)`, `fn.withParams(...)`, `chType.aggregateFunction(...)`, `chType.simpleAggregateFunction(...)`, and `chType.nested({...})` keys are validated
 - values interpolated into `sql\`...\`` become ClickHouse named parameters rather than raw SQL text
 - `query_params` keys that start with `orm_param` are rejected because that prefix is reserved for internal SQL-template parameters
 - only a single top-level statement is allowed per request

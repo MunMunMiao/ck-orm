@@ -1,4 +1,4 @@
-import { chTable, clickhouseClient, string } from "./ck-orm";
+import { chTable, chType, clickhouseClient } from "./ck-orm";
 import { commerceSchema } from "./schema/commerce";
 
 const createCommerceDb = () => {
@@ -17,7 +17,7 @@ const createCommerceDb = () => {
 export const runSessionTempTableExample = async () => {
   const commerceDb = createCommerceDb();
   const tmpScope = chTable("tmp_scope", {
-    user_id: string(),
+    user_id: chType.string(),
   });
 
   return commerceDb.runInSession(async (sessionDb) => {

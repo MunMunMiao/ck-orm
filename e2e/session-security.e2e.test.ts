@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { chTable, ck, int32 } from "./ck-orm";
+import { chTable, chType, ck } from "./ck-orm";
 import { createE2EDb, createTempTableName } from "./shared";
 import { describeE2E, expectRejectsWithClickhouseError } from "./test-helpers";
 
@@ -92,7 +92,7 @@ describeE2E("ck-orm e2e session security", function describeSessionSecurity() {
     const session1Id = `test_session_iso_${Date.now()}_1`;
     const session2Id = `test_session_iso_${Date.now()}_2`;
     const isolatedTable = createTempTableName("iso_test_data");
-    const isolatedScope = chTable(isolatedTable, { id: int32() });
+    const isolatedScope = chTable(isolatedTable, { id: chType.int32() });
 
     // Session 1 creates a temp table
     await db.runInSession(
@@ -124,9 +124,9 @@ describeE2E("ck-orm e2e session security", function describeSessionSecurity() {
     const outerTable = createTempTableName("outer_scope");
     const childOneTable = createTempTableName("child_one_scope");
     const childTwoTable = createTempTableName("child_two_scope");
-    const outerScope = chTable(outerTable, { id: int32() });
-    const childOneScope = chTable(childOneTable, { id: int32() });
-    const childTwoScope = chTable(childTwoTable, { id: int32() });
+    const outerScope = chTable(outerTable, { id: chType.int32() });
+    const childOneScope = chTable(childOneTable, { id: chType.int32() });
+    const childTwoScope = chTable(childTwoTable, { id: chType.int32() });
 
     await db.runInSession(
       async (session) => {
@@ -215,7 +215,7 @@ describeE2E("ck-orm e2e session security", function describeSessionSecurity() {
     const db = createE2EDb();
     const sessionId = `test_cleanup_${Date.now()}`;
     const cleanupTable = createTempTableName("cleanup_test");
-    const cleanupScope = chTable(cleanupTable, { id: int32() });
+    const cleanupScope = chTable(cleanupTable, { id: chType.int32() });
 
     await db.runInSession(
       async (session) => {

@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { chTable, ck, string } from "./ck-orm";
+import { chTable, chType, ck } from "./ck-orm";
 import { createE2EDb, createTempTableName, users } from "./shared";
 import { describeE2E } from "./test-helpers";
 
@@ -87,7 +87,7 @@ describeE2E("ck-orm e2e injection values", function describeInjectionValues() {
     const db = createE2EDb();
     const tempTable = createTempTableName("pattern_scope");
     const patternScope = chTable(tempTable, {
-      name: string(),
+      name: chType.string(),
     });
 
     await db.runInSession(async (session) => {

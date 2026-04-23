@@ -1,24 +1,27 @@
 import type * as RootApi from "./index";
 import {
   chTable,
+  chType,
   ck,
   clickhouseClient,
   fn,
-  int32,
   type Order,
   type Predicate,
   type Selection,
   type Session,
-  string,
 } from "./index";
 
 const users = chTable("users", {
-  id: int32(),
-  name: string(),
+  id: chType.int32(),
+  name: chType.string(),
 });
 const tempUsers = chTable("tmp_users", {
-  id: int32(),
-  name: string().default(ck.sql`'anonymous'`),
+  id: chType.int32(),
+  name: chType.string().default(ck.sql`'anonymous'`),
+});
+const stringArray = chType.array(chType.string());
+const nestedUsers = chType.nested({
+  id: chType.int32(),
 });
 
 const db = clickhouseClient({
@@ -70,6 +73,8 @@ const builder = db
 void builder;
 void namespacePredicateGroup;
 void namespaceCount;
+void stringArray;
+void nestedUsers;
 
 const composed = fn
   .sum(users.id)
@@ -116,6 +121,16 @@ idPredicate.decoder;
 // @ts-expect-error SqlExpression should remain internal to the package root
 const hiddenSqlExpression: RootApi.SqlExpression | undefined = undefined;
 void hiddenSqlExpression;
+
+type HasChType = "chType" extends keyof typeof import("./index") ? true : false;
+const _hasChType: HasChType = true;
+
+type HasRootInt32 = "int32" extends keyof typeof import("./index") ? true : false;
+const _hasRootInt32: HasRootInt32 = false;
+
+// @ts-expect-error schema factory values should no longer stay root-exported
+const hiddenInt32 = RootApi.int32;
+void hiddenInt32;
 
 // @ts-expect-error Grouping should remain internal to the package root
 const hiddenGrouping: RootApi.Grouping | undefined = undefined;
