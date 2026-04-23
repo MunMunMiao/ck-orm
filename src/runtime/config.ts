@@ -167,6 +167,16 @@ type SharedClientConfigOptions = {
   readonly clickhouse_settings?: Record<string, string | number | boolean>;
   readonly session_id?: string;
   /**
+   * Maximum number of in-flight requests allowed for the same
+   * ClickHouse `session_id` within this client instance. Requests
+   * without a session id are not throttled by this controller.
+   *
+   * Defaults to `1`, which preserves request ordering for the same
+   * session and avoids overlapping temporary-table operations unless
+   * the caller opts into higher concurrency explicitly.
+   */
+  readonly session_max_concurrent_requests?: number;
+  /**
    * Default ClickHouse RBAC role(s) applied to every request. Per-request
    * `options.role` overrides this value. See
    * {@link ClickHouseBaseQueryOptions.role} for semantics.
@@ -207,6 +217,7 @@ export type NormalizedClientConfig = {
   readonly database: string;
   readonly clickhouse_settings: Record<string, string | number | boolean>;
   readonly session_id?: string;
+  readonly session_max_concurrent_requests: number;
   readonly role?: string | string[];
   readonly http_headers: Record<string, string>;
   readonly json: JsonHandling;
@@ -634,6 +645,10 @@ export const normalizeClientConfig = (config: ClickHouseFetchConfigOptions): Nor
   const resolvedConnection = hasDatabaseUrl
     ? resolveDatabaseUrlConfig(config.databaseUrl)
     : resolveStructuredConfig(config);
+  const sessionMaxConcurrentRequests = config.session_max_concurrent_requests ?? 1;
+  if (!Number.isInteger(sessionMaxConcurrentRequests) || sessionMaxConcurrentRequests < 1) {
+    throw createClientValidationError("clickhouseClient() session_max_concurrent_requests must be a positive integer");
+  }
 
   return {
     url: resolvedConnection.url,
@@ -646,6 +661,7 @@ export const normalizeClientConfig = (config: ClickHouseFetchConfigOptions): Nor
     database: resolvedConnection.database,
     clickhouse_settings: config.clickhouse_settings ?? {},
     session_id: config.session_id,
+    session_max_concurrent_requests: sessionMaxConcurrentRequests,
     role: config.role,
     http_headers: {
       ...(config.http_headers ?? {}),

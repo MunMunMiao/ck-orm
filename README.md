@@ -32,10 +32,6 @@ The design goal is straightforward: make everyday ClickHouse access easier to st
 ## Contents
 
 - [Installation](#installation)
-- [1.0 migration](#10-migration)
-- [Runtime requirements](#runtime-requirements)
-- [Repository map](#repository-map)
-- [Local verification and workflows](#local-verification-and-workflows)
 - [Quick start](#quick-start)
 - [Mental model](#mental-model)
 - [Schema DSL](#schema-dsl)
@@ -61,81 +57,12 @@ bun add ck-orm
 npm install ck-orm
 ```
 
-`@opentelemetry/api` is a peer dependency and is automatically installed by modern package managers (bun, npm 7+, pnpm). If you use a manager that does not auto-install peer dependencies, add it explicitly: `npm install @opentelemetry/api`.
+When you change public behavior, update these files together so the docs do not drift away from the tested contract:
 
-## 1.0 migration
-
-`ck-orm` 1.0 removes the last runtime compatibility shims from the pre-1.0 API.
-
-If you are upgrading from `0.x`, make these changes:
-
-- error checks: replace `instanceof ClickHouseOrmError` / `instanceof DecodeError` with `isClickHouseOrmError(error)` / `isDecodeError(error)`
-- error imports: switch runtime imports to type-only imports
-  - before: `import { fn, ClickHouseOrmError } from "ck-orm"`
-  - after: `import { isClickHouseOrmError, type ClickHouseOrmError } from "ck-orm"`
-- deep-import query helpers: replace removed runtime factories
-  - `QueryClient(...)` -> `createQueryClient(...)`
-  - `SelectBuilder(...)` -> `createSelectBuilder(...)`
-  - `InsertBuilder(...)` -> `createInsertBuilder(...)`
-
-`clickhouseClient()` and the fluent query API are unchanged.
-
-## Runtime requirements
-
-`ck-orm` targets modern runtimes and expects the environment to provide:
-
-- `fetch`
-- `Request`
-- `Response`
-- `URL`
-- `TextEncoder`
-- `ReadableStream`
-- `FormData`
-- `crypto` from Web Crypto
-
-It does not depend on `node:crypto`, `Buffer`, or the official ClickHouse SDK.
-
-## Repository map
-
-If you are reading the repository for the first time, use this path:
-
-1. Package root: [`src/index.ts`](./src/index.ts) -> [`src/public_api.ts`](./src/public_api.ts)
-2. Learning path: [`examples/README.md`](./examples/README.md)
-3. Real ClickHouse contract tests: [`e2e/README.md`](./e2e/README.md)
-
-Key directories and files:
-
-- [`src/public_api.ts`](./src/public_api.ts): the package-root export boundary
-- [`src/runtime.ts`](./src/runtime.ts): the public runtime facade
-- [`src/query.ts`](./src/query.ts): the main query-builder implementation
-- [`examples/`](./examples): beginner-friendly usage examples
-- [`e2e/`](./e2e): the real ClickHouse end-to-end suite
-- [`src/runtime.typecheck.ts`](./src/runtime.typecheck.ts): a type-only contract file checked by `tsc --noEmit`
-
-Recommended first read:
-
-1. This README
-2. [`examples/basic-select.ts`](./examples/basic-select.ts)
-3. [`examples/session-temp-table.ts`](./examples/session-temp-table.ts)
-4. [`e2e/api-matrix.md`](./e2e/api-matrix.md)
-
-## Local verification and workflows
-
-For local repository checks, use the scripts in [`package.json`](./package.json):
-
-- `bun run build`
-- `bun run lint`
-- `bun run type-check`
-- `bun run test:orm`
-- `bun run test:coverage`
-- `bun run test:e2e`
-
-`bun run test:coverage` inherits the repository-wide Bun threshold, which currently requires 100% lines and 100% functions.
-
-Repository workflows currently live in:
-
-- [`.github/workflows/ci.yml`](./.github/workflows/ci.yml): lint, coverage, and type-check
-- [`.github/workflows/publish.yml`](./.github/workflows/publish.yml): manual npm publish workflow
+- [`README.md`](./README.md)
+- [`examples/README.md`](./examples/README.md) and any touched example files
+- [`src/runtime.typecheck.ts`](./src/runtime.typecheck.ts)
+- [`e2e/api-matrix.md`](./e2e/api-matrix.md)
 
 ## Quick start
 
@@ -411,12 +338,16 @@ Use these only when you actually need the corresponding behavior:
 | `http_headers` | Additional default headers |
 | `role` | Default ClickHouse role or roles |
 | `session_id` | Default session id |
+| `session_max_concurrent_requests` | Maximum in-flight requests allowed per `session_id` within this client (default `1`) |
 | `compression.response` | Request compressed responses |
 | `logger` / `logLevel` | Logger integration |
 | `tracing` | OpenTelemetry integration |
 | `instrumentation` | Custom query lifecycle hooks |
 
 Session lifetime controls are intentionally request-scoped. Pass `session_timeout` to a single query or to `runInSession(...)`. Use `session_check` when you are continuing an existing `session_id`, not when bootstrapping a brand-new session.
+`session_max_concurrent_requests` is different: it is a client-level guard that throttles overlapping requests that target the same `session_id`.
+Real ClickHouse sessions are still server-locked, so increasing `session_max_concurrent_requests` above `1` can surface `SESSION_IS_LOCKED` instead of giving you true same-session parallelism.
+Keep the default `1` unless you intentionally want to remove local serialization and are prepared to handle server-side session-lock failures.
 
 `ck-orm` also keeps JSON parse/stringify hooks internal to the fetch transport. The public client config does not expose a `json` override.
 
@@ -657,6 +588,8 @@ for await (const row of query.iterator()) {
   console.log(row);
 }
 ```
+
+`query.iterator()` uses the same session-aware concurrency rules as `db.stream()`: if the query targets a `session_id`, the slot stays occupied until iteration finishes or the iterator is closed early.
 
 ### Subqueries and CTEs
 
@@ -975,14 +908,32 @@ await db.runInSession(async (session) => {
 
 ### Session behavior
 
-- queries inside a session are serialized to protect temporary table lifecycle
+- requests targeting the same `session_id` share a session concurrency controller; the client default is `session_max_concurrent_requests = 1`
+- real ClickHouse sessions are exclusive on the server side, so raising `session_max_concurrent_requests` above `1` disables local serialization but can still fail with `SESSION_IS_LOCKED`
 - `createTemporaryTable()` automatically registers the table for cleanup
 - `createTemporaryTable()` consumes schema objects; temporary-table lifecycle stays on `Session`, not on the schema itself
 - `createTemporaryTableRaw()` is the trusted-only raw SQL escape hatch and rejects multi-statement definitions
 - `runInSession()` drops registered temporary tables when the callback finishes
 - nested `runInSession()` calls always create a new child session
 - nested calls may not reuse any active ancestor `session_id`
-- nested child sessions do not share temp tables or request queues with their parent
+- nested child sessions do not share temp tables or same-session concurrency slots with their parent because they always use a different `session_id`
+
+### Session concurrency contract
+
+The practical rules are:
+
+- the same explicit `session_id` is serialized by default
+- the client default `session_id` participates in the same limiter
+- child clients created by `withSettings()` share the same limiter as their parent when they target the same `session_id`
+- different `session_id` values do not block each other
+- `stream()` and builder `iterator()` hold the same-session slot until the iterator finishes or is closed
+- nested `runInSession()` calls create a fresh child `session_id`, so they do not share the parent's same-session slot
+
+Recommended usage:
+
+- keep `session_max_concurrent_requests = 1` for temporary-table workflows and any continued-session logic
+- if you need true parallelism, use different `session_id` values instead of raising the same-session limit
+- only raise `session_max_concurrent_requests` when you explicitly want to remove local backpressure and can tolerate `SESSION_IS_LOCKED`
 
 ## Runtime methods
 
@@ -1005,6 +956,7 @@ Common per-query fields include:
 `session_timeout` and `session_check` live here on purpose: they describe a specific request or a specific session block, not a global client default.
 
 `session_check` does not bootstrap a new ClickHouse session. Use it when you need ClickHouse to verify that an explicit `session_id` already exists.
+Any request that carries a `session_id` participates in the same per-session limiter, including raw `execute()`, `command()`, `stream()`, builder `.execute()`, and builder `.iterator()`.
 
 ### `execute()`
 
@@ -1024,6 +976,8 @@ for await (const row of db.stream("SELECT number FROM numbers(10)")) {
 }
 ```
 
+If `stream()` targets a `session_id`, the same-session slot is released only after the async iterator completes or you close it early by breaking out of the loop.
+
 ### `command()`
 
 Execute a command that does not return a row set:
@@ -1042,6 +996,8 @@ const reportDb = db.withSettings({
   join_use_nulls: 0,
 });
 ```
+
+The returned client keeps the same schema, transport, and session concurrency controller as the parent client.
 
 ### `ping()` and `replicasStatus()`
 
@@ -1092,13 +1048,14 @@ const db = clickhouseClient({
 ### Tracing
 
 ```ts
-import { trace } from "@opentelemetry/api";
 import { clickhouseClient } from "ck-orm";
 import { commerceSchema } from "./schema";
 
+const tracer = myObservabilityStack.getTracer("ck-orm-example");
+
 const db = clickhouseClient({
   databaseUrl: "http://127.0.0.1:8123/demo_store", schema: commerceSchema, tracing: {
-    tracer: trace.getTracer("ck-orm-example"), dbName: "demo_store", }, });
+    tracer, dbName: "demo_store", }, });
 ```
 
 ### Custom instrumentation

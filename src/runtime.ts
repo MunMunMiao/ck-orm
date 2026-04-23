@@ -5,6 +5,7 @@ import {
 } from "./observability";
 import { type ClickHouseOrmClient, createClickHouseOrmClient } from "./runtime/client";
 import { type ClickHouseClientConfig, normalizeClientConfig, type ResolveJoinUseNulls } from "./runtime/config";
+import { createSessionConcurrencyController } from "./runtime/session-concurrency";
 import { createFetchClickHouseTransport } from "./runtime/transport";
 
 export type {
@@ -43,6 +44,9 @@ export const clickhouseClient = <
   ] satisfies ClickHouseOrmInstrumentation[];
 
   const client = createFetchClickHouseTransport(normalizedConfig);
+  const sessionConcurrencyController = createSessionConcurrencyController(
+    normalizedConfig.session_max_concurrent_requests,
+  );
   const joinUseNulls = (config.clickhouse_settings?.join_use_nulls === 0 ? 0 : 1) as ResolveJoinUseNulls<TSettings, 1>;
 
   return createClickHouseOrmClient<TSchema, ResolveJoinUseNulls<TSettings, 1>>({
@@ -50,6 +54,7 @@ export const clickhouseClient = <
     client,
     instrumentations,
     joinUseNulls,
+    sessionConcurrencyController,
     defaultOptions: {
       clickhouse_settings: normalizedConfig.clickhouse_settings,
       session_id: normalizedConfig.session_id,

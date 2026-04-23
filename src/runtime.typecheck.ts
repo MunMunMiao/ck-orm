@@ -16,6 +16,7 @@ const tempUsers = chTable("tmp_users", {
 const db = clickhouseClient({
   databaseUrl: "http://localhost:8123/typecheck_db",
   schema: { users },
+  session_max_concurrent_requests: 2,
 });
 
 db.runInSession(
@@ -114,4 +115,11 @@ clickhouseClient({
     parse: (text: string) => JSON.parse(text) as unknown,
     stringify: (value: unknown) => JSON.stringify(value),
   },
+});
+
+clickhouseClient({
+  databaseUrl: "http://localhost:8123/typecheck_db",
+  schema: { users },
+  // @ts-expect-error session_max_concurrent_requests must be a number
+  session_max_concurrent_requests: "2",
 });

@@ -34,6 +34,7 @@ import {
   type SessionRunInSessionOptions,
   toClickHouseTableName,
 } from "./config";
+import type { SessionConcurrencyController } from "./session-concurrency";
 import type { FetchClickHouseTransport } from "./transport";
 
 export interface ClickHouseOrmClient<TSchema, TJoinUseNulls extends 0 | 1 = 1>
@@ -56,52 +57,24 @@ type ClickHouseOrmClientConfig<TSchema, TJoinUseNulls extends 0 | 1> = {
   defaultOptions?: ClickHouseBaseQueryOptions;
   instrumentations?: readonly ClickHouseOrmInstrumentation[];
   sessionController?: SessionController;
+  sessionConcurrencyController?: SessionConcurrencyController;
   joinUseNulls?: TJoinUseNulls;
 };
 
 type SessionController = {
   readonly sessionId: string;
   readonly ancestorSessionIds: readonly string[];
-  runSerial<TValue>(operation: () => Promise<TValue>): Promise<TValue>;
-  runLockedStream<TValue>(
-    operation: () => AsyncGenerator<TValue, void, unknown>,
-  ): AsyncGenerator<TValue, void, unknown>;
   registerTempTable(name: string): void;
   listTempTablesForCleanup(): readonly string[];
   createChildSessionController(sessionId: string): SessionController;
 };
 
 const createSessionController = (sessionId: string, ancestorSessionIds: readonly string[]): SessionController => {
-  let queueTail: Promise<void> = Promise.resolve();
   const tempTables: string[] = [];
 
   return {
     sessionId,
     ancestorSessionIds,
-    async runSerial<TValue>(operation: () => Promise<TValue>): Promise<TValue> {
-      const next = queueTail.then(operation, operation);
-      const clearQueue = () => undefined;
-      queueTail = next.then(clearQueue, clearQueue);
-      return next;
-    },
-    async *runLockedStream<TValue>(
-      operation: () => AsyncGenerator<TValue, void, unknown>,
-    ): AsyncGenerator<TValue, void, unknown> {
-      const previous = queueTail;
-      let release!: () => void;
-      const next = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      const continueWithNext = () => next;
-      queueTail = previous.then(continueWithNext, continueWithNext);
-      await previous;
-
-      try {
-        yield* operation();
-      } finally {
-        release();
-      }
-    },
     registerTempTable(name: string) {
       if (!tempTables.includes(name)) {
         tempTables.push(name);
@@ -125,6 +98,7 @@ export const createClickHouseOrmClient = <TSchema, TJoinUseNulls extends 0 | 1 =
   const defaultOptions = config.defaultOptions ?? {};
   const instrumentations = config.instrumentations ?? [];
   const sessionController = config.sessionController;
+  const sessionConcurrencyController = config.sessionConcurrencyController;
   const joinUseNulls = (config.joinUseNulls ?? 1) as TJoinUseNulls;
 
   let client!: ClickHouseOrmClient<TSchema, TJoinUseNulls>;
@@ -156,11 +130,14 @@ export const createClickHouseOrmClient = <TSchema, TJoinUseNulls extends 0 | 1 =
     } as ClickHouseBaseQueryOptions & TOptions;
   };
 
-  const runSerial = async <TValue>(operation: () => Promise<TValue>): Promise<TValue> => {
-    if (!sessionController) {
-      return operation();
+  const runSerial = async <TValue>(
+    options: ClickHouseBaseQueryOptions,
+    operation: () => Promise<TValue>,
+  ): Promise<TValue> => {
+    if (!sessionConcurrencyController) {
+      return await operation();
     }
-    return sessionController.runSerial(operation);
+    return await sessionConcurrencyController.run(options.session_id, operation);
   };
 
   const buildQueryEvent = (input: {
@@ -251,13 +228,14 @@ export const createClickHouseOrmClient = <TSchema, TJoinUseNulls extends 0 | 1 =
   };
 
   const runLockedStream = async function* <TValue>(
+    options: ClickHouseBaseQueryOptions,
     operation: () => AsyncGenerator<TValue, void, unknown>,
   ): AsyncGenerator<TValue, void, unknown> {
-    if (!sessionController) {
+    if (!sessionConcurrencyController) {
       yield* operation();
       return;
     }
-    yield* sessionController.runLockedStream(operation);
+    yield* sessionConcurrencyController.runStream(options.session_id, operation);
   };
 
   const executeCompiled = async <TResult extends Record<string, unknown>>(
@@ -271,7 +249,7 @@ export const createClickHouseOrmClient = <TSchema, TJoinUseNulls extends 0 | 1 =
     };
     const queryConfig = buildQueryParams(compiled, mergedOptions);
 
-    return runSerial(async () => {
+    return runSerial(mergedOptions, async () => {
       const operation = resolveSqlOperation(queryConfig.query);
       const mode = compiled.mode === "command" ? (operation === "INSERT" ? "insert" : "command") : "query";
 
@@ -345,7 +323,7 @@ export const createClickHouseOrmClient = <TSchema, TJoinUseNulls extends 0 | 1 =
     const queryConfig = buildQueryParams(compiled, mergedOptions);
     const operation = resolveSqlOperation(queryConfig.query);
 
-    yield* runLockedStream(() =>
+    yield* runLockedStream(mergedOptions, () =>
       streamWithInstrumentation(
         {
           mode: "stream",
@@ -371,6 +349,7 @@ export const createClickHouseOrmClient = <TSchema, TJoinUseNulls extends 0 | 1 =
       instrumentations,
       schema: config.schema,
       sessionController: nextSessionController,
+      sessionConcurrencyController,
       joinUseNulls: nextJoinUseNulls ?? (joinUseNulls as unknown as TNextJoinUseNulls),
     });
   };
@@ -391,7 +370,7 @@ export const createClickHouseOrmClient = <TSchema, TJoinUseNulls extends 0 | 1 =
     async execute(query: RawQueryInput, options?: ClickHouseQueryOptions) {
       const mergedOptions = mergeOptions(options);
       const normalized = normalizeRawQueryInput(query);
-      return runSerial(async () => {
+      return runSerial(mergedOptions, async () => {
         return executeWithInstrumentation(
           {
             mode: "query",
@@ -432,7 +411,7 @@ export const createClickHouseOrmClient = <TSchema, TJoinUseNulls extends 0 | 1 =
         });
       };
 
-      yield* runLockedStream(() =>
+      yield* runLockedStream(mergedOptions, () =>
         streamWithInstrumentation(
           {
             mode: "stream",
@@ -449,7 +428,7 @@ export const createClickHouseOrmClient = <TSchema, TJoinUseNulls extends 0 | 1 =
     async command(query: RawQueryInput, options?: ClickHouseBaseQueryOptions): Promise<void> {
       const mergedOptions = mergeOptions(options);
       const normalized = normalizeRawQueryInput(query);
-      await runSerial(async () => {
+      await runSerial(mergedOptions, async () => {
         await executeWithInstrumentation(
           {
             mode: "command",
@@ -471,7 +450,7 @@ export const createClickHouseOrmClient = <TSchema, TJoinUseNulls extends 0 | 1 =
 
     async ping(options?: ClickHouseEndpointOptions): Promise<void> {
       const mergedOptions = mergeOptions(options);
-      await runSerial(async () => {
+      await runSerial(mergedOptions, async () => {
         await executeWithInstrumentation(
           {
             mode: "command",
@@ -490,7 +469,7 @@ export const createClickHouseOrmClient = <TSchema, TJoinUseNulls extends 0 | 1 =
 
     async replicasStatus(options?: ClickHouseEndpointOptions): Promise<void> {
       const mergedOptions = mergeOptions(options);
-      await runSerial(async () => {
+      await runSerial(mergedOptions, async () => {
         await executeWithInstrumentation(
           {
             mode: "command",
@@ -535,7 +514,7 @@ export const createClickHouseOrmClient = <TSchema, TJoinUseNulls extends 0 | 1 =
       const mergedOptions = mergeOptions(options);
       const tableName = toClickHouseTableName(table);
       const tableIdentifier = compileSql(sql.identifier({ table: tableName })).query;
-      return runSerial(async () => {
+      return runSerial(mergedOptions, async () => {
         await executeWithInstrumentation(
           {
             mode: "insert",

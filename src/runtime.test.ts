@@ -46,6 +46,11 @@ const readBodyText = async (body: unknown) => {
   return undefined;
 };
 
+const flushAsyncWork = async () => {
+  await Promise.resolve();
+  await Promise.resolve();
+};
+
 const expectRejectsWithClickhouseError = async (promise: Promise<unknown>, expected: Record<string, unknown>) => {
   try {
     await promise;
@@ -301,6 +306,212 @@ describe("ck-orm runtime", function describeClickHouseOrmRuntime() {
     }
   });
 
+  it("serializes concurrent requests that share the same session id by default", async function testDefaultSessionConcurrency() {
+    const pendingResponses: Array<() => void> = [];
+    let inFlight = 0;
+    let maxInFlight = 0;
+
+    const { calls } = setFetchMock((_url, _init) => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+
+      return new Promise<Response>((resolve) => {
+        pendingResponses.push(() => {
+          inFlight -= 1;
+          resolve(
+            new Response(JSON.stringify({ data: [] }), {
+              status: 200,
+            }),
+          );
+        });
+      });
+    });
+
+    const db = clickhouseClient({
+      host: "http://localhost:8123",
+      schema: { orderRewardLog },
+    });
+
+    const first = db.execute("select 1", {
+      query_id: "shared_session_q1",
+      session_id: "shared_session",
+    });
+    const second = db.execute("select 2", {
+      query_id: "shared_session_q2",
+      session_id: "shared_session",
+    });
+
+    await flushAsyncWork();
+    expect(calls).toHaveLength(1);
+    expect(maxInFlight).toBe(1);
+
+    pendingResponses.shift()?.();
+    await first;
+
+    await flushAsyncWork();
+    expect(calls).toHaveLength(2);
+    expect(maxInFlight).toBe(1);
+    expect(calls.map((call) => call.url.searchParams.get("query_id"))).toEqual([
+      "shared_session_q1",
+      "shared_session_q2",
+    ]);
+
+    pendingResponses.shift()?.();
+    await second;
+  });
+
+  it("serializes requests that inherit the client default session id", async function testClientDefaultSessionIdConcurrency() {
+    const pendingResponses: Array<() => void> = [];
+    let inFlight = 0;
+    let maxInFlight = 0;
+
+    const { calls } = setFetchMock((_url, _init) => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+
+      return new Promise<Response>((resolve) => {
+        pendingResponses.push(() => {
+          inFlight -= 1;
+          resolve(
+            new Response(JSON.stringify({ data: [] }), {
+              status: 200,
+            }),
+          );
+        });
+      });
+    });
+
+    const db = clickhouseClient({
+      host: "http://localhost:8123",
+      schema: { orderRewardLog },
+      session_id: "default_session",
+    });
+
+    const first = db.execute("select 1", {
+      query_id: "default_session_q1",
+    });
+    const second = db.execute("select 2", {
+      query_id: "default_session_q2",
+    });
+
+    await flushAsyncWork();
+    expect(calls).toHaveLength(1);
+    expect(maxInFlight).toBe(1);
+    expect(calls[0]?.url.searchParams.get("session_id")).toBe("default_session");
+
+    pendingResponses.shift()?.();
+    await first;
+
+    await flushAsyncWork();
+    expect(calls).toHaveLength(2);
+    expect(maxInFlight).toBe(1);
+    expect(calls[1]?.url.searchParams.get("session_id")).toBe("default_session");
+    expect(calls.map((call) => call.url.searchParams.get("query_id"))).toEqual([
+      "default_session_q1",
+      "default_session_q2",
+    ]);
+
+    pendingResponses.shift()?.();
+    await second;
+  });
+
+  it("shares the same session concurrency controller across root and runInSession clients", async function testSharedSessionLimiterAcrossChildren() {
+    const pendingResponses: Array<() => void> = [];
+
+    const { calls } = setFetchMock((_url, _init) => {
+      return new Promise<Response>((resolve) => {
+        pendingResponses.push(() => {
+          resolve(
+            new Response(JSON.stringify({ data: [] }), {
+              status: 200,
+            }),
+          );
+        });
+      });
+    });
+
+    const db = clickhouseClient({
+      host: "http://localhost:8123",
+      schema: { orderRewardLog },
+    });
+
+    const outside = db.execute("select 1", {
+      query_id: "outside_shared_session",
+      session_id: "shared_session",
+    });
+    const inside = db.runInSession(
+      async (session) => {
+        await session.execute("select 2", {
+          query_id: "inside_shared_session",
+        });
+      },
+      {
+        session_id: "shared_session",
+      },
+    );
+
+    await flushAsyncWork();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url.searchParams.get("query_id")).toBe("outside_shared_session");
+
+    pendingResponses.shift()?.();
+    await outside;
+
+    await flushAsyncWork();
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.url.searchParams.get("query_id")).toBe("inside_shared_session");
+    expect(calls[1]?.url.searchParams.get("session_id")).toBe("shared_session");
+
+    pendingResponses.shift()?.();
+    await inside;
+  });
+
+  it("removes the local same-session queue when session_max_concurrent_requests is raised", async function testConfigurableSessionConcurrency() {
+    const pendingResponses: Array<() => void> = [];
+    let inFlight = 0;
+    let maxInFlight = 0;
+
+    const { calls } = setFetchMock((_url, _init) => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+
+      return new Promise<Response>((resolve) => {
+        pendingResponses.push(() => {
+          inFlight -= 1;
+          resolve(
+            new Response(JSON.stringify({ data: [] }), {
+              status: 200,
+            }),
+          );
+        });
+      });
+    });
+
+    const db = clickhouseClient({
+      host: "http://localhost:8123",
+      schema: { orderRewardLog },
+      session_max_concurrent_requests: 2,
+    });
+
+    const first = db.execute("select 1", {
+      query_id: "parallel_session_q1",
+      session_id: "parallel_session",
+    });
+    const second = db.execute("select 2", {
+      query_id: "parallel_session_q2",
+      session_id: "parallel_session",
+    });
+
+    await flushAsyncWork();
+    expect(calls).toHaveLength(2);
+    expect(maxInFlight).toBe(2);
+
+    pendingResponses.shift()?.();
+    pendingResponses.shift()?.();
+
+    await Promise.all([first, second]);
+  });
+
   it("encodes auth with pure UTF-8 base64 and skips User-Agent in restricted runtimes", async function testAuthAndUserAgentBoundaries() {
     class BrowserLikeRequest {
       readonly headers: Headers;
@@ -463,6 +674,22 @@ describe("ck-orm runtime", function describeClickHouseOrmRuntime() {
         orderRewardLog: typeof orderRewardLog;
       }>),
     ).toThrow("clickhouseClient() no longer accepts session_check");
+
+    expect(() =>
+      clickhouseClient({
+        host: "http://localhost:8123",
+        schema: { orderRewardLog },
+        session_max_concurrent_requests: 0,
+      }),
+    ).toThrow("clickhouseClient() session_max_concurrent_requests must be a positive integer");
+
+    expect(() =>
+      clickhouseClient({
+        host: "http://localhost:8123",
+        schema: { orderRewardLog },
+        session_max_concurrent_requests: 1.5,
+      }),
+    ).toThrow("clickhouseClient() session_max_concurrent_requests must be a positive integer");
   });
 
   it("supports ping and replicasStatus through GET endpoint helpers", async function testSystemEndpointHelpers() {

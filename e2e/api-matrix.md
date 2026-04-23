@@ -12,17 +12,28 @@ This matrix records coverage from the real ClickHouse E2E suite only. It does no
 | `insert` | `write-paths.e2e.test.ts` |
 | `withSettings` | `session-cdc-stream.e2e.test.ts` |
 | `execute` | `query-basics.e2e.test.ts`, `advanced-clickhouse-sql.e2e.test.ts`, `observability.e2e.test.ts`, `injection-transport-and-boundaries.e2e.test.ts` |
-| `stream` | `session-cdc-stream.e2e.test.ts` |
+| `stream` | `session-cdc-stream.e2e.test.ts`, `session-concurrency.e2e.test.ts` |
 | `command` | `advanced-clickhouse-sql.e2e.test.ts`, `session-cdc-stream.e2e.test.ts`, `injection-transport-and-boundaries.e2e.test.ts` |
 | `ping` | `query-basics.e2e.test.ts` |
 | `replicasStatus` | `query-basics.e2e.test.ts` |
 | `insertJsonEachRow` | `write-paths.e2e.test.ts`, `session-cdc-stream.e2e.test.ts`, `seed.ts` |
-| `runInSession` | `session-cdc-stream.e2e.test.ts`, `injection-transport-and-boundaries.e2e.test.ts` |
+| `runInSession` | `session-cdc-stream.e2e.test.ts`, `session-security.e2e.test.ts`, `injection-transport-and-boundaries.e2e.test.ts` |
 | `registerTempTable` | `session-cdc-stream.e2e.test.ts` |
 | `createTemporaryTable` | `session-cdc-stream.e2e.test.ts`, `injection-identifiers.e2e.test.ts`, `injection-transport-and-boundaries.e2e.test.ts` |
 | `ck.createSessionId` | `query-basics.e2e.test.ts`, `session-cdc-stream.e2e.test.ts` |
 | `ck.decodeRow` | `query-basics.e2e.test.ts` |
 | `ck.expr` | `operators.e2e.test.ts`, `session-cdc-stream.e2e.test.ts` |
+
+## Session behavior
+
+| Scenario | Coverage location |
+| --- | --- |
+| same explicit `session_id` is serialized by default | `session-concurrency.e2e.test.ts` |
+| different `session_id` values remain parallel | `session-concurrency.e2e.test.ts` |
+| client default `session_id` is serialized too | `session-concurrency.e2e.test.ts` |
+| raising `session_max_concurrent_requests` above `1` can surface `SESSION_IS_LOCKED` | `session-concurrency.e2e.test.ts` |
+| nested child sessions use distinct ids and cannot reuse ancestor ids | `session-security.e2e.test.ts` |
+| sibling/child sessions stay isolated for temporary tables | `session-security.e2e.test.ts` |
 
 ## Query operators and builder
 
