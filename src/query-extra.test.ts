@@ -24,6 +24,7 @@ import {
   has,
   hasAll,
   hasAny,
+  hasSubstr,
   ilike,
   inArray,
   like,
@@ -496,22 +497,30 @@ describe("ck-orm query extras", function describeClickHouseOrmQueryExtras() {
           id: taggedOrders.id,
         })
         .from(taggedOrders)
-        .where(has(taggedOrders.tags, "vip"), hasAll(taggedOrders.tags, ["vip", "pro"]), hasAny(taggedOrders.tags, []))
+        .where(
+          has(taggedOrders.tags, "vip"),
+          hasAll(taggedOrders.tags, ["vip", "pro"]),
+          hasAny(taggedOrders.tags, []),
+          hasSubstr(taggedOrders.tags, ["vip"]),
+        )
         [compileQuerySymbol](),
     );
 
     expect(normalizeSql(built.query)).toContain("has(`tagged_orders`.`tags`, {orm_param1:String})");
     expect(normalizeSql(built.query)).toContain("hasAll(`tagged_orders`.`tags`, {orm_param2:Array(String)})");
     expect(normalizeSql(built.query)).toContain("hasAny(`tagged_orders`.`tags`, {orm_param3:Array(String)})");
+    expect(normalizeSql(built.query)).toContain("hasSubstr(`tagged_orders`.`tags`, {orm_param4:Array(String)})");
     expect(built.params).toEqual({
       orm_param1: "vip",
       orm_param2: ["vip", "pro"],
       orm_param3: [],
+      orm_param4: ["vip"],
     });
 
     expect(has(taggedOrders.tags, "vip").decoder(1)).toBe(true);
     expect(hasAll(taggedOrders.tags, ["vip"]).decoder(0)).toBe(false);
     expect(hasAny(taggedOrders.tags, ["vip"]).decoder("1")).toBe(true);
+    expect(hasSubstr(taggedOrders.tags, ["vip"]).decoder("1")).toBe(true);
   });
 
   it("supports drizzle-style db.count() for direct execution and scalar subqueries", async function testDbCount() {

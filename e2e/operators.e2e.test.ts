@@ -114,7 +114,7 @@ describeE2E("ck-orm e2e operators", function describeOperators() {
     expect(notExistsRows).toEqual([{ id: 4001 }, { id: 4002 }, { id: 4003 }]);
   });
 
-  it("supports has, hasAll and hasAny against array columns", async function testHasOperators() {
+  it("supports has, hasAll, hasAny and hasSubstr against array columns", async function testHasOperators() {
     const db = createE2EDb();
 
     const hasRows = await db
@@ -138,9 +138,17 @@ describeE2E("ck-orm e2e operators", function describeOperators() {
       .orderBy(webEvents.event_id)
       .limit(5);
 
+    const hasSubstrRows = await db
+      .select({ id: webEvents.event_id })
+      .from(webEvents)
+      .where(ck.hasSubstr(webEvents.tags, ["tag_0", "segment_0"]))
+      .orderBy(webEvents.event_id)
+      .limit(3);
+
     expect(hasRows).toEqual([{ id: "1" }, { id: "11" }, { id: "21" }]);
     expect(hasAllRows).toEqual([{ id: "1" }, { id: "11" }, { id: "21" }]);
     expect(hasAnyRows).toEqual([{ id: "1" }, { id: "2" }, { id: "6" }, { id: "11" }, { id: "12" }]);
+    expect(hasSubstrRows).toEqual([{ id: "1" }, { id: "11" }, { id: "21" }]);
   });
 
   it("supports asc, desc and expr in ordered builder queries", async function testOrderByAndExpr() {

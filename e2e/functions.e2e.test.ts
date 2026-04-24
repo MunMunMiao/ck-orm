@@ -229,6 +229,267 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
     expect(emptyJoinRows).toEqual([]);
   });
 
+  it("supports current ClickHouse array helper additions", async function testArrayHelperAdditions() {
+    const db = createE2EDb();
+
+    const [row] = await db.select({
+      anyLarge: fn.arrayExists(csql`x -> x > 2`, [1, 2, 3]).as("any_large"),
+      allPositive: fn.arrayAll(csql`x -> x > 0`, [1, 2, 3]).as("all_positive"),
+      countLarge: fn.arrayCount(csql`x -> x > 1`, [1, 2, 3]).as("count_large"),
+      filtered: fn.arrayFilter<number>(csql`x -> x > 1`, [1, 2, 3]).as("filtered"),
+      mapped: fn.arrayMap<number>(csql`x -> x + 1`, [1, 2]).as("mapped"),
+      firstLarge: fn.arrayFirst<number>(csql`x -> x > 1`, [1, 2, 3]).as("first_large"),
+      firstLargeIndex: fn.arrayFirstIndex(csql`x -> x > 1`, [1, 2, 3]).as("first_large_index"),
+      firstMissing: fn.arrayFirstOrNull<number>(csql`x -> x > 9`, [1, 2, 3]).as("first_missing"),
+      lastLarge: fn.arrayLast<number>(csql`x -> x > 1`, [1, 2, 3]).as("last_large"),
+      lastLargeIndex: fn.arrayLastIndex(csql`x -> x > 1`, [1, 2, 3]).as("last_large_index"),
+      lastMissing: fn.arrayLastOrNull<number>(csql`x -> x > 9`, [1, 2, 3]).as("last_missing"),
+      sortedAsc: fn.arraySort<number>([3, 1, 2]).as("sorted_asc"),
+      sortedDesc: fn.arrayReverseSort<number>([3, 1, 2]).as("sorted_desc"),
+      compacted: fn.arrayCompact<number>([1, 1, 2, 2, 3]).as("compacted"),
+      distinctValues: fn.arrayDistinct<number>([1, 1, 2]).as("distinct_values"),
+      diff: fn.arrayDifference<number>([1, 3, 6]).as("diff"),
+      cumSum: fn.arrayCumSum<number>([1, 2, 3]).as("cum_sum"),
+      enumerated: fn.arrayEnumerate(["a", "b"]).as("enumerated"),
+      uniqCount: fn.arrayUniq(["vip", "vip", "pro"]).as("uniq_count"),
+      equalCount: fn.countEqual([1, 1, 2], 1).as("equal_count"),
+      isEmpty: fn.empty([]).as("is_empty"),
+      emptyStrings: fn.emptyArrayString().as("empty_strings"),
+      singleEmptyString: fn.emptyArrayToSingle<string>(fn.emptyArrayString()).as("single_empty_string"),
+      hasTag: fn.has(["vip", "pro"], "vip").as("has_tag"),
+      hasAllTags: fn.hasAll(["vip", "pro"], ["vip"]).as("has_all_tags"),
+      hasAnyTags: fn.hasAny(["vip", "pro"], ["raw"]).as("has_any_tags"),
+      hasSubPath: fn.hasSubstr(["vip", "pro", "raw"], ["vip", "pro"]).as("has_sub_path"),
+      sortedIndex: fn.indexOfAssumeSorted([1, 2, 3], 2).as("sorted_index"),
+      generatedRange: fn.range(1, 4).as("generated_range"),
+      replicated: fn.replicate<string>("vip", [1, 2]).as("replicated"),
+      reversed: fn.reverse<number>([1, 2, 3]).as("reversed"),
+      excepted: fn.arrayExcept<string>(["vip", "pro"], ["pro"]).as("excepted"),
+      removed: fn.arrayRemove<string>(["vip", "pro"], "pro").as("removed"),
+      resized: fn.arrayResize<string>(["vip"], 2, "pro").as("resized"),
+      rotatedLeft: fn.arrayRotateLeft<number>([1, 2, 3], 1).as("rotated_left"),
+      shiftedLeft: fn.arrayShiftLeft<number>([1, 2, 3], 1, 0).as("shifted_left"),
+      kqlAsc: fn.kql_array_sort_asc<number>([3, 1, 2]).as("kql_asc"),
+      kqlDesc: fn.kql_array_sort_desc<number>([3, 1, 2]).as("kql_desc"),
+    });
+
+    expect(expectPresent(row, "array helper additions row")).toEqual({
+      anyLarge: true,
+      allPositive: true,
+      countLarge: "2",
+      filtered: ["2", "3"],
+      mapped: ["2", "3"],
+      firstLarge: "2",
+      firstLargeIndex: 2,
+      firstMissing: null,
+      lastLarge: "3",
+      lastLargeIndex: 3,
+      lastMissing: null,
+      sortedAsc: ["1", "2", "3"],
+      sortedDesc: ["3", "2", "1"],
+      compacted: ["1", "2", "3"],
+      distinctValues: ["1", "2"],
+      diff: ["0", "2", "3"],
+      cumSum: ["1", "3", "6"],
+      enumerated: [1, 2],
+      uniqCount: "2",
+      equalCount: "2",
+      isEmpty: true,
+      emptyStrings: [],
+      singleEmptyString: [""],
+      hasTag: true,
+      hasAllTags: true,
+      hasAnyTags: false,
+      hasSubPath: true,
+      sortedIndex: "2",
+      generatedRange: ["1", "2", "3"],
+      replicated: ["vip", "vip"],
+      reversed: ["3", "2", "1"],
+      excepted: ["vip"],
+      removed: ["vip"],
+      resized: ["vip", "pro"],
+      rotatedLeft: ["2", "3", "1"],
+      shiftedLeft: ["2", "3", "0"],
+      kqlAsc: [["1", "2", "3"]],
+      kqlDesc: [["3", "2", "1"]],
+    });
+  });
+
+  it("supports deterministic higher-order array helpers", async function testHigherOrderArrayHelpers() {
+    const db = createE2EDb();
+
+    const [row] = await db.select({
+      multiArrayExists: fn.arrayExists(csql`(x, y) -> x = y`, [1, 2, 3], [9, 2, 8]).as("multi_array_exists"),
+      filled: fn.arrayFill<number>(csql`x -> x > 0`, [1, 0, 2, 0]).as("filled"),
+      reverseFilled: fn.arrayReverseFill<number>(csql`x -> x > 0`, [1, 0, 2, 0]).as("reverse_filled"),
+      split: fn.arraySplit<number>(csql`x -> x = 0`, [1, 0, 2, 3, 0, 4]).as("split"),
+      reverseSplit: fn.arrayReverseSplit<number>(csql`x -> x = 0`, [1, 0, 2, 3, 0, 4]).as("reverse_split"),
+      folded: fn
+        .arrayFold<number>(csql`(acc, x, y) -> acc + x * y`, [1, 2, 3], [10, 20, 30], 0)
+        .mapWith((value) => Number(value))
+        .as("folded"),
+      lambdaSum: fn
+        .arraySum<number>(csql`(x, y) -> x + y`, [1, 2], [3, 4])
+        .mapWith((value) => Number(value))
+        .as("lambda_sum"),
+      lambdaMax: fn
+        .arrayMax<number>(csql`x -> -x`, [1, 2, 3])
+        .mapWith((value) => Number(value))
+        .as("lambda_max"),
+    });
+
+    expect(expectPresent(row, "higher-order array helpers row")).toEqual({
+      multiArrayExists: true,
+      filled: ["1", "1", "2", "2"],
+      reverseFilled: ["1", "2", "2", "0"],
+      split: [["1"], ["0", "2", "3"], ["0", "4"]],
+      reverseSplit: [["1", "0"], ["2", "3", "0"], ["4"]],
+      folded: 140,
+      lambdaSum: 10,
+      lambdaMax: -1,
+    });
+  });
+
+  it("supports deterministic array set, shape and constructor helpers", async function testArrayShapeAndConstructors() {
+    const db = createE2EDb();
+
+    const [row] = await db.select({
+      dense: fn.arrayEnumerateDense(["vip", "pro", "vip"]).as("dense"),
+      uniqEnumerated: fn.arrayEnumerateUniq(["vip", "pro", "vip"]).as("uniq_enumerated"),
+      unioned: fn.arrayUnion<number>([1, 2], [2, 3]).as("unioned"),
+      symmetric: fn.arraySymmetricDifference<number>([1, 2], [2, 3]).as("symmetric"),
+      shingles: fn.arrayShingles<readonly string[]>(["a", "b", "c"], 2).as("shingles"),
+      zippedUnaligned: fn.arrayZipUnaligned([1, 2], ["a"]).as("zipped_unaligned"),
+      popBack: fn.arrayPopBack<number>([1, 2, 3]).as("pop_back"),
+      popFront: fn.arrayPopFront<number>([1, 2, 3]).as("pop_front"),
+      pushBack: fn.arrayPushBack<number>([1, 2], 3).as("push_back"),
+      pushFront: fn.arrayPushFront<number>([2, 3], 1).as("push_front"),
+      withConstant: fn.arrayWithConstant<string>(3, "vip").as("with_constant"),
+      emptyDate: fn.emptyArrayDate().as("empty_date"),
+      emptyDateTime: fn.emptyArrayDateTime().as("empty_date_time"),
+      emptyFloat32: fn.emptyArrayFloat32().as("empty_float32"),
+      emptyFloat64: fn.emptyArrayFloat64().as("empty_float64"),
+      emptyInt8: fn.emptyArrayInt8().as("empty_int8"),
+      emptyInt16: fn.emptyArrayInt16().as("empty_int16"),
+      emptyInt32: fn.emptyArrayInt32().as("empty_int32"),
+      emptyInt64: fn.emptyArrayInt64().as("empty_int64"),
+      emptyUInt8: fn.emptyArrayUInt8().as("empty_uint8"),
+      emptyUInt16: fn.emptyArrayUInt16().as("empty_uint16"),
+      emptyUInt32: fn.emptyArrayUInt32().as("empty_uint32"),
+      emptyUInt64: fn.emptyArrayUInt64().as("empty_uint64"),
+    });
+
+    const presentRow = expectPresent(row, "array shape helpers row");
+    expect({
+      ...presentRow,
+      symmetric: [...presentRow.symmetric].map(String).sort(),
+      unioned: [...presentRow.unioned].map(String).sort(),
+    }).toEqual({
+      dense: [1, 2, 1],
+      uniqEnumerated: [1, 1, 2],
+      unioned: ["1", "2", "3"],
+      symmetric: ["1", "3"],
+      shingles: [
+        ["a", "b"],
+        ["b", "c"],
+      ],
+      zippedUnaligned: [
+        ["1", "a"],
+        ["2", null],
+      ],
+      popBack: ["1", "2"],
+      popFront: ["2", "3"],
+      pushBack: ["1", "2", "3"],
+      pushFront: ["1", "2", "3"],
+      withConstant: ["vip", "vip", "vip"],
+      emptyDate: [],
+      emptyDateTime: [],
+      emptyFloat32: [],
+      emptyFloat64: [],
+      emptyInt8: [],
+      emptyInt16: [],
+      emptyInt32: [],
+      emptyInt64: [],
+      emptyUInt8: [],
+      emptyUInt16: [],
+      emptyUInt32: [],
+      emptyUInt64: [],
+    });
+  });
+
+  it("supports deterministic numeric, scoring and ordering array helpers", async function testNumericAndOrderingArrays() {
+    const db = createE2EDb();
+
+    const [row] = await db.select({
+      avgValue: fn.arrayAvg([1, 2, 3]).as("avg_value"),
+      sumValue: fn
+        .arraySum<number>([1, 2, 3])
+        .mapWith((value) => Number(value))
+        .as("sum_value"),
+      productValue: fn
+        .arrayProduct<number>([1, 2, 3, 4])
+        .mapWith((value) => Number(value))
+        .as("product_value"),
+      maxValue: fn
+        .arrayMax<number>([1, 9, 3])
+        .mapWith((value) => Number(value))
+        .as("max_value"),
+      minValue: fn
+        .arrayMin<number>([1, 9, 3])
+        .mapWith((value) => Number(value))
+        .as("min_value"),
+      dotProduct: fn
+        .arrayDotProduct<number>([1, 2], [3, 4])
+        .mapWith((value) => Number(value))
+        .as("dot_product"),
+      reduced: fn
+        .arrayReduce<number>("sum", [1, 2, 3])
+        .mapWith((value) => Number(value))
+        .as("reduced"),
+      jaccard: fn.arrayJaccardIndex([1, 2], [2, 3]).as("jaccard"),
+      levenshtein: fn.arrayLevenshteinDistance(["a", "b"], ["a", "c"]).as("levenshtein"),
+      rocAuc: fn.arrayROCAUC([0.1, 0.9], [0, 1]).as("roc_auc"),
+      partialSortedHead: fn
+        .arraySlice<number>(fn.arrayPartialSort<number>(csql`toUInt8(2)`, [5, 1, 3, 2]), 1, 2)
+        .as("partial_sorted_head"),
+      partialReverseSortedHead: fn
+        .arraySlice<number>(fn.arrayPartialReverseSort<number>(csql`toUInt8(2)`, [5, 1, 3, 2]), 1, 2)
+        .as("partial_reverse_sorted_head"),
+      shuffledSorted: fn
+        .arraySort<number>(fn.arrayShuffle<number>([3, 1, 2], csql`toUInt64(42)`))
+        .as("shuffled_sorted"),
+      randomSampleSize: fn
+        .length(fn.arrayRandomSample<number>([1, 2, 3, 4], csql`toUInt8(2)`))
+        .as("random_sample_size"),
+      partialShuffleSize: fn
+        .length(fn.arrayPartialShuffle<number>([1, 2, 3, 4], csql`toUInt8(2)`, csql`toUInt64(42)`))
+        .as("partial_shuffle_size"),
+      rotatedRight: fn.arrayRotateRight<number>([1, 2, 3], 1).as("rotated_right"),
+      shiftedRight: fn.arrayShiftRight<number>([1, 2, 3], 1, 0).as("shifted_right"),
+    });
+
+    const presentRow = expectPresent(row, "numeric array helpers row");
+    expect(presentRow).toMatchObject({
+      avgValue: 2,
+      sumValue: 6,
+      productValue: 24,
+      maxValue: 9,
+      minValue: 1,
+      dotProduct: 11,
+      reduced: 6,
+      levenshtein: 1,
+      rocAuc: 1,
+      partialSortedHead: ["1", "2"],
+      partialReverseSortedHead: ["5", "3"],
+      shuffledSorted: ["1", "2", "3"],
+      randomSampleSize: "2",
+      partialShuffleSize: "4",
+      rotatedRight: ["3", "1", "2"],
+      shiftedRight: ["0", "1", "2"],
+    });
+    expect(presentRow.jaccard).toBeCloseTo(1 / 3);
+  });
+
   it("supports tableFn.call against the numbers table function", async function testTableFunction() {
     const db = createE2EDb();
     const numbers = fn.table.call("numbers", 5).as("n");

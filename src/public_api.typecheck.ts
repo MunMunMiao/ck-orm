@@ -70,6 +70,18 @@ const arrayElementOrNullSelection: Selection<string | null> = fn.arrayElementOrN
 const arraySliceSelection: Selection<string[]> = fn.arraySlice<string>(arraySelection, 1, 2);
 const arrayFlattenSelection: Selection<string[]> = fn.arrayFlatten<string>([["vip"], ["pro"]]);
 const arrayIntersectSelection: Selection<string[]> = fn.arrayIntersect<string>(["vip"], ["pro", "vip"]);
+const arrayExistsSelection: Selection<boolean> = fn.arrayExists(csql`x -> x = 'vip'`, arraySelection);
+const arrayFilterSelection: Selection<string[]> = fn.arrayFilter<string>(csql`x -> x != ''`, arraySelection);
+const arrayFirstSelection: Selection<string> = fn.arrayFirst<string>(csql`x -> x != ''`, arraySelection);
+const arrayFirstOrNullSelection: Selection<string | null> = fn.arrayFirstOrNull<string>(
+  csql`x -> x = 'missing'`,
+  arraySelection,
+);
+const emptyArraySelection: Selection<string[]> = fn.emptyArrayString();
+const kqlArraySortSelection: Selection<readonly [string[]]> =
+  fn.kql_array_sort_asc<readonly [string[]]>(arraySelection);
+const hasSubstrPredicate: Predicate = ck.hasSubstr(arraySelection, ["vip"]);
+const hasSubstrSelection: Selection<boolean> = fn.hasSubstr(arraySelection, ["vip"]);
 const arrayIndexSelection: Selection<string> = fn.indexOf(arraySelection, "vip");
 const arrayLengthSelection: Selection<string> = fn.length(arraySelection);
 const notEmptySelection: Selection<boolean> = fn.notEmpty(arraySelection);
@@ -110,6 +122,14 @@ void arrayElementOrNullSelection;
 void arraySliceSelection;
 void arrayFlattenSelection;
 void arrayIntersectSelection;
+void arrayExistsSelection;
+void arrayFilterSelection;
+void arrayFirstSelection;
+void arrayFirstOrNullSelection;
+void emptyArraySelection;
+void kqlArraySortSelection;
+void hasSubstrPredicate;
+void hasSubstrSelection;
 void arrayIndexSelection;
 void arrayLengthSelection;
 void notEmptySelection;

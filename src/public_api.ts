@@ -64,6 +64,7 @@ import {
   has,
   hasAll,
   hasAny,
+  hasSubstr,
   ilike,
   inArray,
   like,
@@ -111,6 +112,7 @@ type CkNamespace = {
   has: typeof has;
   hasAll: typeof hasAll;
   hasAny: typeof hasAny;
+  hasSubstr: typeof hasSubstr;
   exists: typeof exists;
   notExists: typeof notExists;
   asc: typeof asc;
@@ -318,6 +320,7 @@ export const ck: CkNamespace = {
   has,
   hasAll,
   hasAny,
+  hasSubstr,
   exists,
   notExists,
   asc,

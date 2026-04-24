@@ -5,7 +5,9 @@ import {
   type ClickHouseOrmQueryErrorEvent,
   type ClickHouseOrmQueryEvent,
   type ClickHouseOrmQueryResultEvent,
+  ck,
   csql,
+  fn,
 } from "./ck-orm";
 import { createE2EDb, users } from "./shared";
 import { describeE2E } from "./test-helpers";
@@ -123,9 +125,15 @@ describeE2E("ck-orm e2e observability", function describeObservability() {
       ],
     });
 
-    expect(await db.execute(csql`select ${users.id} as id from ${users} where ${users.id} = ${1}`)).toEqual([
-      { id: 1 },
-    ]);
+    expect(
+      await db
+        .select({
+          id: users.id,
+          hasMatch: fn.arrayExists(csql`x -> x = ${1}`, [1, 2]).as("has_match"),
+        })
+        .from(users)
+        .where(ck.eq(users.id, 1)),
+    ).toEqual([{ id: 1, hasMatch: true }]);
 
     await expect(db.execute(csql`SELECT * FROM missing_e2e_table`)).rejects.toThrow();
 
@@ -148,9 +156,10 @@ describeE2E("ck-orm e2e observability", function describeObservability() {
     expect(spans[0]?.name).toBe("clickhouse QUERY");
     expect(spans[0]?.attributes["db.system"]).toBe("clickhouse");
     expect(spans[0]?.attributes["app.component"]).toBe("ck-orm-e2e");
-    expect(spans[0]?.attributes["db.statement"]).toBe(
-      "select `users`.`id` as id from `users` where `users`.`id` = {orm_param1:Int64}",
+    expect(spans[0]?.attributes["db.statement"]).toContain(
+      "arrayExists(x -> x = {orm_param3:Int64}, {orm_param1:Array(Int64)}) as `has_match`",
     );
+    expect(spans[0]?.attributes["db.statement"]).toContain("where `users`.`id` = {orm_param2:Int32}");
     expect(spans[0]?.attributes["db.statement.hash"]).toBeDefined();
     expect(spans[0]?.ended).toBe(true);
     expect(spans[0]?.attributes).not.toHaveProperty("db.query_params");

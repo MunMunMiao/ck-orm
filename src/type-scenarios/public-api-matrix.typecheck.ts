@@ -238,26 +238,123 @@ type _ChTypeDataMatrix = Expect<
 
 const functionTypeMatrix = {
   array: fn.array<string>("vip", "pro"),
+  arrayAUCPR: fn.arrayAUCPR([0.1, 0.4], [0, 1]),
+  arrayAll: fn.arrayAll(csql`x -> x > 0`, [1, 2]),
+  arrayAutocorrelation: fn.arrayAutocorrelation([1, 2, 3]),
+  arrayAvg: fn.arrayAvg([1, 2, 3]),
+  arrayCompact: fn.arrayCompact<string>(["vip", "vip", "pro"]),
   arrayConcat: fn.arrayConcat<string>(["vip"], ["pro"]),
+  arrayCount: fn.arrayCount(csql`x -> x > 0`, [1, 2, 3]),
+  arrayCumSum: fn.arrayCumSum<number>([1, 2, 3]),
+  arrayCumSumNonNegative: fn.arrayCumSumNonNegative<number>([1, -3, 4]),
+  arrayDifference: fn.arrayDifference<number>([1, 3, 6]),
+  arrayDistinct: fn.arrayDistinct<string>(["vip", "vip"]),
+  arrayDotProduct: fn.arrayDotProduct<number>([1, 2], [3, 4]),
   arrayElement: fn.arrayElement<string>(["vip"], 1),
   arrayElementOrNull: fn.arrayElementOrNull<string>(["vip"], 2),
+  arrayEnumerate: fn.arrayEnumerate(["vip"]),
+  arrayEnumerateDense: fn.arrayEnumerateDense(["vip"]),
+  arrayEnumerateDenseRanked: fn.arrayEnumerateDenseRanked(1, [[1, 2]], 2),
+  arrayEnumerateUniq: fn.arrayEnumerateUniq(["vip"], ["pro"]),
+  arrayEnumerateUniqRanked: fn.arrayEnumerateUniqRanked(1, [[1, 2]], 2),
+  arrayExcept: fn.arrayExcept<string>(["vip", "pro"], ["pro"]),
+  arrayExists: fn.arrayExists(csql`x -> x > 1`, [1, 2]),
+  arrayFill: fn.arrayFill<number>(csql`x -> x > 0`, [1, 0, 2]),
+  arrayFilter: fn.arrayFilter<number>(csql`x -> x > 1`, [1, 2, 3]),
+  arrayFirst: fn.arrayFirst<number>(csql`x -> x > 1`, [1, 2, 3]),
+  arrayFirstIndex: fn.arrayFirstIndex(csql`x -> x > 1`, [1, 2, 3]),
+  arrayFirstOrNull: fn.arrayFirstOrNull<number>(csql`x -> x > 9`, [1, 2, 3]),
   arrayFlatten: fn.arrayFlatten<string>([["vip"], ["pro"]]),
+  arrayFold: fn.arrayFold<number>(csql`(acc, x) -> acc + x`, [1, 2], 0),
   arrayIntersect: fn.arrayIntersect<string>(["vip"], ["pro", "vip"]),
+  arrayJaccardIndex: fn.arrayJaccardIndex(["vip"], ["vip", "pro"]),
   arrayJoin: fn.arrayJoin<number>([1, 2]),
+  arrayLast: fn.arrayLast<number>(csql`x -> x > 1`, [1, 2, 3]),
+  arrayLastIndex: fn.arrayLastIndex(csql`x -> x > 1`, [1, 2, 3]),
+  arrayLastOrNull: fn.arrayLastOrNull<number>(csql`x -> x > 9`, [1, 2, 3]),
+  arrayLevenshteinDistance: fn.arrayLevenshteinDistance(["A"], ["B"]),
+  arrayLevenshteinDistanceWeighted: fn.arrayLevenshteinDistanceWeighted(["A"], ["B"], [1], [1]),
+  arrayMap: fn.arrayMap<number>(csql`x -> x + 1`, [1, 2]),
+  arrayMax: fn.arrayMax<number>([1, 2]),
+  arrayMin: fn.arrayMin<number>([1, 2]),
+  arrayNormalizedGini: fn.arrayNormalizedGini([0.9, 0.3], [1, 0]),
+  arrayPartialReverseSort: fn.arrayPartialReverseSort<number>(2, [5, 1, 3]),
+  arrayPartialShuffle: fn.arrayPartialShuffle<number>([1, 2, 3], 2),
+  arrayPartialSort: fn.arrayPartialSort<number>(2, [5, 1, 3]),
+  arrayPopBack: fn.arrayPopBack<string>(["vip", "pro"]),
+  arrayPopFront: fn.arrayPopFront<string>(["vip", "pro"]),
+  arrayProduct: fn.arrayProduct<number>([1, 2, 3]),
+  arrayPushBack: fn.arrayPushBack<string>(["vip"], "pro"),
+  arrayPushFront: fn.arrayPushFront<string>(["pro"], "vip"),
+  arrayROCAUC: fn.arrayROCAUC([0.1, 0.9], [0, 1]),
+  arrayRandomSample: fn.arrayRandomSample<string>(["vip", "pro"], 1),
+  arrayReduce: fn.arrayReduce<string>("sum", [1, 2]),
+  arrayReduceInRanges: fn.arrayReduceInRanges<string>("sum", [[1, 2]], [1, 2]),
+  arrayRemove: fn.arrayRemove<string>(["vip", "pro"], "pro"),
+  arrayResize: fn.arrayResize<string>(["vip"], 2, "pro"),
+  arrayReverse: fn.arrayReverse<string>(["vip", "pro"]),
+  arrayReverseFill: fn.arrayReverseFill<number>(csql`x -> x > 0`, [1, 0, 2]),
+  arrayReverseSort: fn.arrayReverseSort<number>([2, 1]),
+  arrayReverseSplit: fn.arrayReverseSplit<number>(csql`x -> x = 0`, [1, 0, 2]),
+  arrayRotateLeft: fn.arrayRotateLeft<number>([1, 2, 3], 1),
+  arrayRotateRight: fn.arrayRotateRight<number>([1, 2, 3], 1),
+  arrayShiftLeft: fn.arrayShiftLeft<number>([1, 2, 3], 1, 0),
+  arrayShiftRight: fn.arrayShiftRight<number>([1, 2, 3], 1, 0),
+  arrayShingles: fn.arrayShingles<readonly string[]>(["a", "b", "c"], 2),
+  arrayShuffle: fn.arrayShuffle<string>(["vip", "pro"]),
+  arraySimilarity: fn.arraySimilarity(["A"], ["B"], [1], [1]),
   arraySlice: fn.arraySlice<string>(["vip", "pro"], 1, 1),
+  arraySort: fn.arraySort<number>([2, 1]),
+  arraySplit: fn.arraySplit<number>(csql`x -> x = 0`, [1, 0, 2]),
+  arraySum: fn.arraySum<number>([1, 2]),
+  arraySymmetricDifference: fn.arraySymmetricDifference<string>(["vip"], ["pro"]),
+  arrayTranspose: fn.arrayTranspose<number>([
+    [1, 2],
+    [3, 4],
+  ]),
+  arrayUnion: fn.arrayUnion<string>(["vip"], ["pro"]),
+  arrayUniq: fn.arrayUniq(["vip", "vip"]),
+  arrayWithConstant: fn.arrayWithConstant<string>(2, "vip"),
   arrayZip: fn.arrayZip([1], ["vip"]),
+  arrayZipUnaligned: fn.arrayZipUnaligned([1], ["vip"]),
   avg: fn.avg(activityLedger.actor_id),
   call: fn.call<number>("abs", activityLedger.actor_id),
   coalesce: fn.coalesce<string>(activityLedger.delta_value, "0"),
   count: fn.count(),
+  countEqual: fn.countEqual(["vip", "vip"], "vip"),
   countIf: fn.countIf(ck.eq(activityLedger.event_phase, 1)),
+  empty: fn.empty([]),
+  emptyArrayDate: fn.emptyArrayDate(),
+  emptyArrayDateTime: fn.emptyArrayDateTime(),
+  emptyArrayFloat32: fn.emptyArrayFloat32(),
+  emptyArrayFloat64: fn.emptyArrayFloat64(),
+  emptyArrayInt16: fn.emptyArrayInt16(),
+  emptyArrayInt32: fn.emptyArrayInt32(),
+  emptyArrayInt64: fn.emptyArrayInt64(),
+  emptyArrayInt8: fn.emptyArrayInt8(),
+  emptyArrayString: fn.emptyArrayString(),
+  emptyArrayToSingle: fn.emptyArrayToSingle<string>(fn.emptyArrayString()),
+  emptyArrayUInt16: fn.emptyArrayUInt16(),
+  emptyArrayUInt32: fn.emptyArrayUInt32(),
+  emptyArrayUInt64: fn.emptyArrayUInt64(),
+  emptyArrayUInt8: fn.emptyArrayUInt8(),
+  has: fn.has(chTypeNameMatrix.array[0], "vip"),
+  hasAll: fn.hasAll(chTypeNameMatrix.array[0], ["vip"]),
+  hasAny: fn.hasAny(chTypeNameMatrix.array[0], ["vip"]),
+  hasSubstr: fn.hasSubstr(chTypeNameMatrix.array[0], ["vip"]),
   indexOf: fn.indexOf(["vip"], "vip"),
+  indexOfAssumeSorted: fn.indexOfAssumeSorted(["pro", "vip"], "vip"),
   jsonExtract: fn.jsonExtract(activityMetricLog.payload, chType.array(chType.string()), "labels"),
+  kql_array_sort_asc: fn.kql_array_sort_asc<readonly [string[]]>(["pro", "vip"]),
+  kql_array_sort_desc: fn.kql_array_sort_desc<readonly [string[]]>(["pro", "vip"]),
   length: fn.length(["vip"]),
   max: fn.max<string>(activityLedger.system_id),
   min: fn.min<number>(activityLedger.actor_id),
   not: fn.not(ck.eq(activityLedger.event_phase, 1)),
   notEmpty: fn.notEmpty(["vip"]),
+  range: fn.range(1, 5),
+  replicate: fn.replicate<string>("vip", [1, 2]),
+  reverse: fn.reverse<string>(["vip", "pro"]),
   sum: fn.sum(activityLedger.delta_value),
   sumIf: fn.sumIf(activityLedger.delta_value, ck.eq(activityLedger.event_phase, 1)),
   toDate: fn.toDate(activityLedger.event_time),
@@ -276,43 +373,110 @@ const tableFunctionTypeMatrix = {
 
 type _FunctionDataMatrix = Expect<
   Equal<
-    {
-      readonly [K in keyof typeof functionTypeMatrix]: (typeof functionTypeMatrix)[K] extends Selection<infer TData>
-        ? TData
-        : never;
-    },
+    Pick<
+      {
+        readonly [K in keyof typeof functionTypeMatrix]: (typeof functionTypeMatrix)[K] extends Selection<infer TData>
+          ? TData
+          : never;
+      },
+      | "array"
+      | "arrayAUCPR"
+      | "arrayAll"
+      | "arrayAutocorrelation"
+      | "arrayAvg"
+      | "arrayCount"
+      | "arrayDotProduct"
+      | "arrayEnumerate"
+      | "arrayEnumerateDense"
+      | "arrayExists"
+      | "arrayFill"
+      | "arrayFilter"
+      | "arrayFirst"
+      | "arrayFirstIndex"
+      | "arrayFirstOrNull"
+      | "arrayFold"
+      | "arrayJaccardIndex"
+      | "arrayLast"
+      | "arrayLastIndex"
+      | "arrayLastOrNull"
+      | "arrayLevenshteinDistance"
+      | "arrayMap"
+      | "arrayMax"
+      | "arrayMin"
+      | "arrayPartialSort"
+      | "arrayProduct"
+      | "arrayROCAUC"
+      | "arrayReduce"
+      | "arrayReverseSplit"
+      | "arraySimilarity"
+      | "arraySum"
+      | "arrayZip"
+      | "count"
+      | "emptyArrayDate"
+      | "emptyArrayFloat64"
+      | "emptyArrayInt64"
+      | "emptyArrayString"
+      | "has"
+      | "hasAll"
+      | "hasAny"
+      | "hasSubstr"
+      | "indexOf"
+      | "kql_array_sort_asc"
+      | "length"
+      | "notEmpty"
+      | "range"
+      | "toDate"
+      | "tupleElement"
+    >,
     {
       readonly array: string[];
-      readonly arrayConcat: string[];
-      readonly arrayElement: string;
-      readonly arrayElementOrNull: string | null;
-      readonly arrayFlatten: string[];
-      readonly arrayIntersect: string[];
-      readonly arrayJoin: number;
-      readonly arraySlice: string[];
+      readonly arrayAUCPR: number;
+      readonly arrayAll: boolean;
+      readonly arrayAutocorrelation: number[];
+      readonly arrayAvg: number;
+      readonly arrayCount: string;
+      readonly arrayDotProduct: number;
+      readonly arrayEnumerate: number[];
+      readonly arrayEnumerateDense: number[];
+      readonly arrayExists: boolean;
+      readonly arrayFill: number[];
+      readonly arrayFilter: number[];
+      readonly arrayFirst: number;
+      readonly arrayFirstIndex: number;
+      readonly arrayFirstOrNull: number | null;
+      readonly arrayFold: number;
+      readonly arrayJaccardIndex: number;
+      readonly arrayLast: number;
+      readonly arrayLastIndex: number;
+      readonly arrayLastOrNull: number | null;
+      readonly arrayLevenshteinDistance: number;
+      readonly arrayMap: number[];
+      readonly arrayMax: number;
+      readonly arrayMin: number;
+      readonly arrayPartialSort: number[];
+      readonly arrayProduct: number;
+      readonly arrayROCAUC: number;
+      readonly arrayReduce: string;
+      readonly arrayReverseSplit: number[];
+      readonly arraySimilarity: number;
+      readonly arraySum: number;
       readonly arrayZip: unknown[];
-      readonly avg: number;
-      readonly call: number;
-      readonly coalesce: string;
       readonly count: string;
-      readonly countIf: string;
+      readonly emptyArrayDate: Date[];
+      readonly emptyArrayFloat64: number[];
+      readonly emptyArrayInt64: string[];
+      readonly emptyArrayString: string[];
+      readonly has: boolean;
+      readonly hasAll: boolean;
+      readonly hasAny: boolean;
+      readonly hasSubstr: boolean;
       readonly indexOf: string;
-      readonly jsonExtract: string[];
+      readonly kql_array_sort_asc: readonly [string[]];
       readonly length: string;
-      readonly max: string;
-      readonly min: number;
-      readonly not: boolean;
       readonly notEmpty: boolean;
-      readonly sum: number | string;
-      readonly sumIf: number | string;
+      readonly range: number[];
       readonly toDate: Date;
-      readonly toDateTime: Date;
-      readonly toStartOfMonth: Date;
-      readonly toString: string;
-      readonly tuple: unknown[];
       readonly tupleElement: number;
-      readonly uniqExact: string;
-      readonly withParams: number;
     }
   >
 >;
@@ -337,6 +501,7 @@ const ckApiMatrix = {
   has: ck.has(chTypeNameMatrix.array[0], "vip"),
   hasAll: ck.hasAll(chTypeNameMatrix.array[0], ["vip"]),
   hasAny: ck.hasAny(chTypeNameMatrix.array[0], ["vip"]),
+  hasSubstr: ck.hasSubstr(chTypeNameMatrix.array[0], ["vip"]),
   ilike: ck.ilike(activityLedger.system_id, "%system%"),
   inArray: ck.inArray(activityLedger.event_phase, [0, 1]),
   like: ck.like(activityLedger.system_id, "%system%"),

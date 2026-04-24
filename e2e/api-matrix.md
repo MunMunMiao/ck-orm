@@ -1,6 +1,14 @@
 # `ck-orm` E2E API Matrix
 
-This matrix records coverage from the real ClickHouse E2E suite only. It does not include pure type-level tests.
+This matrix records the public API coverage contract. Runtime behavior rows point to the real ClickHouse E2E suite; surface and version-gated rows point to unit/type coverage when a real-server assertion would be redundant, unstable, or outside the bundled `clickhouse/clickhouse-server:26.3` target.
+
+## Public package surface
+
+| API | Coverage location |
+| --- | --- |
+| root runtime exports: `ck`, `fn`, `csql`, `chType`, `chTable`, `alias`, `clickhouseClient`, `isClickHouseOrmError`, `isDecodeError` | `src/public_api.test.ts` |
+| root type exports: columns, tables, query selections, compiled query metadata, runtime config/options/settings/session, observability events, error contracts, schema inference helpers, `SQLFragment`, `JsonPathSegment` | `src/public_api.test.ts`, `src/public_api.typecheck.ts`, `src/type-scenarios/public-api-matrix.typecheck.ts` |
+| namespace key guards for `ck`, `fn`, `fn.table`, `csql`, `chType` | `src/public_api.test.ts`, `src/type-scenarios/public-api-matrix.typecheck.ts` |
 
 ## Runtime API
 
@@ -59,6 +67,7 @@ This matrix records coverage from the real ClickHouse E2E suite only. It does no
 | `ck.has` | `operators.e2e.test.ts` |
 | `ck.hasAll` | `operators.e2e.test.ts` |
 | `ck.hasAny` | `operators.e2e.test.ts` |
+| `ck.hasSubstr` | `operators.e2e.test.ts` |
 | `ck.lt` | `operators.e2e.test.ts`, `builder-analytics.e2e.test.ts` |
 | `ck.lte` | `operators.e2e.test.ts` |
 | `ck.contains` | `injection-values.e2e.test.ts` |
@@ -133,11 +142,26 @@ This matrix records coverage from the real ClickHouse E2E suite only. It does no
 | `fn.arraySlice` | `functions.e2e.test.ts` |
 | `fn.arrayFlatten` | `functions.e2e.test.ts` |
 | `fn.arrayIntersect` | `functions.e2e.test.ts` |
+| `fn.arrayExists`, `fn.arrayAll`, `fn.arrayCount` | `functions.e2e.test.ts` |
+| `fn.arrayFilter`, `fn.arrayMap`, `fn.arrayFirst`, `fn.arrayFirstIndex`, `fn.arrayFirstOrNull`, `fn.arrayLast`, `fn.arrayLastIndex`, `fn.arrayLastOrNull` | `functions.e2e.test.ts` |
+| `fn.arrayFill`, `fn.arrayReverseFill`, `fn.arraySplit`, `fn.arrayReverseSplit`, `fn.arrayFold` | `functions.e2e.test.ts` |
+| `fn.arrayAvg`, `fn.arraySum`, `fn.arrayProduct`, `fn.arrayMax`, `fn.arrayMin`, `fn.arrayDotProduct`, `fn.arrayReduce` | `functions.e2e.test.ts` |
+| `fn.arrayJaccardIndex`, `fn.arrayLevenshteinDistance`, `fn.arrayROCAUC` | `functions.e2e.test.ts` |
+| `fn.arrayCompact`, `fn.arrayDistinct`, `fn.arrayDifference`, `fn.arrayCumSum`, `fn.arrayEnumerate`, `fn.arrayEnumerateDense`, `fn.arrayEnumerateUniq` | `functions.e2e.test.ts` |
+| `fn.arraySort`, `fn.arrayReverseSort`, `fn.arrayReverse`, `fn.arrayRotateLeft`, `fn.arrayRotateRight`, `fn.arrayShiftLeft`, `fn.arrayShiftRight` | `functions.e2e.test.ts` |
+| `fn.arrayPartialSort`, `fn.arrayPartialReverseSort`, `fn.arrayShuffle`, `fn.arrayPartialShuffle`, `fn.arrayRandomSample` | `functions.e2e.test.ts` structural assertions |
+| `fn.arrayExcept`, `fn.arrayRemove`, `fn.arrayResize`, `fn.arrayUniq`, `fn.arrayUnion`, `fn.arraySymmetricDifference` | `functions.e2e.test.ts` |
+| `fn.arrayShingles`, `fn.arrayWithConstant`, `fn.arrayPopBack`, `fn.arrayPopFront`, `fn.arrayPushBack`, `fn.arrayPushFront`, `fn.arrayZipUnaligned` | `functions.e2e.test.ts` |
+| `fn.empty`, `fn.emptyArrayDate`, `fn.emptyArrayDateTime`, `fn.emptyArrayFloat32`, `fn.emptyArrayFloat64`, `fn.emptyArrayInt8`, `fn.emptyArrayInt16`, `fn.emptyArrayInt32`, `fn.emptyArrayInt64`, `fn.emptyArrayString`, `fn.emptyArrayUInt8`, `fn.emptyArrayUInt16`, `fn.emptyArrayUInt32`, `fn.emptyArrayUInt64`, `fn.emptyArrayToSingle` | `functions.e2e.test.ts` |
+| `fn.has`, `fn.hasAll`, `fn.hasAny`, `fn.hasSubstr`, `fn.indexOfAssumeSorted`, `fn.range`, `fn.replicate`, `fn.kql_array_sort_asc`, `fn.kql_array_sort_desc`, `fn.reverse` | `functions.e2e.test.ts` |
 | `fn.indexOf` | `functions.e2e.test.ts` |
 | `fn.length` | `functions.e2e.test.ts` |
 | `fn.notEmpty` | `functions.e2e.test.ts` |
 | `fn.not` | `functions.e2e.test.ts` |
 | `fn.table.call` | `functions.e2e.test.ts`, `injection-identifiers.e2e.test.ts` |
+| version-gated or long-tail array helpers: `fn.arrayAUCPR`, `fn.arrayAutocorrelation`, `fn.arrayCumSumNonNegative`, `fn.arrayEnumerateDenseRanked`, `fn.arrayEnumerateUniqRanked`, `fn.arrayLevenshteinDistanceWeighted`, `fn.arrayNormalizedGini`, `fn.arrayReduceInRanges`, `fn.arraySimilarity`, `fn.arrayTranspose` | `src/functions.test.ts`, `src/type-scenarios/public-api-matrix.typecheck.ts` |
+
+All `fn` keys are guarded by `src/public_api.test.ts` and `src/type-scenarios/public-api-matrix.typecheck.ts`; every official array helper also has SQL compile coverage in `src/functions.test.ts`.
 
 ## Schema DSL
 

@@ -1762,6 +1762,19 @@ export const hasAny = (arrX: unknown, arrY: unknown): Predicate => {
   });
 };
 
+export const hasSubstr = (array: unknown, needle: unknown): Predicate => {
+  const arrayExpression = ensureComparableExpression(array);
+  return createExpression<boolean>({
+    compile: (ctx) =>
+      compilePredicateFunction("hasSubstr", [
+        arrayExpression.compile(ctx),
+        compileArrayFunctionArg(needle, ctx, arrayExpression),
+      ]),
+    decoder: (value) => Boolean(value),
+    sqlType: "Bool",
+  });
+};
+
 const createInExpression = (
   negate: boolean,
   left: unknown,

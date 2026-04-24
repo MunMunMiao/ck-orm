@@ -1083,7 +1083,7 @@ for await (const row of db.stream(csql`select 1`, {
 
 ### `fn`
 
-Common helpers include:
+Generic, conversion, aggregate, JSON, tuple, and table-related helpers include:
 
 - `fn.call()`
 - `fn.withParams()`
@@ -1102,22 +1102,119 @@ Common helpers include:
 - `fn.coalesce()`
 - `fn.jsonExtract()`
 - `fn.tuple()`
-- `fn.arrayZip()`
 - `fn.arrayJoin()`
 - `fn.tupleElement()`
-- `fn.array()`
-- `fn.arrayConcat()`
-- `fn.arrayElement()`
-- `fn.arrayElementOrNull()`
-- `fn.arraySlice()`
-- `fn.arrayFlatten()`
-- `fn.arrayIntersect()`
-- `fn.indexOf()`
-- `fn.length()`
-- `fn.notEmpty()`
 - `fn.not()`
 
-`fn.call(name, ...)` and `fn.withParams(name, ...)` validate `name` as a SQL identifier before compilation.
+Array helper names mirror the canonical headings in the ClickHouse [Array functions](https://clickhouse.com/docs/sql-reference/functions/array-functions) reference. Alias-only names stay available through `fn.call(...)` instead of expanding the public API twice.
+
+- `fn.array()`
+- `fn.arrayAUCPR()`
+- `fn.arrayAll()`
+- `fn.arrayAutocorrelation()`
+- `fn.arrayAvg()`
+- `fn.arrayCompact()`
+- `fn.arrayConcat()`
+- `fn.arrayCount()`
+- `fn.arrayCumSum()`
+- `fn.arrayCumSumNonNegative()`
+- `fn.arrayDifference()`
+- `fn.arrayDistinct()`
+- `fn.arrayDotProduct()`
+- `fn.arrayElement()`
+- `fn.arrayElementOrNull()`
+- `fn.arrayEnumerate()`
+- `fn.arrayEnumerateDense()`
+- `fn.arrayEnumerateDenseRanked()`
+- `fn.arrayEnumerateUniq()`
+- `fn.arrayEnumerateUniqRanked()`
+- `fn.arrayExcept()`
+- `fn.arrayExists()`
+- `fn.arrayFill()`
+- `fn.arrayFilter()`
+- `fn.arrayFirst()`
+- `fn.arrayFirstIndex()`
+- `fn.arrayFirstOrNull()`
+- `fn.arrayFlatten()`
+- `fn.arrayFold()`
+- `fn.arrayIntersect()`
+- `fn.arrayJaccardIndex()`
+- `fn.arrayLast()`
+- `fn.arrayLastIndex()`
+- `fn.arrayLastOrNull()`
+- `fn.arrayLevenshteinDistance()`
+- `fn.arrayLevenshteinDistanceWeighted()`
+- `fn.arrayMap()`
+- `fn.arrayMax()`
+- `fn.arrayMin()`
+- `fn.arrayNormalizedGini()`
+- `fn.arrayPartialReverseSort()`
+- `fn.arrayPartialShuffle()`
+- `fn.arrayPartialSort()`
+- `fn.arrayPopBack()`
+- `fn.arrayPopFront()`
+- `fn.arrayProduct()`
+- `fn.arrayPushBack()`
+- `fn.arrayPushFront()`
+- `fn.arrayROCAUC()`
+- `fn.arrayRandomSample()`
+- `fn.arrayReduce()`
+- `fn.arrayReduceInRanges()`
+- `fn.arrayRemove()`
+- `fn.arrayResize()`
+- `fn.arrayReverse()`
+- `fn.arrayReverseFill()`
+- `fn.arrayReverseSort()`
+- `fn.arrayReverseSplit()`
+- `fn.arrayRotateLeft()`
+- `fn.arrayRotateRight()`
+- `fn.arrayShiftLeft()`
+- `fn.arrayShiftRight()`
+- `fn.arrayShingles()`
+- `fn.arrayShuffle()`
+- `fn.arraySimilarity()`
+- `fn.arraySlice()`
+- `fn.arraySort()`
+- `fn.arraySplit()`
+- `fn.arraySum()`
+- `fn.arraySymmetricDifference()`
+- `fn.arrayTranspose()`
+- `fn.arrayUnion()`
+- `fn.arrayUniq()`
+- `fn.arrayWithConstant()`
+- `fn.arrayZip()`
+- `fn.arrayZipUnaligned()`
+- `fn.countEqual()`
+- `fn.empty()`
+- `fn.emptyArrayDate()`
+- `fn.emptyArrayDateTime()`
+- `fn.emptyArrayFloat32()`
+- `fn.emptyArrayFloat64()`
+- `fn.emptyArrayInt16()`
+- `fn.emptyArrayInt32()`
+- `fn.emptyArrayInt64()`
+- `fn.emptyArrayInt8()`
+- `fn.emptyArrayString()`
+- `fn.emptyArrayToSingle()`
+- `fn.emptyArrayUInt16()`
+- `fn.emptyArrayUInt32()`
+- `fn.emptyArrayUInt64()`
+- `fn.emptyArrayUInt8()`
+- `fn.has()`
+- `fn.hasAll()`
+- `fn.hasAny()`
+- `fn.hasSubstr()`
+- `fn.indexOf()`
+- `fn.indexOfAssumeSorted()`
+- `fn.kql_array_sort_asc()`
+- `fn.kql_array_sort_desc()`
+- `fn.length()`
+- `fn.notEmpty()`
+- `fn.range()`
+- `fn.replicate()`
+- `fn.reverse()`
+
+`fn.call(name, ...)` and `fn.withParams(name, ...)` validate `name` as a SQL identifier before compilation. `ck.has(...)`, `ck.hasAll(...)`, `ck.hasAny(...)`, and `ck.hasSubstr(...)` are where-friendly predicate shortcuts for the same ClickHouse functions.
 
 `fn.jsonExtract(json, returnType, ...path)` only accepts `chType.*` return types, so the ClickHouse return type and the TypeScript decoder stay together:
 
@@ -1162,6 +1259,35 @@ const firstTicket = fn.jsonExtract(
   "ticket",
 );
 ```
+
+Higher-order array functions follow ClickHouse's parameter order. Use `csql` for the lambda, interpolate outer schema fields, and leave lambda-local variables as bare SQL names:
+
+```ts
+import { ck, csql, fn, type Predicate, type Selection } from "ck-orm";
+
+const buildRangePredicate = (params: {
+  timeColumn: Selection<Date>;
+  scopeTable: {
+    alwaysAccess: Selection<number>;
+    startTsList: Selection<Date[]>;
+    endTsList: Selection<Date[]>;
+  };
+}): Predicate => {
+  const rangeMatched = fn.arrayExists(
+    csql`
+      (start_ts, end_ts) ->
+        ${params.timeColumn} >= start_ts
+        AND ${params.timeColumn} < end_ts
+    `,
+    params.scopeTable.startTsList,
+    params.scopeTable.endTsList,
+  );
+
+  return ck.or(ck.eq(params.scopeTable.alwaysAccess, 1), rangeMatched);
+};
+```
+
+In that lambda, `${params.timeColumn}` and `params.scopeTable.startTsList` are schema-backed expressions. `start_ts` and `end_ts` are lambda-local variables created by ClickHouse from the array elements.
 
 `fn.arrayJoin(array)` maps to ClickHouse `arrayJoin` and expands one input row into one row per array element. Pair it with `fn.arrayZip(...)` and `fn.tupleElement(...)` when two arrays must stay positionally matched:
 
