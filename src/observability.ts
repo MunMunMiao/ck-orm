@@ -1,11 +1,11 @@
 import { type Span, SpanKind, SpanStatusCode, type Tracer, trace } from "@opentelemetry/api";
 import { createUuid, hashString } from "./platform";
 
-export type ClickHouseOrmLogLevel = "trace" | "debug" | "info" | "warn" | "error";
-export type ClickHouseOrmQueryMode = "query" | "stream" | "command" | "insert";
-export type ClickHouseOrmQueryKind = "typed" | "raw";
+export type ClickHouseORMLogLevel = "trace" | "debug" | "info" | "warn" | "error";
+export type ClickHouseORMQueryMode = "query" | "stream" | "command" | "insert";
+export type ClickHouseORMQueryKind = "typed" | "raw";
 
-export interface ClickHouseOrmLogger {
+export interface ClickHouseORMLogger {
   trace(message: string, fields?: Record<string, unknown>): void;
   debug(message: string, fields?: Record<string, unknown>): void;
   info(message: string, fields?: Record<string, unknown>): void;
@@ -13,7 +13,7 @@ export interface ClickHouseOrmLogger {
   error(message: string, fields?: Record<string, unknown>): void;
 }
 
-export interface ClickHouseOrmTracingOptions {
+export interface ClickHouseORMTracingOptions {
   readonly tracer?: Tracer;
   readonly attributes?: Record<string, string | number | boolean>;
   readonly includeStatement?: boolean;
@@ -21,11 +21,11 @@ export interface ClickHouseOrmTracingOptions {
   readonly dbName?: string;
 }
 
-export interface ClickHouseOrmQueryEvent {
+export interface ClickHouseORMQueryEvent {
   readonly executionId: string;
   readonly system: "clickhouse";
-  readonly mode: ClickHouseOrmQueryMode;
-  readonly queryKind: ClickHouseOrmQueryKind;
+  readonly mode: ClickHouseORMQueryMode;
+  readonly queryKind: ClickHouseORMQueryKind;
   readonly statement: string;
   readonly operation: string;
   /** ClickHouse-assigned (or caller-overridden) query id. Filled when the request actually reaches the server; absent for purely client-side validation failures. */
@@ -41,13 +41,13 @@ export interface ClickHouseOrmQueryEvent {
   readonly tableName?: string;
 }
 
-export interface ClickHouseOrmQueryResultEvent extends ClickHouseOrmQueryEvent {
+export interface ClickHouseORMQueryResultEvent extends ClickHouseORMQueryEvent {
   readonly durationMs: number;
   /** Number of rows produced by the query / yielded by the stream. Undefined for command and insert modes. */
   readonly rowCount?: number;
 }
 
-export interface ClickHouseOrmQueryErrorEvent extends ClickHouseOrmQueryEvent {
+export interface ClickHouseORMQueryErrorEvent extends ClickHouseORMQueryEvent {
   readonly durationMs: number;
   readonly error: unknown;
   /** @deprecated Prefer `partialRowCount` for error events. Kept for backwards compatibility. */
@@ -59,10 +59,10 @@ export interface ClickHouseOrmQueryErrorEvent extends ClickHouseOrmQueryEvent {
   readonly partialRowCount?: number;
 }
 
-export interface ClickHouseOrmInstrumentation {
-  onQueryStart?(event: ClickHouseOrmQueryEvent): void | Promise<void>;
-  onQuerySuccess?(event: ClickHouseOrmQueryResultEvent): void | Promise<void>;
-  onQueryError?(event: ClickHouseOrmQueryErrorEvent): void | Promise<void>;
+export interface ClickHouseORMInstrumentation {
+  onQueryStart?(event: ClickHouseORMQueryEvent): void | Promise<void>;
+  onQuerySuccess?(event: ClickHouseORMQueryResultEvent): void | Promise<void>;
+  onQueryError?(event: ClickHouseORMQueryErrorEvent): void | Promise<void>;
 }
 
 const RESERVED_TRACING_ATTRIBUTE_PREFIX = "db.";
@@ -86,8 +86,8 @@ export const resolveSafeClickHouseDestination = (url: string | undefined): strin
 };
 
 export const createQueryEvent = (
-  event: Omit<ClickHouseOrmQueryEvent, "executionId" | "system">,
-): ClickHouseOrmQueryEvent => {
+  event: Omit<ClickHouseORMQueryEvent, "executionId" | "system">,
+): ClickHouseORMQueryEvent => {
   return {
     executionId: createUuid(),
     system: "clickhouse",
@@ -96,10 +96,10 @@ export const createQueryEvent = (
 };
 
 export const createQuerySuccessEvent = (
-  event: ClickHouseOrmQueryEvent,
+  event: ClickHouseORMQueryEvent,
   durationMs: number,
   rowCount?: number,
-): ClickHouseOrmQueryResultEvent => {
+): ClickHouseORMQueryResultEvent => {
   return {
     ...event,
     durationMs,
@@ -108,11 +108,11 @@ export const createQuerySuccessEvent = (
 };
 
 export const createQueryErrorEvent = (
-  event: ClickHouseOrmQueryEvent,
+  event: ClickHouseORMQueryEvent,
   error: unknown,
   durationMs: number,
   partialRowCount?: number,
-): ClickHouseOrmQueryErrorEvent => {
+): ClickHouseORMQueryErrorEvent => {
   return {
     ...event,
     durationMs,
@@ -122,8 +122,8 @@ export const createQueryErrorEvent = (
 };
 
 export const emitQueryStart = async (
-  instrumentations: readonly ClickHouseOrmInstrumentation[],
-  event: ClickHouseOrmQueryEvent,
+  instrumentations: readonly ClickHouseORMInstrumentation[],
+  event: ClickHouseORMQueryEvent,
 ): Promise<void> => {
   for (const instrumentation of instrumentations) {
     if (!instrumentation.onQueryStart) {
@@ -134,8 +134,8 @@ export const emitQueryStart = async (
 };
 
 export const emitQuerySuccess = async (
-  instrumentations: readonly ClickHouseOrmInstrumentation[],
-  event: ClickHouseOrmQueryResultEvent,
+  instrumentations: readonly ClickHouseORMInstrumentation[],
+  event: ClickHouseORMQueryResultEvent,
 ): Promise<void> => {
   for (const instrumentation of [...instrumentations].reverse()) {
     if (!instrumentation.onQuerySuccess) {
@@ -146,8 +146,8 @@ export const emitQuerySuccess = async (
 };
 
 export const emitQueryError = async (
-  instrumentations: readonly ClickHouseOrmInstrumentation[],
-  event: ClickHouseOrmQueryErrorEvent,
+  instrumentations: readonly ClickHouseORMInstrumentation[],
+  event: ClickHouseORMQueryErrorEvent,
 ): Promise<void> => {
   for (const instrumentation of [...instrumentations].reverse()) {
     if (!instrumentation.onQueryError) {
@@ -169,7 +169,7 @@ const invokeInstrumentation = async (operation: () => void | Promise<void>) => {
   }
 };
 
-const logLevelPriority: Record<ClickHouseOrmLogLevel, number> = {
+const logLevelPriority: Record<ClickHouseORMLogLevel, number> = {
   trace: 10,
   debug: 20,
   info: 30,
@@ -177,14 +177,14 @@ const logLevelPriority: Record<ClickHouseOrmLogLevel, number> = {
   error: 50,
 };
 
-const shouldWriteLog = (minimumLevel: ClickHouseOrmLogLevel, eventLevel: ClickHouseOrmLogLevel) => {
+const shouldWriteLog = (minimumLevel: ClickHouseORMLogLevel, eventLevel: ClickHouseORMLogLevel) => {
   return logLevelPriority[eventLevel] >= logLevelPriority[minimumLevel];
 };
 
 export const createLoggerInstrumentation = (
-  logger: ClickHouseOrmLogger,
-  minimumLevel: ClickHouseOrmLogLevel = "warn",
-): ClickHouseOrmInstrumentation => {
+  logger: ClickHouseORMLogger,
+  minimumLevel: ClickHouseORMLogLevel = "warn",
+): ClickHouseORMInstrumentation => {
   return {
     onQueryStart(event) {
       if (!shouldWriteLog(minimumLevel, "debug")) {
@@ -219,8 +219,8 @@ export const createLoggerInstrumentation = (
 };
 
 export const createTracingInstrumentation = (
-  options: ClickHouseOrmTracingOptions = {},
-): ClickHouseOrmInstrumentation => {
+  options: ClickHouseORMTracingOptions = {},
+): ClickHouseORMInstrumentation => {
   const tracer = options.tracer ?? trace.getTracer("ck-orm");
   const dbName = options.dbName;
   const includeStatement = options.includeStatement ?? true;
@@ -277,7 +277,7 @@ export const createTracingInstrumentation = (
   };
 };
 
-const shouldIncludeRowCount = (includeRowCount: boolean | undefined, mode: ClickHouseOrmQueryMode) => {
+const shouldIncludeRowCount = (includeRowCount: boolean | undefined, mode: ClickHouseORMQueryMode) => {
   if (includeRowCount !== undefined) {
     return includeRowCount;
   }
@@ -292,7 +292,7 @@ const toSpanException = (error: unknown): Error | string => {
   return String(error);
 };
 
-const buildBaseLogFields = (event: ClickHouseOrmQueryEvent) => {
+const buildBaseLogFields = (event: ClickHouseORMQueryEvent) => {
   return {
     executionId: event.executionId,
     provider: "clickhouse",
@@ -312,7 +312,7 @@ const buildBaseLogFields = (event: ClickHouseOrmQueryEvent) => {
 };
 
 const buildSpanAttributes = (
-  event: ClickHouseOrmQueryEvent,
+  event: ClickHouseORMQueryEvent,
   options: {
     attributes?: Record<string, string | number | boolean>;
     dbName?: string;

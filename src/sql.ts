@@ -1,8 +1,8 @@
 import { createClientValidationError } from "./errors";
 import { assertValidSqlIdentifier } from "./internal/identifier";
 
-const sqlBrand = Symbol("clickhouseOrmSqlBrand");
-const compileSqlSymbol = Symbol("clickhouseOrmCompileSql");
+const sqlBrand = Symbol("clickhouseORMSqlBrand");
+const compileSqlSymbol = Symbol("clickhouseORMCompileSql");
 
 export type QueryParams = Record<string, unknown>;
 

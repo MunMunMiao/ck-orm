@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { decimal, int32, string } from "./columns";
-import { isClickHouseOrmError } from "./errors";
+import { isClickHouseORMError } from "./errors";
 import { expr } from "./query";
 import { clickhouseClient } from "./runtime";
-import { createClickHouseOrmClient } from "./runtime/client";
+import { createClickHouseORMClient } from "./runtime/client";
 import type { FetchClickHouseTransport } from "./runtime/transport";
 import type { AnyTable } from "./schema";
 import { chTable } from "./schema";
@@ -50,9 +50,9 @@ const readBodyText = async (body: unknown) => {
 const expectRejectsWithClickhouseError = async (promise: Promise<unknown>, expected: Record<string, unknown>) => {
   try {
     await promise;
-    throw new Error("Expected promise to reject with ClickHouseOrmError");
+    throw new Error("Expected promise to reject with ClickHouseORMError");
   } catch (error) {
-    expect(isClickHouseOrmError(error)).toBe(true);
+    expect(isClickHouseORMError(error)).toBe(true);
     for (const [key, value] of Object.entries(expected)) {
       expect((error as Record<string, unknown>)[key]).toEqual(value);
     }
@@ -70,7 +70,7 @@ const takeAsync = async <TValue>(iterable: AsyncIterable<TValue>, limit: number)
   return rows;
 };
 
-describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() {
+describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() {
   beforeEach(function setupMocks() {
     mock.restore();
   });
@@ -215,7 +215,7 @@ describe("ck-orm runtime extras", function describeClickHouseOrmRuntimeExtras() 
       async insertJsonEachRow() {},
       async endpoint() {},
     };
-    const db = createClickHouseOrmClient({
+    const db = createClickHouseORMClient({
       schema: { users },
       client: transport,
     });

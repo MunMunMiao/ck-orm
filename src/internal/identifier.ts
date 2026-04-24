@@ -24,7 +24,7 @@ const ROLE_MESSAGES: Record<SqlIdentifierRole, string> = {
 /**
  * Validates that `value` is a safe SQL identifier (ASCII letters, digits, and
  * underscores; cannot start with a digit). Throws a `client_validation`
- * `ClickHouseOrmError` when invalid.
+ * `ClickHouseORMError` when invalid.
  *
  * Centralises five duplicated regex checks across `sql.ts`, `columns.ts`, and
  * `functions.ts` so the rule and error message stay in lockstep.

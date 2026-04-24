@@ -50,9 +50,9 @@ type CompileState = {
 };
 const compileStateStackStore = new WeakMap<BuildContext, CompileState[]>();
 
-export const compileWithContextSymbol = Symbol("clickhouseOrmCompileWithContext");
-export const compileQuerySymbol = Symbol("clickhouseOrmCompileQuery");
-const selectBuilderResultSymbol = Symbol("clickhouseOrmSelectBuilderResult");
+export const compileWithContextSymbol = Symbol("clickhouseORMCompileWithContext");
+export const compileQuerySymbol = Symbol("clickhouseORMCompileQuery");
+const selectBuilderResultSymbol = Symbol("clickhouseORMSelectBuilderResult");
 
 type PrimitiveValue = string | number | bigint | boolean | null | Date;
 type CountSource = AnyTable | AnySubquery | AnyCte;

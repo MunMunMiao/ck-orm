@@ -6,7 +6,7 @@ This matrix records the public API coverage contract. Runtime behavior rows poin
 
 | API | Coverage location |
 | --- | --- |
-| root runtime exports: `ck`, `fn`, `csql`, `chType`, `chTable`, `alias`, `clickhouseClient`, `isClickHouseOrmError`, `isDecodeError` | `src/public_api.test.ts` |
+| root runtime exports: `ck`, `fn`, `csql`, `chType`, `chTable`, `alias`, `clickhouseClient`, `isClickHouseORMError`, `isDecodeError` | `src/public_api.test.ts` |
 | root type exports: columns, tables, query selections, compiled query metadata, runtime config/options/settings/session, observability events, error contracts, schema inference helpers, `SQLFragment`, `JsonPathSegment` | `src/public_api.test.ts`, `src/public_api.typecheck.ts`, `src/type-scenarios/public-api-matrix.typecheck.ts` |
 | namespace key guards for `ck`, `fn`, `fn.table`, `csql`, `chType` | `src/public_api.test.ts`, `src/type-scenarios/public-api-matrix.typecheck.ts` |
 

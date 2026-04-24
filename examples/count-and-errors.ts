@@ -1,4 +1,4 @@
-import { ck, clickhouseClient, isClickHouseOrmError, isDecodeError } from "./ck-orm";
+import { ck, clickhouseClient, isClickHouseORMError, isDecodeError } from "./ck-orm";
 import { commerceSchema, orderRewardLog } from "./schema/commerce";
 
 type PublicQueryError = {
@@ -33,7 +33,7 @@ const toPublicQueryError = (error: unknown): PublicQueryError => {
     };
   }
 
-  if (isClickHouseOrmError(error)) {
+  if (isClickHouseORMError(error)) {
     console.error("ClickHouse request failed", {
       kind: error.kind,
       executionState: error.executionState,

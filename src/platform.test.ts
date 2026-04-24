@@ -32,7 +32,7 @@ afterEach(function restorePlatformGlobals() {
   setGlobal("Uint8Array", originalUint8Array);
 });
 
-describe("ck-orm platform", function describeClickHouseOrmPlatform() {
+describe("ck-orm platform", function describeClickHouseORMPlatform() {
   it("covers UUID generation boundaries and hashing helpers", function testUuidAndHashing() {
     expect(base64EncodeUtf8("demo")).toBe("ZGVtbw==");
     expect(hashString("demo")).toBe(hashString("demo"));

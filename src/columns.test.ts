@@ -55,7 +55,7 @@ const buildContext = () => ({
 
 const normalizeSql = (value: string) => value.replace(/\s+/g, " ").trim();
 
-describe("ck-orm columns", function describeClickHouseOrmColumns() {
+describe("ck-orm columns", function describeClickHouseORMColumns() {
   it("converts scalar values, binds columns, and rejects invalid inputs", function testScalarColumns() {
     const intColumn = int32();
     expect(intColumn.mapFromDriverValue(1)).toBe(1);

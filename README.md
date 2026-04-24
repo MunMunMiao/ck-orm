@@ -1638,9 +1638,9 @@ await db.replicasStatus();
 ### Logger
 
 ```ts
-import type { ClickHouseOrmLogger } from "ck-orm";
+import type { ClickHouseORMLogger } from "ck-orm";
 
-const logger: ClickHouseOrmLogger = {
+const logger: ClickHouseORMLogger = {
   trace(message, fields) {
     console.debug(message, fields);
   },
@@ -1690,9 +1690,9 @@ const db = clickhouseClient({
 ### Custom instrumentation
 
 ```ts
-import type { ClickHouseOrmInstrumentation } from "ck-orm";
+import type { ClickHouseORMInstrumentation } from "ck-orm";
 
-const instrumentation: ClickHouseOrmInstrumentation = {
+const instrumentation: ClickHouseORMInstrumentation = {
   onQueryStart(event) {
     console.log("start", event.operation, event.statement);
   },
@@ -1713,25 +1713,25 @@ const db = clickhouseClient({
 
 Public event types:
 
-- `ClickHouseOrmQueryEvent`
-- `ClickHouseOrmQueryResultEvent`
-- `ClickHouseOrmQueryErrorEvent`
-- `ClickHouseOrmTracingOptions`
-- `ClickHouseOrmLogLevel`
+- `ClickHouseORMQueryEvent`
+- `ClickHouseORMQueryResultEvent`
+- `ClickHouseORMQueryErrorEvent`
+- `ClickHouseORMTracingOptions`
+- `ClickHouseORMLogLevel`
 
 ## Error model
 
 Public error types (type-only exports):
 
-- `ClickHouseOrmError`
+- `ClickHouseORMError`
 - `DecodeError`
 
 Runtime error checks:
 
-- `isClickHouseOrmError(error)`
+- `isClickHouseORMError(error)`
 - `isDecodeError(error)`
 
-`ClickHouseOrmError` preserves as much context as possible, including:
+`ClickHouseORMError` preserves as much context as possible, including:
 
 - `kind`
 - `executionState`
@@ -1755,7 +1755,7 @@ Current public `kind` values:
 Use the full error context for server-side logs, then return a small public error to application callers:
 
 ```ts
-import { isClickHouseOrmError, isDecodeError } from "ck-orm";
+import { isClickHouseORMError, isDecodeError } from "ck-orm";
 
 const toPublicQueryError = (error: unknown) => {
   if (isDecodeError(error)) {
@@ -1767,7 +1767,7 @@ const toPublicQueryError = (error: unknown) => {
     return { message: "The query result could not be decoded." };
   }
 
-  if (isClickHouseOrmError(error)) {
+  if (isClickHouseORMError(error)) {
     console.error("ClickHouse request failed", {
       kind: error.kind,
       executionState: error.executionState,
@@ -1822,6 +1822,6 @@ Bound values are stored separately as ClickHouse named parameters and are not in
 
 ### Error responses
 
-`ClickHouseOrmError.responseText` and the error `message` may contain raw text from the ClickHouse server, including SQL fragments and database object names.
+`ClickHouseORMError.responseText` and the error `message` may contain raw text from the ClickHouse server, including SQL fragments and database object names.
 
 Do not forward those directly to untrusted clients. Log them server-side and expose a generic message instead.

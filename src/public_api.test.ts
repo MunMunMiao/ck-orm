@@ -11,7 +11,7 @@ const expectedRootRuntimeKeys = [
   "clickhouseClient",
   "csql",
   "fn",
-  "isClickHouseOrmError",
+  "isClickHouseORMError",
   "isDecodeError",
 ] as const;
 
@@ -308,14 +308,14 @@ describe("ck-orm public api", function describePublicApi() {
     expectType<RootApi.ClickHouseEndpointOptions | undefined>(undefined);
     expectType<RootApi.ClickHouseKnownSettingName | undefined>(undefined);
     expectType<RootApi.ClickHouseKnownSettings | undefined>(undefined);
-    expectType<RootApi.ClickHouseOrmExecutionState | undefined>(undefined);
-    expectType<RootApi.ClickHouseOrmInstrumentation | undefined>(undefined);
-    expectType<RootApi.ClickHouseOrmLogLevel | undefined>(undefined);
-    expectType<RootApi.ClickHouseOrmLogger | undefined>(undefined);
-    expectType<RootApi.ClickHouseOrmQueryErrorEvent | undefined>(undefined);
-    expectType<RootApi.ClickHouseOrmQueryEvent | undefined>(undefined);
-    expectType<RootApi.ClickHouseOrmQueryResultEvent | undefined>(undefined);
-    expectType<RootApi.ClickHouseOrmTracingOptions | undefined>(undefined);
+    expectType<RootApi.ClickHouseORMExecutionState | undefined>(undefined);
+    expectType<RootApi.ClickHouseORMInstrumentation | undefined>(undefined);
+    expectType<RootApi.ClickHouseORMLogLevel | undefined>(undefined);
+    expectType<RootApi.ClickHouseORMLogger | undefined>(undefined);
+    expectType<RootApi.ClickHouseORMQueryErrorEvent | undefined>(undefined);
+    expectType<RootApi.ClickHouseORMQueryEvent | undefined>(undefined);
+    expectType<RootApi.ClickHouseORMQueryResultEvent | undefined>(undefined);
+    expectType<RootApi.ClickHouseORMTracingOptions | undefined>(undefined);
     expectType<RootApi.ClickHouseQueryOptions | undefined>(undefined);
     expectType<RootApi.ClickHouseSettings | undefined>(undefined);
     expectType<RootApi.ClickHouseSettingValue | undefined>(undefined);
@@ -338,12 +338,12 @@ describe("ck-orm public api", function describePublicApi() {
   });
 
   it("keeps error guards and compatibility exports available from the package root", function testRootErrorExports() {
-    expect("ClickHouseOrmError" in publicApi).toBe(false);
+    expect("ClickHouseORMError" in publicApi).toBe(false);
     expect("DecodeError" in publicApi).toBe(false);
-    expect("isClickHouseOrmError" in publicApi).toBe(true);
+    expect("isClickHouseORMError" in publicApi).toBe(true);
     expect("isDecodeError" in publicApi).toBe(true);
 
-    expectType<RootApi.ClickHouseOrmError | undefined>(undefined);
+    expectType<RootApi.ClickHouseORMError | undefined>(undefined);
     expectType<RootApi.DecodeError | undefined>(undefined);
   });
 });

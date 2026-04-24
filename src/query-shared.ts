@@ -4,8 +4,8 @@ import { allocParam, type BuildContext, inferPrimitiveType, isSqlFragment, type 
 export type { DecodeError } from "./errors";
 export type { BuildContext, QueryParams } from "./sql";
 
-const dataTypeSymbol = Symbol("clickhouseOrmDataType");
-const sourceKeySymbol = Symbol("clickhouseOrmSourceKey");
+const dataTypeSymbol = Symbol("clickhouseORMDataType");
+const sourceKeySymbol = Symbol("clickhouseORMSourceKey");
 
 export type Decoder<TData> = (value: unknown) => TData;
 

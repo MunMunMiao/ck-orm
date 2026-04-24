@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { string } from "./columns";
-import { isClickHouseOrmError } from "./errors";
+import { isClickHouseORMError } from "./errors";
 import { fn } from "./functions";
 import { eq } from "./query";
 import { type ClickHouseClientConfig, type ClickHouseQueryOptions, clickhouseClient } from "./runtime";
@@ -55,16 +55,16 @@ const flushAsyncWork = async () => {
 const expectRejectsWithClickhouseError = async (promise: Promise<unknown>, expected: Record<string, unknown>) => {
   try {
     await promise;
-    throw new Error("Expected promise to reject with ClickHouseOrmError");
+    throw new Error("Expected promise to reject with ClickHouseORMError");
   } catch (error) {
-    expect(isClickHouseOrmError(error)).toBe(true);
+    expect(isClickHouseORMError(error)).toBe(true);
     for (const [key, value] of Object.entries(expected)) {
       expect((error as Record<string, unknown>)[key]).toEqual(value);
     }
   }
 };
 
-describe("ck-orm runtime", function describeClickHouseOrmRuntime() {
+describe("ck-orm runtime", function describeClickHouseORMRuntime() {
   beforeEach(function setupMocks() {
     mock.restore();
   });
@@ -605,7 +605,7 @@ describe("ck-orm runtime", function describeClickHouseOrmRuntime() {
       }>);
       throw new Error("expected URL-credentials + username/password to be rejected");
     } catch (error) {
-      expect(isClickHouseOrmError(error)).toBe(true);
+      expect(isClickHouseORMError(error)).toBe(true);
       expect((error as { kind?: unknown }).kind).toBe("client_validation");
       expect((error as { executionState?: unknown }).executionState).toBe("not_sent");
       expect((error as Error).message).toContain("databaseUrl cannot be combined with");

@@ -1,14 +1,14 @@
 import { trace } from "@opentelemetry/api";
 import {
   type ClickHouseEndpointOptions,
-  type ClickHouseOrmInstrumentation,
-  type ClickHouseOrmLogger,
+  type ClickHouseORMInstrumentation,
+  type ClickHouseORMLogger,
   clickhouseClient,
   csql,
 } from "./ck-orm";
 import { commerceSchema } from "./schema/commerce";
 
-const logger: ClickHouseOrmLogger = {
+const logger: ClickHouseORMLogger = {
   trace(message, fields) {
     console.debug(message, fields);
   },
@@ -26,7 +26,7 @@ const logger: ClickHouseOrmLogger = {
   },
 };
 
-const instrumentation: ClickHouseOrmInstrumentation = {
+const instrumentation: ClickHouseORMInstrumentation = {
   onQueryStart(event) {
     console.log("clickhouse query started", event.operation, event.queryId);
   },

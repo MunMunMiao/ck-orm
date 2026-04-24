@@ -129,7 +129,7 @@ const compileExpression = (expression: { compile(ctx: ReturnType<typeof createCo
   };
 };
 
-describe("ck-orm functions", function describeClickHouseOrmFunctions() {
+describe("ck-orm functions", function describeClickHouseORMFunctions() {
   it("exposes ClickHouse official array function headings on fn", function testOfficialArrayFunctionSurface() {
     for (const name of officialArrayFunctionNames) {
       expect(fn).toHaveProperty(name);

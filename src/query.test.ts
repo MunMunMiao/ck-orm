@@ -322,7 +322,7 @@ const buildCompiled = (compiled: { statement: string; params: Record<string, unk
   };
 };
 
-describe("ck-orm query compile", function describeClickHouseOrmQueryCompile() {
+describe("ck-orm query compile", function describeClickHouseORMQueryCompile() {
   it("compiles a drizzle-like select with alias, final, filters, limit and offset", function testCompileSelect() {
     expect(typeAssertions).toEqual([
       true,

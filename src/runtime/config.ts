@@ -1,9 +1,9 @@
 import { createClientValidationError } from "../errors";
 import type {
-  ClickHouseOrmInstrumentation,
-  ClickHouseOrmLogger,
-  ClickHouseOrmLogLevel,
-  ClickHouseOrmTracingOptions,
+  ClickHouseORMInstrumentation,
+  ClickHouseORMLogger,
+  ClickHouseORMLogLevel,
+  ClickHouseORMTracingOptions,
 } from "../observability";
 import { base64EncodeUtf8, canSetUserAgentHeader } from "../platform";
 import type { CompiledQuery, QueryClient } from "../query";
@@ -191,10 +191,10 @@ export type ClickHouseFetchConfigOptions = SharedClientConfigOptions &
 
 export type ClickHouseClientConfig<TSchema> = ClickHouseFetchConfigOptions & {
   readonly schema: TSchema;
-  readonly logger?: ClickHouseOrmLogger | false;
-  readonly logLevel?: ClickHouseOrmLogLevel;
-  readonly tracing?: false | ClickHouseOrmTracingOptions;
-  readonly instrumentation?: ClickHouseOrmInstrumentation[];
+  readonly logger?: ClickHouseORMLogger | false;
+  readonly logLevel?: ClickHouseORMLogLevel;
+  readonly tracing?: false | ClickHouseORMTracingOptions;
+  readonly instrumentation?: ClickHouseORMInstrumentation[];
 };
 
 export type ResolveJoinUseNulls<TSettings, TFallback extends 0 | 1> = TSettings extends {

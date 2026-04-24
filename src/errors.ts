@@ -1,6 +1,6 @@
-export type ClickHouseOrmExecutionState = "not_sent" | "rejected" | "unknown";
+export type ClickHouseORMExecutionState = "not_sent" | "rejected" | "unknown";
 
-export type ClickHouseOrmErrorKind =
+export type ClickHouseORMErrorKind =
   | "client_validation"
   | "request_failed"
   | "decode"
@@ -9,9 +9,9 @@ export type ClickHouseOrmErrorKind =
   | "session"
   | "internal";
 
-type ClickHouseOrmErrorFields = {
-  kind: ClickHouseOrmErrorKind;
-  executionState: ClickHouseOrmExecutionState;
+type ClickHouseORMErrorFields = {
+  kind: ClickHouseORMErrorKind;
+  executionState: ClickHouseORMExecutionState;
   cause?: unknown;
   queryId?: string;
   sessionId?: string;
@@ -22,22 +22,22 @@ type ClickHouseOrmErrorFields = {
   requestTimeoutMs?: number;
 };
 
-type DecodeErrorFields = ClickHouseOrmErrorFields & {
+type DecodeErrorFields = ClickHouseORMErrorFields & {
   readonly kind: "decode";
   readonly executionState: "rejected";
   readonly causeValue: unknown;
   readonly path?: string;
 };
 
-type ClickHouseOrmErrorOptions = Readonly<ClickHouseOrmErrorFields>;
+type ClickHouseORMErrorOptions = Readonly<ClickHouseORMErrorFields>;
 
-type RequestFailedErrorOptions = Omit<ClickHouseOrmErrorOptions, "kind" | "executionState"> & {
-  readonly executionState?: ClickHouseOrmExecutionState;
+type RequestFailedErrorOptions = Omit<ClickHouseORMErrorOptions, "kind" | "executionState"> & {
+  readonly executionState?: ClickHouseORMExecutionState;
 };
 
-export type ClickHouseOrmError = Error & ClickHouseOrmErrorFields;
+export type ClickHouseORMError = Error & ClickHouseORMErrorFields;
 
-export type DecodeError = ClickHouseOrmError & DecodeErrorFields;
+export type DecodeError = ClickHouseORMError & DecodeErrorFields;
 
 const CK_ORM_PREFIX = "[ck-orm] ";
 const UNKNOWN_EXECUTION_STATE_SUFFIX = "; execution state is unknown";
@@ -46,11 +46,11 @@ const isRecord = (value: unknown): value is Record<string, unknown> => {
   return typeof value === "object" && value !== null;
 };
 
-const withCkOrmPrefix = (message: string) =>
+const withCKORMPrefix = (message: string) =>
   message.startsWith(CK_ORM_PREFIX) ? message : `${CK_ORM_PREFIX}${message}`;
 
-const createBaseError = <TError extends ClickHouseOrmError | DecodeError>(
-  name: "ClickHouseOrmError" | "DecodeError",
+const createBaseError = <TError extends ClickHouseORMError | DecodeError>(
+  name: "ClickHouseORMError" | "DecodeError",
   message: string,
   fields: Record<string, unknown>,
 ): TError => {
@@ -60,7 +60,7 @@ const createBaseError = <TError extends ClickHouseOrmError | DecodeError>(
   return error;
 };
 
-const cloneError = <TError extends ClickHouseOrmError>(error: TError): TError => {
+const cloneError = <TError extends ClickHouseORMError>(error: TError): TError => {
   const cloned = new Error(error.message) as TError;
   cloned.name = error.name;
   if (error.stack) {
@@ -71,21 +71,21 @@ const cloneError = <TError extends ClickHouseOrmError>(error: TError): TError =>
 };
 
 const make = (
-  kind: ClickHouseOrmErrorKind,
-  executionState: ClickHouseOrmExecutionState,
+  kind: ClickHouseORMErrorKind,
+  executionState: ClickHouseORMExecutionState,
   message: string,
-  options?: Omit<ClickHouseOrmErrorOptions, "kind" | "executionState"> & {
+  options?: Omit<ClickHouseORMErrorOptions, "kind" | "executionState"> & {
     readonly markUnknownExecutionState?: boolean;
   },
 ) => {
   const { markUnknownExecutionState, ...rest } = options ?? {};
-  const finalMessage = withCkOrmPrefix(
+  const finalMessage = withCKORMPrefix(
     markUnknownExecutionState && !message.endsWith(UNKNOWN_EXECUTION_STATE_SUFFIX)
       ? `${message}${UNKNOWN_EXECUTION_STATE_SUFFIX}`
       : message,
   );
 
-  return createBaseError<ClickHouseOrmError>("ClickHouseOrmError", finalMessage, {
+  return createBaseError<ClickHouseORMError>("ClickHouseORMError", finalMessage, {
     kind,
     executionState,
     ...rest,
@@ -97,7 +97,7 @@ const extractClickHouseName = (text: string) => {
   return matches.at(-1)?.[1];
 };
 
-export const isClickHouseOrmError = (error: unknown): error is ClickHouseOrmError => {
+export const isClickHouseORMError = (error: unknown): error is ClickHouseORMError => {
   return (
     error instanceof Error &&
     isRecord(error) &&
@@ -107,10 +107,10 @@ export const isClickHouseOrmError = (error: unknown): error is ClickHouseOrmErro
 };
 
 export const isDecodeError = (error: unknown): error is DecodeError => {
-  return isClickHouseOrmError(error) && error.kind === "decode" && "causeValue" in error;
+  return isClickHouseORMError(error) && error.kind === "decode" && "causeValue" in error;
 };
 
-export const withClickHouseOrmErrorContext = <TError extends ClickHouseOrmError>(
+export const withClickHouseORMErrorContext = <TError extends ClickHouseORMError>(
   error: TError,
   context: {
     readonly queryId?: string;
@@ -131,21 +131,21 @@ export const withClickHouseOrmErrorContext = <TError extends ClickHouseOrmError>
 
 export const createClientValidationError = (
   message: string,
-  options?: Omit<ClickHouseOrmErrorOptions, "kind" | "executionState">,
+  options?: Omit<ClickHouseORMErrorOptions, "kind" | "executionState">,
 ) => make("client_validation", "not_sent", message, options);
 
 export const createSessionError = (
   message: string,
-  options?: Omit<ClickHouseOrmErrorOptions, "kind" | "executionState">,
+  options?: Omit<ClickHouseORMErrorOptions, "kind" | "executionState">,
 ) => make("session", "not_sent", message, options);
 
 export const createInternalError = (
   message: string,
-  options?: Omit<ClickHouseOrmErrorOptions, "kind" | "executionState">,
+  options?: Omit<ClickHouseORMErrorOptions, "kind" | "executionState">,
 ) => make("internal", "not_sent", message, options);
 
 /**
- * Constructs a `DecodeError` (a `ClickHouseOrmError` of kind `"decode"`)
+ * Constructs a `DecodeError` (a `ClickHouseORMError` of kind `"decode"`)
  * for when a value coming back from ClickHouse cannot be coerced into its
  * TypeScript representation. Pass `path` for container columns so the message
  * pinpoints the failing field, e.g. `items[2].user.email`.
@@ -153,11 +153,11 @@ export const createInternalError = (
 export const createDecodeError = (
   message: string,
   causeValue: unknown,
-  options?: Omit<ClickHouseOrmErrorOptions, "kind" | "executionState" | "cause"> & {
+  options?: Omit<ClickHouseORMErrorOptions, "kind" | "executionState" | "cause"> & {
     readonly path?: string;
   },
 ) => {
-  const finalMessage = withCkOrmPrefix(options?.path ? `${message} (at ${options.path})` : message);
+  const finalMessage = withCKORMPrefix(options?.path ? `${message} (at ${options.path})` : message);
   return createBaseError<DecodeError>("DecodeError", finalMessage, {
     kind: "decode",
     executionState: "rejected",
@@ -190,7 +190,7 @@ export const createRequestFailedError = (options: RequestFailedErrorOptions) => 
 
 export const createTimeoutError = (
   requestTimeoutMs: number,
-  options?: Omit<ClickHouseOrmErrorOptions, "kind" | "executionState" | "requestTimeoutMs">,
+  options?: Omit<ClickHouseORMErrorOptions, "kind" | "executionState" | "requestTimeoutMs">,
 ) =>
   make("timeout", "unknown", `ClickHouse request timed out after ${requestTimeoutMs}ms`, {
     ...options,
@@ -200,7 +200,7 @@ export const createTimeoutError = (
 
 export const createAbortedError = (
   message = "ClickHouse request was aborted",
-  options?: Omit<ClickHouseOrmErrorOptions, "kind" | "executionState">,
+  options?: Omit<ClickHouseORMErrorOptions, "kind" | "executionState">,
 ) =>
   make("aborted", "unknown", message, {
     ...options,
@@ -234,8 +234,8 @@ export const normalizeTransportError = (
     readonly sessionId?: string;
   },
 ) => {
-  if (isClickHouseOrmError(error)) {
-    return withClickHouseOrmErrorContext(error, context);
+  if (isClickHouseORMError(error)) {
+    return withClickHouseORMErrorContext(error, context);
   }
 
   if (error instanceof Error) {

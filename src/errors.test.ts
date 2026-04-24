@@ -6,13 +6,13 @@ import {
   createInternalError,
   createRequestFailedError,
   createTimeoutError,
-  isClickHouseOrmError,
+  isClickHouseORMError,
   isDecodeError,
   normalizeTransportError,
-  withClickHouseOrmErrorContext,
+  withClickHouseORMErrorContext,
 } from "./errors";
 
-describe("ck-orm errors", function describeClickHouseOrmErrors() {
+describe("ck-orm errors", function describeClickHouseORMErrors() {
   it("creates guard-detectable error objects without runtime compatibility classes", function testErrorGuards() {
     const clientError = createClientValidationError("bad input");
     const requestError = createRequestFailedError({
@@ -24,32 +24,32 @@ describe("ck-orm errors", function describeClickHouseOrmErrors() {
     const internalError = createInternalError("broken invariant");
 
     expect(clientError).toBeInstanceOf(Error);
-    expect(isClickHouseOrmError(clientError)).toBe(true);
+    expect(isClickHouseORMError(clientError)).toBe(true);
     expect(isDecodeError(clientError)).toBe(false);
 
     expect(requestError).toBeInstanceOf(Error);
-    expect(isClickHouseOrmError(requestError)).toBe(true);
+    expect(isClickHouseORMError(requestError)).toBe(true);
     expect(isDecodeError(requestError)).toBe(false);
 
     expect(decodeError).toBeInstanceOf(Error);
-    expect(isClickHouseOrmError(decodeError)).toBe(true);
+    expect(isClickHouseORMError(decodeError)).toBe(true);
     expect(isDecodeError(decodeError)).toBe(true);
 
     expect(internalError.kind).toBe("internal");
     expect(internalError.executionState).toBe("not_sent");
-    expect(isClickHouseOrmError(internalError)).toBe(true);
+    expect(isClickHouseORMError(internalError)).toBe(true);
     expect(isDecodeError(internalError)).toBe(false);
   });
 
-  it("withClickHouseOrmErrorContext clones only when it adds missing context", function testErrorContextCloning() {
+  it("withClickHouseORMErrorContext clones only when it adds missing context", function testErrorContextCloning() {
     const baseError = createRequestFailedError({
       responseText: "network down",
       executionState: "unknown",
     });
 
-    expect(withClickHouseOrmErrorContext(baseError, {})).toBe(baseError);
+    expect(withClickHouseORMErrorContext(baseError, {})).toBe(baseError);
 
-    const enriched = withClickHouseOrmErrorContext(baseError, {
+    const enriched = withClickHouseORMErrorContext(baseError, {
       queryId: "query_1",
       sessionId: "session_1",
     });
@@ -66,7 +66,7 @@ describe("ck-orm errors", function describeClickHouseOrmErrors() {
       sessionId: "existing_session",
     });
     expect(
-      withClickHouseOrmErrorContext(existingContext, {
+      withClickHouseORMErrorContext(existingContext, {
         queryId: "new_query",
         sessionId: "new_session",
       }),
@@ -78,7 +78,7 @@ describe("ck-orm errors", function describeClickHouseOrmErrors() {
       queryId: "query_2",
       sessionId: "session_2",
     });
-    expect(isClickHouseOrmError(normalized)).toBe(true);
+    expect(isClickHouseORMError(normalized)).toBe(true);
     expect(normalized.kind).toBe("request_failed");
     expect(normalized.executionState).toBe("unknown");
     expect(normalized.queryId).toBe("query_2");
@@ -91,7 +91,7 @@ describe("ck-orm errors", function describeClickHouseOrmErrors() {
     const original = createClientValidationError("unsafe query");
     const recontextualized = normalizeTransportError(original, { queryId: "query_3" });
     expect(recontextualized).not.toBe(original);
-    expect(isClickHouseOrmError(recontextualized)).toBe(true);
+    expect(isClickHouseORMError(recontextualized)).toBe(true);
     expect(recontextualized.queryId).toBe("query_3");
     expect(recontextualized.kind).toBe("client_validation");
   });
@@ -101,7 +101,7 @@ describe("ck-orm errors", function describeClickHouseOrmErrors() {
       queryId: "query_4",
       sessionId: "session_4",
     });
-    expect(isClickHouseOrmError(primitive)).toBe(true);
+    expect(isClickHouseORMError(primitive)).toBe(true);
     expect(primitive.message).toContain("socket closed; execution state is unknown");
     expect(primitive.queryId).toBe("query_4");
     expect(primitive.sessionId).toBe("session_4");

@@ -51,7 +51,7 @@ const typeAssertions: [
   _CommerceInsertSchema,
 ] = [true, true, true, true, true, true, true, true];
 
-describe("ck-orm schema infer helpers", function describeClickHouseOrmSchemaInferHelpers() {
+describe("ck-orm schema infer helpers", function describeClickHouseORMSchemaInferHelpers() {
   it("exposes stable model inference helpers for tables and schema objects", function testSchemaInferHelpers() {
     expect(typeAssertions).toEqual([true, true, true, true, true, true, true, true]);
   });

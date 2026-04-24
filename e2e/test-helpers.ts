@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test";
-import { type ClickHouseOrmError, ck, csql, isClickHouseOrmError, isDecodeError } from "./ck-orm";
+import { type ClickHouseORMError, ck, csql, isClickHouseORMError, isDecodeError } from "./ck-orm";
 import { createAdminDb, createE2EDb, datasetCounts, hasE2EEnv, users } from "./shared";
 
 export const describeE2E = hasE2EEnv ? describe : describe.skip;
@@ -65,7 +65,7 @@ export const withFetchSampling = async <TValue>(run: (calls: FetchSample[]) => P
 };
 
 export const expectClickhouseError = (error: unknown, expected: Record<string, unknown>) => {
-  expect(isClickHouseOrmError(error)).toBe(true);
+  expect(isClickHouseORMError(error)).toBe(true);
   expect(isDecodeError(error)).toBe(expected.kind === "decode");
   for (const [key, value] of Object.entries(expected)) {
     expect((error as Record<string, unknown>)[key]).toEqual(value);
@@ -85,10 +85,10 @@ export const expectRejectsWithClickhouseError = async (
 ) => {
   try {
     await resolveMaybeThrowing(input);
-    throw new Error("Expected promise to reject with ClickHouseOrmError");
+    throw new Error("Expected promise to reject with ClickHouseORMError");
   } catch (error) {
     expectClickhouseError(error, expected);
-    return error as ClickHouseOrmError;
+    return error as ClickHouseORMError;
   }
 };
 

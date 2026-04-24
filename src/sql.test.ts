@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { int32, string } from "./columns";
-import { isClickHouseOrmError } from "./errors";
+import { isClickHouseORMError } from "./errors";
 import { fn } from "./functions";
 import { alias, chTable } from "./schema";
 import { compileSql, sql } from "./sql";
@@ -17,7 +17,7 @@ const users = chTable(
   }),
 );
 
-describe("ck-orm sql", function describeClickHouseOrmSql() {
+describe("ck-orm sql", function describeClickHouseORMSql() {
   it("supports plain string sql fragments and structured interpolation", function testSqlInterpolation() {
     const built = compileSql(
       sql`select ${users.id}, ${fn.toString(users.name)} from ${users} where ${users.id} > ${1} and ${users.name} = ${"alice"}`,
@@ -56,7 +56,7 @@ describe("ck-orm sql", function describeClickHouseOrmSql() {
         compileSql(sql`select ${value}`);
         throw new Error("Expected compileSql to fail for nullish raw params");
       } catch (error) {
-        expect(isClickHouseOrmError(error)).toBe(true);
+        expect(isClickHouseORMError(error)).toBe(true);
         expect(error).toMatchObject({
           kind: "client_validation",
           executionState: "not_sent",

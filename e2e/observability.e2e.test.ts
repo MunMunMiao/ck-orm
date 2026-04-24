@@ -1,10 +1,10 @@
 import { expect, it } from "bun:test";
 import type { Tracer } from "@opentelemetry/api";
 import {
-  type ClickHouseOrmLogger,
-  type ClickHouseOrmQueryErrorEvent,
-  type ClickHouseOrmQueryEvent,
-  type ClickHouseOrmQueryResultEvent,
+  type ClickHouseORMLogger,
+  type ClickHouseORMQueryErrorEvent,
+  type ClickHouseORMQueryEvent,
+  type ClickHouseORMQueryResultEvent,
   ck,
   csql,
   fn,
@@ -68,9 +68,9 @@ describeE2E("ck-orm e2e observability", function describeObservability() {
       fields?: Record<string, unknown>;
     }> = [];
     const lifecycle: string[] = [];
-    const errors: ClickHouseOrmQueryErrorEvent[] = [];
+    const errors: ClickHouseORMQueryErrorEvent[] = [];
 
-    const logger: ClickHouseOrmLogger = {
+    const logger: ClickHouseORMLogger = {
       trace(message, fields) {
         logs.push({ level: "trace", message, fields });
       },
@@ -100,25 +100,25 @@ describeE2E("ck-orm e2e observability", function describeObservability() {
       },
       instrumentation: [
         {
-          onQueryStart(_event: ClickHouseOrmQueryEvent) {
+          onQueryStart(_event: ClickHouseORMQueryEvent) {
             lifecycle.push("custom_start_1");
           },
-          onQuerySuccess(_event: ClickHouseOrmQueryResultEvent) {
+          onQuerySuccess(_event: ClickHouseORMQueryResultEvent) {
             lifecycle.push("custom_success_1");
           },
-          onQueryError(event: ClickHouseOrmQueryErrorEvent) {
+          onQueryError(event: ClickHouseORMQueryErrorEvent) {
             lifecycle.push("custom_error_1");
             errors.push(event);
           },
         },
         {
-          onQueryStart(_event: ClickHouseOrmQueryEvent) {
+          onQueryStart(_event: ClickHouseORMQueryEvent) {
             lifecycle.push("custom_start_2");
           },
-          onQuerySuccess(_event: ClickHouseOrmQueryResultEvent) {
+          onQuerySuccess(_event: ClickHouseORMQueryResultEvent) {
             lifecycle.push("custom_success_2");
           },
-          onQueryError(_event: ClickHouseOrmQueryErrorEvent) {
+          onQueryError(_event: ClickHouseORMQueryErrorEvent) {
             lifecycle.push("custom_error_2");
           },
         },

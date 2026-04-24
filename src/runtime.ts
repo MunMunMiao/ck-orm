@@ -1,9 +1,9 @@
 import {
-  type ClickHouseOrmInstrumentation,
+  type ClickHouseORMInstrumentation,
   createLoggerInstrumentation,
   createTracingInstrumentation,
 } from "./observability";
-import { type ClickHouseOrmClient, createClickHouseOrmClient } from "./runtime/client";
+import { type ClickHouseORMClient, createClickHouseORMClient } from "./runtime/client";
 import { type ClickHouseClientConfig, normalizeClientConfig, type ResolveJoinUseNulls } from "./runtime/config";
 import { createSessionConcurrencyController } from "./runtime/session-concurrency";
 import type { ClickHouseSettings } from "./runtime/settings";
@@ -30,7 +30,7 @@ export const clickhouseClient = <TSchema, TSettings extends ClickHouseSettings |
   config: ClickHouseClientConfig<TSchema> & {
     readonly clickhouse_settings?: TSettings;
   },
-): ClickHouseOrmClient<TSchema, ResolveJoinUseNulls<TSettings, 1>> => {
+): ClickHouseORMClient<TSchema, ResolveJoinUseNulls<TSettings, 1>> => {
   const { schema, logger, logLevel, tracing, instrumentation, ...clientOptions } = config;
 
   const normalizedConfig = normalizeClientConfig(clientOptions);
@@ -45,7 +45,7 @@ export const clickhouseClient = <TSchema, TSettings extends ClickHouseSettings |
           }),
         ]),
     ...(instrumentation ?? []),
-  ] satisfies ClickHouseOrmInstrumentation[];
+  ] satisfies ClickHouseORMInstrumentation[];
 
   const client = createFetchClickHouseTransport(normalizedConfig);
   const sessionConcurrencyController = createSessionConcurrencyController(
@@ -53,7 +53,7 @@ export const clickhouseClient = <TSchema, TSettings extends ClickHouseSettings |
   );
   const joinUseNulls = (config.clickhouse_settings?.join_use_nulls === 0 ? 0 : 1) as ResolveJoinUseNulls<TSettings, 1>;
 
-  return createClickHouseOrmClient<TSchema, ResolveJoinUseNulls<TSettings, 1>>({
+  return createClickHouseORMClient<TSchema, ResolveJoinUseNulls<TSettings, 1>>({
     schema,
     client,
     instrumentations,

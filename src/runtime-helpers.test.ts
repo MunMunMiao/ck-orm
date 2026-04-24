@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { type ClickHouseOrmError, isClickHouseOrmError } from "./errors";
+import { type ClickHouseORMError, isClickHouseORMError } from "./errors";
 import { createAbortController } from "./runtime/abort";
 import {
   assertValidQueryId,
@@ -123,8 +123,8 @@ describe("ck-orm runtime/abort", function describeAbort() {
     ext.abort(reason);
     const { signal, cleanup } = createAbortController(60_000, ext.signal);
     expect(signal.aborted).toBe(true);
-    expect(isClickHouseOrmError(signal.reason)).toBe(true);
-    expect((signal.reason as ClickHouseOrmError).cause).toBe(reason);
+    expect(isClickHouseORMError(signal.reason)).toBe(true);
+    expect((signal.reason as ClickHouseORMError).cause).toBe(reason);
     cleanup();
   });
 
@@ -145,7 +145,7 @@ describe("ck-orm runtime/abort", function describeAbort() {
     Object.defineProperty(ext.signal, "aborted", { value: true, configurable: true });
     const { signal, cleanup } = createAbortController(60_000, ext.signal);
     expect(signal.aborted).toBe(true);
-    expect(isClickHouseOrmError(signal.reason)).toBe(true);
+    expect(isClickHouseORMError(signal.reason)).toBe(true);
     cleanup();
   });
 
@@ -158,12 +158,12 @@ describe("ck-orm runtime/abort", function describeAbort() {
 
 const makeResponse = (body: string, init?: ResponseInit) => new Response(body, init);
 
-const expectRejectsWithClickHouseOrmError = async (promise: Promise<unknown>) => {
+const expectRejectsWithClickHouseORMError = async (promise: Promise<unknown>) => {
   try {
     await promise;
-    throw new Error("Expected promise to reject with ClickHouseOrmError");
+    throw new Error("Expected promise to reject with ClickHouseORMError");
   } catch (error) {
-    expect(isClickHouseOrmError(error)).toBe(true);
+    expect(isClickHouseORMError(error)).toBe(true);
   }
 };
 
@@ -182,7 +182,7 @@ describe("ck-orm runtime/json-stream", function describeJsonStream() {
     Object.defineProperty(broken, "text", {
       value: () => Promise.reject(new TypeError("network down")),
     });
-    await expectRejectsWithClickHouseOrmError(
+    await expectRejectsWithClickHouseORMError(
       readValidatedResponseText({
         response: broken,
         queryId: "q",
@@ -192,7 +192,7 @@ describe("ck-orm runtime/json-stream", function describeJsonStream() {
   });
 
   it("wraps malformed JSON in parseValidatedResponseJson as a request_failed error", async function testJsonParseFailure() {
-    await expectRejectsWithClickHouseOrmError(
+    await expectRejectsWithClickHouseORMError(
       parseValidatedResponseJson({
         response: makeResponse("not-json", { status: 200 }),
         queryId: "q",

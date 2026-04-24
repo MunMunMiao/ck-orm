@@ -17,7 +17,7 @@ const createContext = () => ({
   nextParamIndex: 0,
 });
 
-describe("ck-orm query shared helpers", function describeClickHouseOrmQuerySharedHelpers() {
+describe("ck-orm query shared helpers", function describeClickHouseORMQuerySharedHelpers() {
   it("covers expressions, aliases, mapWith and type guards", function testExpressionHelpers() {
     const expression = createExpression<number>({
       compile: () => sql.raw("1"),

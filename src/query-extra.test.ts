@@ -76,7 +76,7 @@ const taggedOrders = chTable(
   }),
 );
 
-describe("ck-orm query extras", function describeClickHouseOrmQueryExtras() {
+describe("ck-orm query extras", function describeClickHouseORMQueryExtras() {
   it("covers builder errors, default selection, operators and table-function sources", function testBuilderBranches() {
     const db = createQueryClient({
       schema: { orders },

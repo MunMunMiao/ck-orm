@@ -182,22 +182,22 @@ type ChTypeNamespace = {
 
 export type { AnyColumn, Column } from "./columns";
 export type {
-  ClickHouseOrmError,
-  ClickHouseOrmErrorKind,
-  ClickHouseOrmExecutionState,
+  ClickHouseORMError,
+  ClickHouseORMErrorKind,
+  ClickHouseORMExecutionState,
   DecodeError,
 } from "./errors";
-export { isClickHouseOrmError, isDecodeError } from "./errors";
+export { isClickHouseORMError, isDecodeError } from "./errors";
 export type { JsonPathSegment } from "./functions";
 export { fn } from "./functions";
 export type {
-  ClickHouseOrmInstrumentation,
-  ClickHouseOrmLogger,
-  ClickHouseOrmLogLevel,
-  ClickHouseOrmQueryErrorEvent,
-  ClickHouseOrmQueryEvent,
-  ClickHouseOrmQueryResultEvent,
-  ClickHouseOrmTracingOptions,
+  ClickHouseORMInstrumentation,
+  ClickHouseORMLogger,
+  ClickHouseORMLogLevel,
+  ClickHouseORMQueryErrorEvent,
+  ClickHouseORMQueryEvent,
+  ClickHouseORMQueryResultEvent,
+  ClickHouseORMTracingOptions,
 } from "./observability";
 export type { CompiledQuery, CompiledQueryMetadata } from "./query";
 export type { Order, Predicate, Selection } from "./query-shared";

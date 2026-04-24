@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { Span, Tracer } from "@opentelemetry/api";
 import { int32, string } from "./columns";
 import {
-  type ClickHouseOrmInstrumentation,
+  type ClickHouseORMInstrumentation,
   compactStatement,
   createLoggerInstrumentation,
   createQueryErrorEvent,
@@ -107,7 +107,7 @@ const createCapturedTracer = () => {
   return { spans, tracer };
 };
 
-describe("ck-orm observability", function describeClickHouseOrmObservability() {
+describe("ck-orm observability", function describeClickHouseORMObservability() {
   beforeEach(function setupMocks() {
     mock.restore();
   });
@@ -206,7 +206,7 @@ describe("ck-orm observability", function describeClickHouseOrmObservability() {
 
   it("emits instrumentation hooks in forward/reverse order around runtime execution", async function testRuntimeInstrumentationOrder() {
     const order: string[] = [];
-    const instrumentationA: ClickHouseOrmInstrumentation = {
+    const instrumentationA: ClickHouseORMInstrumentation = {
       onQueryStart() {
         order.push("start:a");
       },
@@ -217,7 +217,7 @@ describe("ck-orm observability", function describeClickHouseOrmObservability() {
         order.push("error:a");
       },
     };
-    const instrumentationB: ClickHouseOrmInstrumentation = {
+    const instrumentationB: ClickHouseORMInstrumentation = {
       onQueryStart() {
         order.push("start:b");
       },
@@ -377,7 +377,7 @@ describe("ck-orm observability", function describeClickHouseOrmObservability() {
 
   it("keeps manual instrumentation dispatch resilient to hook failures", async function testManualDispatch() {
     const calls: string[] = [];
-    const flaky: ClickHouseOrmInstrumentation = {
+    const flaky: ClickHouseORMInstrumentation = {
       onQueryStart() {
         calls.push("start");
         throw new Error("ignore start");
