@@ -1,4 +1,4 @@
-import type { AnyColumn, Column } from "./columns";
+import type { AnyColumn } from "./columns";
 import { createClientValidationError, createInternalError } from "./errors";
 import { createUuid } from "./platform";
 import type { InferSelectionResult, NoJoinedSources, SelectionRecord } from "./query/types";
@@ -51,6 +51,7 @@ const compileStateStackStore = new WeakMap<BuildContext, CompileState[]>();
 
 export const compileWithContextSymbol = Symbol("clickhouseOrmCompileWithContext");
 export const compileQuerySymbol = Symbol("clickhouseOrmCompileQuery");
+const selectBuilderResultSymbol = Symbol("clickhouseOrmSelectBuilderResult");
 
 type PrimitiveValue = string | number | bigint | boolean | null | Date;
 type CountSource = AnyTable | AnySubquery | AnyCte;
@@ -61,18 +62,18 @@ type SourceKey<TSource extends KnownQuerySource> =
     ? TAlias extends string
       ? TAlias
       : TName
-    : TSource extends Subquery<Record<string, unknown>, infer TAlias>
+    : TSource extends Subquery<infer _TResult, infer TAlias>
       ? TAlias
-      : TSource extends Cte<Record<string, unknown>, infer TName>
+      : TSource extends Cte<infer _TResult, infer TName>
         ? TName
         : never;
 
 type SourceResult<TSource extends KnownQuerySource> =
   TSource extends Table<Record<string, AnyColumn>, string, string | undefined, string>
     ? TSource["$inferSelect"]
-    : TSource extends Subquery<infer TResult, string>
+    : TSource extends Subquery<infer TResult, infer _TAlias>
       ? TResult
-      : TSource extends Cte<infer TResult, string>
+      : TSource extends Cte<infer TResult, infer _TName>
         ? TResult
         : never;
 
@@ -82,7 +83,7 @@ type JoinedSourceState = {
 };
 
 type JoinedSources = Record<string, JoinedSourceState>;
-type AnySelectBuilder<TResult extends Record<string, unknown> = Record<string, unknown>> = SelectBuilder<
+export type AnySelectBuilder<TResult extends Record<string, unknown> = Record<string, unknown>> = SelectBuilder<
   TResult,
   SelectionRecord | undefined,
   KnownQuerySource | undefined,
@@ -207,14 +208,8 @@ const ensureRunner = (runner: PreparedRunner | undefined, operation: string): Pr
 type ThenHandler<TValue, TResult> = ((value: TValue) => TResult | PromiseLike<TResult>) | null | undefined;
 type CatchHandler<TResult> = ((reason: unknown) => TResult | PromiseLike<TResult>) | null | undefined;
 
-type ReferenceColumns<TSelection extends SelectionRecord> = {
-  [K in keyof TSelection]: Selection<
-    TSelection[K] extends Selection<infer TData>
-      ? TData
-      : TSelection[K] extends Column<infer TData, string>
-        ? TData
-        : unknown
-  >;
+type ReferenceColumns<TRow extends SelectionRecord, TSourceKey extends string> = {
+  [K in keyof TRow]: Selection<TRow[K], TSourceKey>;
 };
 
 const isSubquery = (value: unknown): value is AnySubquery => {
@@ -357,12 +352,12 @@ const normalizeInsertRows = <TTable extends AnyTable>(
   return rows;
 };
 
-const createReferenceExpression = <TData>(
-  sourceAlias: string,
+const createReferenceExpression = <TData, TSourceKey extends string>(
+  sourceAlias: TSourceKey,
   columnName: string,
   decoder: Decoder<TData>,
   sqlType?: string,
-): SqlSelection<TData> => {
+): SqlSelection<TData, TSourceKey> => {
   return createExpression({
     compile: () =>
       sql.identifier({
@@ -375,19 +370,19 @@ const createReferenceExpression = <TData>(
   });
 };
 
-const buildReferenceColumns = <TSelection extends SelectionRecord>(
-  sourceAlias: string,
+const buildReferenceColumns = <TRow extends SelectionRecord, TSourceKey extends string>(
+  sourceAlias: TSourceKey,
   selectionItems: readonly SelectionItem[],
-): ReferenceColumns<TSelection> => {
-  const columns = {} as ReferenceColumns<TSelection>;
+): ReferenceColumns<TRow, TSourceKey> => {
+  const columns = {} as ReferenceColumns<TRow, TSourceKey>;
 
   for (const item of selectionItems) {
-    columns[item.key as keyof TSelection] = createReferenceExpression(
+    columns[item.key as keyof TRow] = createReferenceExpression(
       sourceAlias,
       item.sqlAlias,
       item.expression.decoder,
       item.expression.sqlType,
-    ) as ReferenceColumns<TSelection>[keyof TSelection];
+    ) as ReferenceColumns<TRow, TSourceKey>[keyof TRow];
   }
 
   return columns;
@@ -847,6 +842,7 @@ export interface SelectBuilder<
   TJoinedSources extends JoinedSources = NoJoinedSources,
   TJoinUseNulls extends JoinUseNulls = 1,
 > extends PromiseLike<TResult[]> {
+  readonly [selectBuilderResultSymbol]?: TResult;
   execute(options?: ClickHouseBaseQueryOptions): Promise<TResult[]>;
   iterator(options?: ClickHouseBaseQueryOptions): AsyncGenerator<TResult, void, unknown>;
   catch<TResult2 = never>(onrejected?: CatchHandler<TResult2>): Promise<TResult[] | TResult2>;
@@ -1339,7 +1335,7 @@ export const createSelectBuilder = <
 
     as<TAlias extends string>(alias: TAlias): Subquery<TResult, TAlias> {
       const selectionItems = buildSelectionItems();
-      const columns = buildReferenceColumns<TResult>(alias, selectionItems);
+      const columns = buildReferenceColumns<TResult, TAlias>(alias, selectionItems);
       const subquery = {
         kind: "subquery" as const,
         alias,
@@ -1441,10 +1437,10 @@ export type Subquery<
   readonly kind: "subquery";
   readonly alias: TAlias;
   readonly query: AnySelectBuilder<TResult>;
-  readonly columns: ReferenceColumns<TResult>;
-} & ReferenceColumns<TResult>;
+  readonly columns: ReferenceColumns<TResult, TAlias>;
+} & ReferenceColumns<TResult, TAlias>;
 
-type AnySubquery = {
+export type AnySubquery = {
   readonly kind: "subquery";
   readonly alias: string;
   readonly query: AnySelectBuilder<Record<string, unknown>>;
@@ -1455,10 +1451,25 @@ export type Cte<TResult extends Record<string, unknown> = Record<string, unknown
   readonly kind: "cte";
   readonly name: TName;
   readonly query: AnySelectBuilder<TResult>;
-  readonly columns: ReferenceColumns<TResult>;
-} & ReferenceColumns<TResult>;
+  readonly columns: ReferenceColumns<TResult, TName>;
+} & ReferenceColumns<TResult, TName>;
 
-type AnyCte = {
+type SelectBuilderRow<TQuery> = TQuery extends {
+  execute(options?: ClickHouseBaseQueryOptions): Promise<Array<infer TResult>>;
+}
+  ? TResult extends Record<string, unknown>
+    ? TResult
+    : never
+  : never;
+
+type CteFromQuery<TQuery, TName extends string> = {
+  readonly kind: "cte";
+  readonly name: TName;
+  readonly query: AnySelectBuilder<SelectBuilderRow<TQuery>>;
+  readonly columns: ReferenceColumns<SelectBuilderRow<TQuery>, TName>;
+} & ReferenceColumns<SelectBuilderRow<TQuery>, TName>;
+
+export type AnyCte = {
   readonly kind: "cte";
   readonly name: string;
   readonly query: AnySelectBuilder<Record<string, unknown>>;
@@ -1482,7 +1493,9 @@ export interface QueryClient<TSchema = unknown, TJoinUseNulls extends JoinUseNul
   $with<TName extends string>(
     name: TName,
   ): {
-    as: <TResult extends Record<string, unknown>>(query: AnySelectBuilder<TResult>) => Cte<TResult, TName>;
+    as: <TQuery>(
+      query: TQuery & (SelectBuilderRow<TQuery> extends never ? never : unknown),
+    ) => CteFromQuery<TQuery, TName>;
   };
   with(...ctes: AnyCte[]): QueryClient<TSchema, TJoinUseNulls>;
 }
@@ -1541,16 +1554,19 @@ export const createQueryClient = <TSchema, TJoinUseNulls extends JoinUseNulls = 
 
     $with<TName extends string>(name: TName) {
       return {
-        as: <TResult extends Record<string, unknown>>(query: AnySelectBuilder<TResult>): Cte<TResult, TName> => {
-          const selectionItems = query.buildSelectionItems();
-          const columns = buildReferenceColumns<TResult>(name, selectionItems);
+        as: <TQuery>(
+          query: TQuery & (SelectBuilderRow<TQuery> extends never ? never : unknown),
+        ): CteFromQuery<TQuery, TName> => {
+          const selectQuery = query as unknown as AnySelectBuilder<SelectBuilderRow<TQuery>>;
+          const selectionItems = selectQuery.buildSelectionItems();
+          const columns = buildReferenceColumns<SelectBuilderRow<TQuery>, TName>(name, selectionItems);
           const cte = {
             kind: "cte" as const,
             name,
-            query,
+            query: selectQuery,
             columns,
           };
-          return Object.assign(cte, columns) as Cte<TResult, TName>;
+          return Object.assign(cte, columns) as CteFromQuery<TQuery, TName>;
         },
       };
     },

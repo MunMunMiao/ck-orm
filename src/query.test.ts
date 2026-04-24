@@ -13,6 +13,7 @@ import {
   expr,
   inArray,
 } from "./query";
+import type { Selection } from "./query-shared";
 import { clickhouseClient } from "./runtime";
 import type { ClickHouseTableEngine } from "./schema";
 import { alias, chTable } from "./schema";
@@ -157,6 +158,35 @@ const publicNoNullsDb = publicDb.withSettings({
   join_use_nulls: 0 as const,
 });
 const publicNoNullsLeftJoin = publicNoNullsDb.select().from(users).leftJoin(pets, eq(users.id, pets.owner_id));
+const typedUsersCte = typeDb.$with("typed_users").as(
+  typeDb
+    .select({
+      userId: users.id,
+      name: users.name,
+    })
+    .from(users),
+);
+const typedPetsSubquery = typeDb
+  .select({
+    petId: pets.id,
+    petName: pets.pet_name,
+  })
+  .from(pets)
+  .as("typed_pets");
+const cteReferenceSelection = typeDb
+  .with(typedUsersCte)
+  .select({
+    userId: typedUsersCte.userId,
+    name: typedUsersCte.name,
+  })
+  .from(typedUsersCte);
+const subqueryReferenceLeftJoin = typeDb
+  .select({
+    userId: users.id,
+    petId: typedPetsSubquery.petId,
+  })
+  .from(users)
+  .leftJoin(typedPetsSubquery, eq(users.id, typedPetsSubquery.petId));
 
 const assertPublicClientRuntimeTypes = async () => {
   const typedRows: Array<
@@ -237,6 +267,13 @@ type _NoNullsLeftJoinType = Expect<
     InferBuilderResult<typeof noNullsLeftJoin>,
     { users: typeof users.$inferSelect } & { pets: typeof pets.$inferSelect }
   >
+>;
+type _CteReferenceColumnType = Expect<
+  Equal<InferBuilderResult<typeof cteReferenceSelection>, { userId: number; name: string }>
+>;
+type _CteReferenceColumnSelectionType = Expect<Equal<typeof typedUsersCte.userId, Selection<number, "typed_users">>>;
+type _SubqueryReferenceColumnNullabilityType = Expect<
+  Equal<InferBuilderResult<typeof subqueryReferenceLeftJoin>, { userId: number; petId: number | null }>
 >;
 type _OrderByColumnType = Expect<
   Equal<InferBuilderResult<typeof drizzleStyleOrderBy>, InferBuilderResult<typeof defaultLeftJoin>>
