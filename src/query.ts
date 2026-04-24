@@ -20,14 +20,15 @@ import {
   wrapSql,
 } from "./query-shared";
 import type { ClickHouseBaseQueryOptions } from "./runtime";
+import type { ClickHouseSettings, ClickHouseSettingValue } from "./runtime/settings";
 import type { AnyTable, Table } from "./schema";
 import { renderTableIdentifier } from "./schema";
 import { compileSql, type SQLFragment, sql } from "./sql";
 
 type QuerySource = AnyTable | AnySubquery | AnyCte | TableFunctionSource;
 type KnownQuerySource = AnyTable | AnySubquery | AnyCte;
-type ForcedSettings = Readonly<Record<string, string | number | boolean>>;
-type MutableForcedSettings = Record<string, string | number | boolean>;
+type ForcedSettings = Readonly<ClickHouseSettings>;
+type MutableForcedSettings = Record<string, ClickHouseSettingValue>;
 
 type SqlSelection<TData = unknown, TSourceKey extends string | undefined = string | undefined> = SqlExpression<
   TData,
@@ -180,7 +181,7 @@ export interface CompiledQuery<_TResult = Record<string, unknown>> {
   readonly statement: string;
   readonly params: QueryParams;
   readonly selection: readonly SelectionMeta[];
-  readonly forcedSettings?: Readonly<Record<string, string | number | boolean>>;
+  readonly forcedSettings?: ForcedSettings;
   readonly metadata?: CompiledQueryMetadata;
 }
 

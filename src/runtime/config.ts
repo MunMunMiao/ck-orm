@@ -10,11 +10,12 @@ import type { CompiledQuery, QueryClient } from "../query";
 import type { AnyTable } from "../schema";
 import { compileSql, type SQLFragment } from "../sql";
 import type { JsonHandling } from "./json-stream";
+import type { ClickHouseSettings, ClickHouseSettingValue } from "./settings";
 
 type ClickHouseAuth = { readonly username: string; readonly password: string };
 
 export interface ClickHouseBaseQueryOptions {
-  readonly clickhouse_settings?: Record<string, string | number | boolean>;
+  readonly clickhouse_settings?: ClickHouseSettings;
   readonly query_params?: Record<string, unknown>;
   readonly query_id?: string;
   readonly session_id?: string;
@@ -102,7 +103,7 @@ export interface Session<TSchema = unknown, TJoinUseNulls extends 0 | 1 = 1>
   command(query: RawQueryInput, options?: ClickHouseBaseQueryOptions): Promise<void>;
   ping(options?: ClickHouseEndpointOptions): Promise<void>;
   replicasStatus(options?: ClickHouseEndpointOptions): Promise<void>;
-  withSettings<TSettings extends Record<string, string | number | boolean>>(
+  withSettings<TSettings extends ClickHouseSettings>(
     settings: TSettings,
   ): Session<TSchema, ResolveJoinUseNulls<TSettings, TJoinUseNulls>>;
   insertJsonEachRow(
@@ -164,7 +165,7 @@ type SharedClientConfigOptions = {
     readonly response?: boolean;
   };
   readonly application?: string;
-  readonly clickhouse_settings?: Record<string, string | number | boolean>;
+  readonly clickhouse_settings?: ClickHouseSettings;
   readonly session_id?: string;
   /**
    * Maximum number of in-flight requests allowed for the same
@@ -215,7 +216,7 @@ export type NormalizedClientConfig = {
   readonly auth?: ClickHouseAuth;
   readonly application?: string;
   readonly database: string;
-  readonly clickhouse_settings: Record<string, string | number | boolean>;
+  readonly clickhouse_settings: ClickHouseSettings;
   readonly session_id?: string;
   readonly session_max_concurrent_requests: number;
   readonly role?: string | string[];
@@ -316,7 +317,7 @@ const resolveRoleEntries = (role: string | string[] | undefined): [string, strin
   return Array.isArray(role) ? role.map<[string, string]>((value) => ["role", value]) : [["role", role]];
 };
 
-const formatQuerySetting = (value: string | number | boolean) => {
+const formatQuerySetting = (value: ClickHouseSettingValue) => {
   if (typeof value === "boolean") {
     return value ? "1" : "0";
   }
@@ -451,7 +452,7 @@ export const formatQueryParamValue = (
 
 export const buildSearchParams = (input: {
   readonly database?: string;
-  readonly clickhouse_settings?: Record<string, string | number | boolean>;
+  readonly clickhouse_settings?: ClickHouseSettings;
   readonly query?: string;
   readonly query_id: string;
   readonly session_id?: string;
@@ -687,9 +688,9 @@ export const buildEndpointUrl = (baseUrl: URL, path: string) => {
  * side wins on key collision and `undefined` sources are skipped.
  */
 export const mergeClickHouseSettings = (
-  ...sources: ReadonlyArray<Record<string, string | number | boolean> | undefined>
-): Record<string, string | number | boolean> => {
-  const merged: Record<string, string | number | boolean> = {};
+  ...sources: ReadonlyArray<ClickHouseSettings | undefined>
+): ClickHouseSettings => {
+  const merged: Record<string, ClickHouseSettingValue> = {};
   for (const source of sources) {
     if (source) {
       Object.assign(merged, source);
@@ -756,10 +757,10 @@ const isDisabledSetting = (value: string | number | boolean | undefined) => {
 };
 
 export const normalizeTransportSettings = (input: {
-  readonly settings: Record<string, string | number | boolean>;
+  readonly settings: ClickHouseSettings;
   readonly parseMode: ResponseParseMode;
-}) => {
-  const settings = {
+}): ClickHouseSettings => {
+  const settings: Record<string, ClickHouseSettingValue> = {
     ...input.settings,
   };
 

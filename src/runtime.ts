@@ -6,6 +6,7 @@ import {
 import { type ClickHouseOrmClient, createClickHouseOrmClient } from "./runtime/client";
 import { type ClickHouseClientConfig, normalizeClientConfig, type ResolveJoinUseNulls } from "./runtime/config";
 import { createSessionConcurrencyController } from "./runtime/session-concurrency";
+import type { ClickHouseSettings } from "./runtime/settings";
 import { createFetchClickHouseTransport } from "./runtime/transport";
 
 export type {
@@ -18,11 +19,14 @@ export type {
   CreateTemporaryTableOptions,
   Session,
 } from "./runtime/config";
+export type {
+  ClickHouseKnownSettingName,
+  ClickHouseKnownSettings,
+  ClickHouseSettings,
+  ClickHouseSettingValue,
+} from "./runtime/settings";
 
-export const clickhouseClient = <
-  TSchema,
-  TSettings extends Record<string, string | number | boolean> | undefined = undefined,
->(
+export const clickhouseClient = <TSchema, TSettings extends ClickHouseSettings | undefined = undefined>(
   config: ClickHouseClientConfig<TSchema> & {
     readonly clickhouse_settings?: TSettings;
   },

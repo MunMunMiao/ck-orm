@@ -106,6 +106,7 @@ export const db = clickhouseClient({
   password: "<password>",
   schema: commerceSchema,
   clickhouse_settings: {
+    allow_experimental_correlated_subqueries: 1,
     max_execution_time: 10,
   },
 });
@@ -516,7 +517,7 @@ Most projects only need a small subset of client fields:
 | --- | --- |
 | `schema` | Application schema |
 | `request_timeout` | Default request timeout in milliseconds |
-| `clickhouse_settings` | Default ClickHouse settings |
+| `clickhouse_settings` | Default ClickHouse session/query settings |
 | `application` | Set the ClickHouse application name |
 
 ### Advanced fields
@@ -538,6 +539,32 @@ Session lifetime controls are intentionally request-scoped. Pass `session_timeou
 `session_max_concurrent_requests` is different: it is a client-level guard that throttles overlapping requests that target the same `session_id`.
 Real ClickHouse sessions are still server-locked, so increasing `session_max_concurrent_requests` above `1` can surface `SESSION_IS_LOCKED` instead of giving you true same-session parallelism.
 Keep the default `1` unless you intentionally want to remove local serialization and are prepared to handle server-side session-lock failures.
+
+### ClickHouse settings
+
+`clickhouse_settings` is only for ClickHouse session/query settings, the same kind of keys documented in ClickHouse's [Session Settings](https://clickhouse.com/docs/operations/settings/settings) and accepted by the HTTP API as query parameters. It is separate from ck-orm client configuration such as `host`, `database`, `request_timeout`, `http_headers`, and `session_max_concurrent_requests`.
+
+Official setting keys have TypeScript completion, and arbitrary keys remain valid for newer ClickHouse versions or deployment-specific settings:
+
+```ts
+import { clickhouseClient, type ClickHouseSettings } from "ck-orm";
+
+const reportSettings: ClickHouseSettings = {
+  allow_experimental_correlated_subqueries: 1,
+  max_threads: 4,
+  setting_added_by_future_clickhouse: "enabled",
+};
+
+const db = clickhouseClient({
+  host: "http://127.0.0.1:8123",
+  database: "demo_store",
+  username: "default",
+  password: "<password>",
+  schema: commerceSchema,
+  request_timeout: 30_000,
+  clickhouse_settings: reportSettings,
+});
+```
 
 `ck-orm` also keeps JSON parse/stringify hooks internal to the fetch transport. The public client config does not expose a `json` override.
 
@@ -1355,9 +1382,24 @@ Common per-query fields include:
 - `ignore_error_response`
 
 `session_timeout` and `session_check` live here on purpose: they describe a specific request or a specific session block, not a global client default.
+`query_id`, `session_id`, and `session_timeout` are request/session options; keep them outside `clickhouse_settings`.
 
 `session_check` does not bootstrap a new ClickHouse session. Use it when you need ClickHouse to verify that an explicit `session_id` already exists.
 Any request that carries a `session_id` participates in the same per-session limiter, including raw `execute()`, `command()`, `stream()`, builder `.execute()`, and builder `.iterator()`.
+
+Per-request `clickhouse_settings` only override ClickHouse settings for that request:
+
+```ts
+await db.execute(csql`SELECT 1`, {
+  query_id: "debug-query",
+  session_id: "debug-session",
+  session_timeout: 60,
+  clickhouse_settings: {
+    max_threads: 2,
+    readonly: 1,
+  },
+});
+```
 
 ### `execute()`
 
@@ -1398,7 +1440,30 @@ const reportDb = db.withSettings({
 });
 ```
 
-The returned client keeps the same schema, transport, and session concurrency controller as the parent client.
+`withSettings()` only changes default ClickHouse session/query settings. The returned client keeps the same schema, transport, auth, timeout, and session concurrency controller as the parent client.
+
+Session lifecycle options stay separate from ClickHouse settings in `runInSession()`:
+
+```ts
+await db.runInSession(
+  async (session) => {
+    await session.execute(csql`SELECT 1`);
+
+    await session
+      .withSettings({
+        max_threads: 2,
+      })
+      .execute(csql`SELECT 2`);
+  },
+  {
+    session_id: "report-session",
+    session_timeout: 120,
+    clickhouse_settings: {
+      allow_experimental_correlated_subqueries: 1,
+    },
+  },
+);
+```
 
 ### Compiled query integration
 

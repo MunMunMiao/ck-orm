@@ -35,6 +35,7 @@ import {
   toClickHouseTableName,
 } from "./config";
 import type { SessionConcurrencyController } from "./session-concurrency";
+import type { ClickHouseSettings } from "./settings";
 import type { FetchClickHouseTransport } from "./transport";
 
 export interface ClickHouseOrmClient<TSchema, TJoinUseNulls extends 0 | 1 = 1>
@@ -534,7 +535,7 @@ export const createClickHouseOrmClient = <TSchema, TJoinUseNulls extends 0 | 1 =
       });
     },
 
-    withSettings<TSettings extends Record<string, string | number | boolean>>(
+    withSettings<TSettings extends ClickHouseSettings>(
       settings: TSettings,
     ): ClickHouseOrmClient<TSchema, ResolveJoinUseNulls<TSettings, TJoinUseNulls>> {
       const nextJoinUseNulls = (

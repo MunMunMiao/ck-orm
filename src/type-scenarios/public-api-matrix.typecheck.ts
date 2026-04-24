@@ -1,5 +1,16 @@
 import type * as RootApi from "../index";
-import { chType, ck, clickhouseClient, csql, fn, type Order, type Predicate, type Selection } from "../index";
+import {
+  type ClickHouseBaseQueryOptions,
+  type ClickHouseSettings,
+  chType,
+  ck,
+  clickhouseClient,
+  csql,
+  fn,
+  type Order,
+  type Predicate,
+  type Selection,
+} from "../index";
 import { activityLedger, activityMetricLog, typeScenarioSchema } from "./fixtures";
 import type { DataOf, Equal, Expect } from "./helpers";
 
@@ -7,6 +18,53 @@ const db = clickhouseClient({
   databaseUrl: "http://localhost:8123/public_api_matrix",
   schema: typeScenarioSchema,
 });
+
+const settingsDb = clickhouseClient({
+  databaseUrl: "http://localhost:8123/public_api_matrix",
+  schema: typeScenarioSchema,
+  clickhouse_settings: {
+    allow_experimental_correlated_subqueries: 1,
+    max_threads: 4,
+    future_clickhouse_setting_from_typecheck: "enabled",
+  },
+});
+
+const requestOptions: ClickHouseBaseQueryOptions = {
+  query_id: "public_api_matrix_query",
+  session_id: "public_api_matrix_session",
+  session_timeout: 60,
+  clickhouse_settings: {
+    max_threads: 2,
+    readonly: 1,
+  },
+};
+
+const knownAndDynamicSettings: ClickHouseSettings = {
+  allow_experimental_correlated_subqueries: 1,
+  setting_added_by_future_clickhouse: "on",
+};
+
+const settingsChildDb = db.withSettings({
+  allow_experimental_correlated_subqueries: 1,
+  future_clickhouse_setting_from_child: true,
+});
+
+settingsDb.execute(csql`SELECT 1`, requestOptions);
+settingsChildDb.execute(csql`SELECT 1`);
+db.execute(csql`SELECT 1`, { clickhouse_settings: knownAndDynamicSettings });
+
+const invalidObjectSettings: ClickHouseSettings = {
+  // @ts-expect-error object values are not valid ClickHouse HTTP setting values.
+  max_threads: { value: 4 },
+};
+
+const invalidArraySettings: ClickHouseSettings = {
+  // @ts-expect-error array values are not valid ClickHouse HTTP setting values.
+  setting_added_by_future_clickhouse: ["on"],
+};
+
+void invalidObjectSettings;
+void invalidArraySettings;
 
 const chTypeNameMatrix = {
   aggregateFunction: [

@@ -472,14 +472,19 @@ describe("ck-orm runtime/config validation", function describeConfigValidation()
       session_timeout: 30,
       session_check: 1,
       clickhouse_settings: {
+        allow_experimental_correlated_subqueries: 1,
+        future_clickhouse_setting: true,
         join_use_nulls: true,
         max_execution_time: 10,
       },
       role: ["analyst", "auditor"],
     });
 
+    expect(searchParams.get("allow_experimental_correlated_subqueries")).toBe("1");
+    expect(searchParams.get("future_clickhouse_setting")).toBe("1");
     expect(searchParams.get("join_use_nulls")).toBe("1");
     expect(searchParams.get("max_execution_time")).toBe("10");
+    expect(searchParams.get("query_id")).toBe("query_1");
     expect(searchParams.get("database")).toBe("demo_store");
     expect(searchParams.get("query")).toBe("select 1");
     expect(searchParams.get("session_id")).toBe("session_1");
