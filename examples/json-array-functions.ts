@@ -1,4 +1,4 @@
-import { chType, ck, clickhouseClient, fn } from "./ck-orm";
+import { ck, ckType, clickhouseClient, fn } from "./ck-orm";
 import { commerceSchema, orderRewardLog } from "./schema/commerce";
 
 const createCommerceDb = () => {
@@ -16,8 +16,8 @@ const createCommerceDb = () => {
 
 export const buildJsonRegulatoryFilterExample = () => {
   const commerceDb = createCommerceDb();
-  const regulatoryRegions = fn.jsonExtract(orderRewardLog.metadata, chType.array(chType.string()), "regulatory");
-  const riskScore = fn.jsonExtract(orderRewardLog.metadata, chType.nullable(chType.float64()), "risk", "score");
+  const regulatoryRegions = fn.jsonExtract(orderRewardLog.metadata, ckType.array(ckType.string()), "regulatory");
+  const riskScore = fn.jsonExtract(orderRewardLog.metadata, ckType.nullable(ckType.float64()), "risk", "score");
 
   const query = commerceDb
     .select({
@@ -41,7 +41,7 @@ export const buildJsonRegulatoryFilterExample = () => {
 
 export const buildArrayHelperProjectionExample = () => {
   const commerceDb = createCommerceDb();
-  const regulatoryRegions = fn.jsonExtract(orderRewardLog.metadata, chType.array(chType.string()), "regulatory");
+  const regulatoryRegions = fn.jsonExtract(orderRewardLog.metadata, ckType.array(ckType.string()), "regulatory");
   const normalizedTags = fn.arrayConcat<string>(orderRewardLog.tags, fn.array("reward")).as("normalized_tags");
 
   const query = commerceDb

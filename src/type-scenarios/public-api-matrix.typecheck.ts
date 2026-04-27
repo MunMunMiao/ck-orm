@@ -2,8 +2,8 @@ import type * as RootApi from "../index";
 import {
   type ClickHouseBaseQueryOptions,
   type ClickHouseSettings,
-  chType,
   ck,
+  ckType,
   clickhouseClient,
   csql,
   fn,
@@ -66,123 +66,123 @@ const invalidArraySettings: ClickHouseSettings = {
 void invalidObjectSettings;
 void invalidArraySettings;
 
-const chTypeNameMatrix = {
+const ckTypeNameMatrix = {
   aggregateFunction: [
-    chType.aggregateFunction("sum", chType.uint64()),
-    chType.aggregateFunction("sum_state", { name: "sum", args: [chType.uint64()] }),
+    ckType.aggregateFunction("sum", ckType.uint64()),
+    ckType.aggregateFunction("sum_state", { name: "sum", args: [ckType.uint64()] }),
   ],
-  array: [chType.array(chType.string()), chType.array("tag_names", chType.string())],
-  bfloat16: [chType.bfloat16(), chType.bfloat16("score_bf16")],
-  bool: [chType.bool(), chType.bool("is_active")],
-  date: [chType.date(), chType.date("event_date")],
-  date32: [chType.date32(), chType.date32("event_date32")],
-  dateTime: [chType.dateTime(), chType.dateTime("created_at")],
+  array: [ckType.array(ckType.string()), ckType.array("tag_names", ckType.string())],
+  bfloat16: [ckType.bfloat16(), ckType.bfloat16("score_bf16")],
+  bool: [ckType.bool(), ckType.bool("is_active")],
+  date: [ckType.date(), ckType.date("event_date")],
+  date32: [ckType.date32(), ckType.date32("event_date32")],
+  dateTime: [ckType.dateTime(), ckType.dateTime("created_at")],
   dateTime64: [
-    chType.dateTime64({ precision: 9, timezone: "UTC" }),
-    chType.dateTime64("created_at_64", { precision: 9, timezone: "UTC" }),
+    ckType.dateTime64({ precision: 9, timezone: "UTC" }),
+    ckType.dateTime64("created_at_64", { precision: 9, timezone: "UTC" }),
   ],
-  decimal: [chType.decimal({ precision: 20, scale: 5 }), chType.decimal("metric_value", { precision: 20, scale: 5 })],
-  dynamic: [chType.dynamic<{ label: string }>(), chType.dynamic<{ label: string }>("payload_dynamic")],
+  decimal: [ckType.decimal({ precision: 20, scale: 5 }), ckType.decimal("metric_value", { precision: 20, scale: 5 })],
+  dynamic: [ckType.dynamic<{ label: string }>(), ckType.dynamic<{ label: string }>("payload_dynamic")],
   enum8: [
-    chType.enum8<"open" | "closed">({ open: 1, closed: 2 }),
-    chType.enum8<"open" | "closed">("status_8", { open: 1, closed: 2 }),
+    ckType.enum8<"open" | "closed">({ open: 1, closed: 2 }),
+    ckType.enum8<"open" | "closed">("status_8", { open: 1, closed: 2 }),
   ],
   enum16: [
-    chType.enum16<"small" | "large">({ small: 1, large: 1000 }),
-    chType.enum16<"small" | "large">("status_16", { small: 1, large: 1000 }),
+    ckType.enum16<"small" | "large">({ small: 1, large: 1000 }),
+    ckType.enum16<"small" | "large">("status_16", { small: 1, large: 1000 }),
   ],
-  fixedString: [chType.fixedString({ length: 8 }), chType.fixedString("code", { length: 8 })],
-  float32: [chType.float32(), chType.float32("ratio_32")],
-  float64: [chType.float64(), chType.float64("ratio_64")],
-  int8: [chType.int8(), chType.int8("i8")],
-  int16: [chType.int16(), chType.int16("i16")],
-  int32: [chType.int32(), chType.int32("i32")],
-  int64: [chType.int64(), chType.int64("i64")],
-  ipv4: [chType.ipv4(), chType.ipv4("ip_v4")],
-  ipv6: [chType.ipv6(), chType.ipv6("ip_v6")],
-  json: [chType.json<{ id: number }>(), chType.json<{ id: number }>("payload_json")],
-  lineString: [chType.lineString(), chType.lineString("line_value")],
-  lowCardinality: [chType.lowCardinality(chType.string()), chType.lowCardinality("region", chType.string())],
-  map: [chType.map(chType.string(), chType.int32()), chType.map("attrs", chType.string(), chType.int32())],
-  multiLineString: [chType.multiLineString(), chType.multiLineString("multi_line_value")],
-  multiPolygon: [chType.multiPolygon(), chType.multiPolygon("multi_polygon_value")],
+  fixedString: [ckType.fixedString({ length: 8 }), ckType.fixedString("code", { length: 8 })],
+  float32: [ckType.float32(), ckType.float32("ratio_32")],
+  float64: [ckType.float64(), ckType.float64("ratio_64")],
+  int8: [ckType.int8(), ckType.int8("i8")],
+  int16: [ckType.int16(), ckType.int16("i16")],
+  int32: [ckType.int32(), ckType.int32("i32")],
+  int64: [ckType.int64(), ckType.int64("i64")],
+  ipv4: [ckType.ipv4(), ckType.ipv4("ip_v4")],
+  ipv6: [ckType.ipv6(), ckType.ipv6("ip_v6")],
+  json: [ckType.json<{ id: number }>(), ckType.json<{ id: number }>("payload_json")],
+  lineString: [ckType.lineString(), ckType.lineString("line_value")],
+  lowCardinality: [ckType.lowCardinality(ckType.string()), ckType.lowCardinality("region", ckType.string())],
+  map: [ckType.map(ckType.string(), ckType.int32()), ckType.map("attrs", ckType.string(), ckType.int32())],
+  multiLineString: [ckType.multiLineString(), ckType.multiLineString("multi_line_value")],
+  multiPolygon: [ckType.multiPolygon(), ckType.multiPolygon("multi_polygon_value")],
   nested: [
-    chType.nested({ id: chType.int32(), name: chType.string() }),
-    chType.nested("profiles", { id: chType.int32(), name: chType.string() }),
+    ckType.nested({ id: ckType.int32(), name: ckType.string() }),
+    ckType.nested("profiles", { id: ckType.int32(), name: ckType.string() }),
   ],
-  nullable: [chType.nullable(chType.string()), chType.nullable("optional_note", chType.string())],
-  point: [chType.point(), chType.point("point_value")],
-  polygon: [chType.polygon(), chType.polygon("polygon_value")],
+  nullable: [ckType.nullable(ckType.string()), ckType.nullable("optional_note", ckType.string())],
+  point: [ckType.point(), ckType.point("point_value")],
+  polygon: [ckType.polygon(), ckType.polygon("polygon_value")],
   qbit: [
-    chType.qbit(chType.float32(), { dimensions: 8 }),
-    chType.qbit("embedding", chType.float32(), { dimensions: 8 }),
+    ckType.qbit(ckType.float32(), { dimensions: 8 }),
+    ckType.qbit("embedding", ckType.float32(), { dimensions: 8 }),
   ],
-  ring: [chType.ring(), chType.ring("ring_value")],
+  ring: [ckType.ring(), ckType.ring("ring_value")],
   simpleAggregateFunction: [
-    chType.simpleAggregateFunction("sum", chType.uint64()),
-    chType.simpleAggregateFunction("sum_value", { name: "sum", value: chType.uint64() }),
+    ckType.simpleAggregateFunction("sum", ckType.uint64()),
+    ckType.simpleAggregateFunction("sum_value", { name: "sum", value: ckType.uint64() }),
   ],
-  string: [chType.string(), chType.string("user_id")],
-  time: [chType.time(), chType.time("event_time")],
-  time64: [chType.time64({ precision: 6 }), chType.time64("event_time_64", { precision: 6 })],
-  tuple: [chType.tuple(chType.int32(), chType.string()), chType.tuple("point_pair", chType.int32(), chType.string())],
-  uint8: [chType.uint8(), chType.uint8("u8")],
-  uint16: [chType.uint16(), chType.uint16("u16")],
-  uint32: [chType.uint32(), chType.uint32("u32")],
-  uint64: [chType.uint64(), chType.uint64("u64")],
-  uuid: [chType.uuid(), chType.uuid("entity_uuid")],
+  string: [ckType.string(), ckType.string("user_id")],
+  time: [ckType.time(), ckType.time("event_time")],
+  time64: [ckType.time64({ precision: 6 }), ckType.time64("event_time_64", { precision: 6 })],
+  tuple: [ckType.tuple(ckType.int32(), ckType.string()), ckType.tuple("point_pair", ckType.int32(), ckType.string())],
+  uint8: [ckType.uint8(), ckType.uint8("u8")],
+  uint16: [ckType.uint16(), ckType.uint16("u16")],
+  uint32: [ckType.uint32(), ckType.uint32("u32")],
+  uint64: [ckType.uint64(), ckType.uint64("u64")],
+  uuid: [ckType.uuid(), ckType.uuid("entity_uuid")],
   variant: [
-    chType.variant(chType.string(), chType.int32()),
-    chType.variant("variant_value", chType.string(), chType.int32()),
+    ckType.variant(ckType.string(), ckType.int32()),
+    ckType.variant("variant_value", ckType.string(), ckType.int32()),
   ],
-} satisfies { readonly [K in keyof typeof chType]: readonly [unknown, unknown] };
+} satisfies { readonly [K in keyof typeof ckType]: readonly [unknown, unknown] };
 
 const columnTypeMatrix = {
-  aggregateFunction: chType.aggregateFunction<number>("sum", chType.uint64()),
-  array: chType.array(chType.string()),
-  bfloat16: chType.bfloat16(),
-  bool: chType.bool(),
-  date: chType.date(),
-  date32: chType.date32(),
-  dateTime: chType.dateTime(),
-  dateTime64: chType.dateTime64({ precision: 9 }),
-  decimal: chType.decimal({ precision: 20, scale: 5 }),
-  dynamic: chType.dynamic<{ label: string }>(),
-  enum8: chType.enum8<"open" | "closed">({ open: 1, closed: 2 }),
-  enum16: chType.enum16<"small" | "large">({ small: 1, large: 1000 }),
-  fixedString: chType.fixedString({ length: 8 }),
-  float32: chType.float32(),
-  float64: chType.float64(),
-  int8: chType.int8(),
-  int16: chType.int16(),
-  int32: chType.int32(),
-  int64: chType.int64(),
-  ipv4: chType.ipv4(),
-  ipv6: chType.ipv6(),
-  json: chType.json<{ id: number }>(),
-  lineString: chType.lineString(),
-  lowCardinality: chType.lowCardinality(chType.string()),
-  map: chType.map(chType.string(), chType.int32()),
-  multiLineString: chType.multiLineString(),
-  multiPolygon: chType.multiPolygon(),
-  nested: chType.nested({ id: chType.int32(), name: chType.string() }),
-  nullable: chType.nullable(chType.string()),
-  point: chType.point(),
-  polygon: chType.polygon(),
-  qbit: chType.qbit(chType.float32(), { dimensions: 8 }),
-  ring: chType.ring(),
-  simpleAggregateFunction: chType.simpleAggregateFunction<number>("sum", chType.uint64()),
-  string: chType.string(),
-  time: chType.time(),
-  time64: chType.time64({ precision: 6 }),
-  tuple: chType.tuple(chType.int32(), chType.string()),
-  uint8: chType.uint8(),
-  uint16: chType.uint16(),
-  uint32: chType.uint32(),
-  uint64: chType.uint64(),
-  uuid: chType.uuid(),
-  variant: chType.variant(chType.string(), chType.int32()),
-} satisfies { readonly [K in keyof typeof chType]: RootApi.Column };
+  aggregateFunction: ckType.aggregateFunction<number>("sum", ckType.uint64()),
+  array: ckType.array(ckType.string()),
+  bfloat16: ckType.bfloat16(),
+  bool: ckType.bool(),
+  date: ckType.date(),
+  date32: ckType.date32(),
+  dateTime: ckType.dateTime(),
+  dateTime64: ckType.dateTime64({ precision: 9 }),
+  decimal: ckType.decimal({ precision: 20, scale: 5 }),
+  dynamic: ckType.dynamic<{ label: string }>(),
+  enum8: ckType.enum8<"open" | "closed">({ open: 1, closed: 2 }),
+  enum16: ckType.enum16<"small" | "large">({ small: 1, large: 1000 }),
+  fixedString: ckType.fixedString({ length: 8 }),
+  float32: ckType.float32(),
+  float64: ckType.float64(),
+  int8: ckType.int8(),
+  int16: ckType.int16(),
+  int32: ckType.int32(),
+  int64: ckType.int64(),
+  ipv4: ckType.ipv4(),
+  ipv6: ckType.ipv6(),
+  json: ckType.json<{ id: number }>(),
+  lineString: ckType.lineString(),
+  lowCardinality: ckType.lowCardinality(ckType.string()),
+  map: ckType.map(ckType.string(), ckType.int32()),
+  multiLineString: ckType.multiLineString(),
+  multiPolygon: ckType.multiPolygon(),
+  nested: ckType.nested({ id: ckType.int32(), name: ckType.string() }),
+  nullable: ckType.nullable(ckType.string()),
+  point: ckType.point(),
+  polygon: ckType.polygon(),
+  qbit: ckType.qbit(ckType.float32(), { dimensions: 8 }),
+  ring: ckType.ring(),
+  simpleAggregateFunction: ckType.simpleAggregateFunction<number>("sum", ckType.uint64()),
+  string: ckType.string(),
+  time: ckType.time(),
+  time64: ckType.time64({ precision: 6 }),
+  tuple: ckType.tuple(ckType.int32(), ckType.string()),
+  uint8: ckType.uint8(),
+  uint16: ckType.uint16(),
+  uint32: ckType.uint32(),
+  uint64: ckType.uint64(),
+  uuid: ckType.uuid(),
+  variant: ckType.variant(ckType.string(), ckType.int32()),
+} satisfies { readonly [K in keyof typeof ckType]: RootApi.Column };
 
 type _ChTypeDataMatrix = Expect<
   Equal<
@@ -338,13 +338,13 @@ const functionTypeMatrix = {
   emptyArrayUInt32: fn.emptyArrayUInt32(),
   emptyArrayUInt64: fn.emptyArrayUInt64(),
   emptyArrayUInt8: fn.emptyArrayUInt8(),
-  has: fn.has(chTypeNameMatrix.array[0], "vip"),
-  hasAll: fn.hasAll(chTypeNameMatrix.array[0], ["vip"]),
-  hasAny: fn.hasAny(chTypeNameMatrix.array[0], ["vip"]),
-  hasSubstr: fn.hasSubstr(chTypeNameMatrix.array[0], ["vip"]),
+  has: fn.has(ckTypeNameMatrix.array[0], "vip"),
+  hasAll: fn.hasAll(ckTypeNameMatrix.array[0], ["vip"]),
+  hasAny: fn.hasAny(ckTypeNameMatrix.array[0], ["vip"]),
+  hasSubstr: fn.hasSubstr(ckTypeNameMatrix.array[0], ["vip"]),
   indexOf: fn.indexOf(["vip"], "vip"),
   indexOfAssumeSorted: fn.indexOfAssumeSorted(["pro", "vip"], "vip"),
-  jsonExtract: fn.jsonExtract(activityMetricLog.payload, chType.array(chType.string()), "labels"),
+  jsonExtract: fn.jsonExtract(activityMetricLog.payload, ckType.array(ckType.string()), "labels"),
   kql_array_sort_asc: fn.kql_array_sort_asc<readonly [string[]]>(["pro", "vip"]),
   kql_array_sort_desc: fn.kql_array_sort_desc<readonly [string[]]>(["pro", "vip"]),
   length: fn.length(["vip"]),
@@ -502,10 +502,10 @@ const ckApiMatrix = {
   fn: ck.fn,
   gt: ck.gt(activityLedger.actor_id, 0),
   gte: ck.gte(activityLedger.actor_id, 0),
-  has: ck.has(chTypeNameMatrix.array[0], "vip"),
-  hasAll: ck.hasAll(chTypeNameMatrix.array[0], ["vip"]),
-  hasAny: ck.hasAny(chTypeNameMatrix.array[0], ["vip"]),
-  hasSubstr: ck.hasSubstr(chTypeNameMatrix.array[0], ["vip"]),
+  has: ck.has(ckTypeNameMatrix.array[0], "vip"),
+  hasAll: ck.hasAll(ckTypeNameMatrix.array[0], ["vip"]),
+  hasAny: ck.hasAny(ckTypeNameMatrix.array[0], ["vip"]),
+  hasSubstr: ck.hasSubstr(ckTypeNameMatrix.array[0], ["vip"]),
   ilike: ck.ilike(activityLedger.system_id, "%system%"),
   inArray: ck.inArray(activityLedger.event_phase, [0, 1]),
   like: ck.like(activityLedger.system_id, "%system%"),
@@ -537,24 +537,24 @@ const idPredicate: Predicate = ck.eq(activityLedger.actor_id, 1);
 const sortOrder: Order = ck.asc(nameSelection);
 
 // @ts-expect-error decimal config must stay object-shaped.
-chType.decimal(20, 5);
+ckType.decimal(20, 5);
 // @ts-expect-error decimal named config must stay object-shaped.
-chType.decimal("metric_value", 20, 5);
+ckType.decimal("metric_value", 20, 5);
 // @ts-expect-error fixedString config must stay object-shaped.
-chType.fixedString(8);
+ckType.fixedString(8);
 // @ts-expect-error fixedString named config must stay object-shaped.
-chType.fixedString("code", 8);
+ckType.fixedString("code", 8);
 // @ts-expect-error dateTime64 config must stay object-shaped.
-chType.dateTime64(9);
+ckType.dateTime64(9);
 // @ts-expect-error time64 config must stay object-shaped.
-chType.time64(6);
+ckType.time64(6);
 // @ts-expect-error qbit dimensions must stay object-shaped.
-chType.qbit(chType.float32(), 8);
+ckType.qbit(ckType.float32(), 8);
 // @ts-expect-error simpleAggregateFunction named form requires a value column.
-chType.simpleAggregateFunction("sum_value", { name: "sum" });
+ckType.simpleAggregateFunction("sum_value", { name: "sum" });
 // @ts-expect-error csql only supports tagged-template usage.
 csql("select 1");
-// @ts-expect-error jsonExtract return type must come from chType.
+// @ts-expect-error jsonExtract return type must come from ckType.
 fn.jsonExtract(csql`payload`, "Array(String)");
 // @ts-expect-error Selection should not expose compile.
 nameSelection.compile;
@@ -579,12 +579,12 @@ const hiddenSqlExpression: RootApi.SqlExpression | undefined = undefined;
 // @ts-expect-error Grouping should remain internal to the package root.
 const hiddenGrouping: RootApi.Grouping | undefined = undefined;
 
-type HasChType = "chType" extends keyof typeof import("../index") ? true : false;
+type HasCkType = "ckType" extends keyof typeof import("../index") ? true : false;
 type HasRootInt32 = "int32" extends keyof typeof import("../index") ? true : false;
-type _HasChType = Expect<Equal<HasChType, true>>;
+type _HasChType = Expect<Equal<HasCkType, true>>;
 type _HasNoRootInt32 = Expect<Equal<HasRootInt32, false>>;
 
-void chTypeNameMatrix;
+void ckTypeNameMatrix;
 void columnTypeMatrix;
 void functionTypeMatrix;
 void tableFunctionTypeMatrix;

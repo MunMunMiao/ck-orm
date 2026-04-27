@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { chTable, chType, ck, type Predicate } from "./ck-orm";
+import { ck, ckTable, ckType, type Predicate } from "./ck-orm";
 import { createE2EDb, createTempTableName, pets, rewardEvents, users, webEvents } from "./shared";
 import { describeE2E } from "./test-helpers";
 
@@ -115,10 +115,10 @@ describeE2E("ck-orm e2e count and dynamic filters", function describeCountAndDyn
   it("supports counting session temporary tables and final subqueries", async function testSessionScopedCounts() {
     const db = createE2EDb();
     const tempTableName = createTempTableName("count_scope");
-    const tempScope = chTable(
+    const tempScope = ckTable(
       tempTableName,
       {
-        user_id: chType.int32(),
+        user_id: ckType.int32(),
       },
       (table) => ({
         engine: "MergeTree",

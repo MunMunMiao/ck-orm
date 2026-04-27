@@ -6,9 +6,9 @@ This matrix records the public API coverage contract. Runtime behavior rows poin
 
 | API | Coverage location |
 | --- | --- |
-| root runtime exports: `ck`, `fn`, `csql`, `chType`, `chTable`, `alias`, `clickhouseClient`, `isClickHouseORMError`, `isDecodeError` | `src/public_api.test.ts` |
+| root runtime exports: `ck`, `fn`, `csql`, `ckType`, `ckTable`, `alias`, `clickhouseClient`, `isClickHouseORMError`, `isDecodeError` | `src/public_api.test.ts` |
 | root type exports: columns, tables, query selections, compiled query metadata, runtime config/options/settings/session, observability events, error contracts, schema inference helpers, `SQLFragment`, `JsonPathSegment` | `src/public_api.test.ts`, `src/public_api.typecheck.ts`, `src/type-scenarios/public-api-matrix.typecheck.ts` |
-| namespace key guards for `ck`, `fn`, `fn.table`, `csql`, `chType` | `src/public_api.test.ts`, `src/type-scenarios/public-api-matrix.typecheck.ts` |
+| namespace key guards for `ck`, `fn`, `fn.table`, `csql`, `ckType` | `src/public_api.test.ts`, `src/type-scenarios/public-api-matrix.typecheck.ts` |
 
 ## Runtime API
 
@@ -169,7 +169,7 @@ All `fn` keys are guarded by `src/public_api.test.ts` and `src/type-scenarios/pu
 
 | API | Coverage location |
 | --- | --- |
-| `chTable` | `schema-roundtrip.e2e.test.ts` |
+| `ckTable` | `schema-roundtrip.e2e.test.ts` |
 | `alias` | `schema-roundtrip.e2e.test.ts`, `builder-analytics.e2e.test.ts` |
 | `int8/int16/int32/int64` | `schema-roundtrip.e2e.test.ts`, `write-paths.e2e.test.ts` |
 | `uint8/uint16/uint32/uint64` | `schema-roundtrip.e2e.test.ts`, `write-paths.e2e.test.ts` |

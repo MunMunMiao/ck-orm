@@ -16,7 +16,7 @@ import {
 import type { Selection } from "./query-shared";
 import { clickhouseClient } from "./runtime";
 import type { ClickHouseTableEngine } from "./schema";
-import { alias, chTable } from "./schema";
+import { alias, ckTable } from "./schema";
 import { sql } from "./sql";
 import { orderRewardLog } from "./test-schema/commerce";
 import { shipmentOrder } from "./test-schema/fulfillment";
@@ -57,7 +57,7 @@ type _EngineType = Expect<
   Equal<Extract<ClickHouseTableEngine, "ReplicatedReplacingMergeTree">, "ReplicatedReplacingMergeTree">
 >;
 
-const users = chTable(
+const users = ckTable(
   "users",
   {
     id: int32(),
@@ -69,7 +69,7 @@ const users = chTable(
   }),
 );
 
-const camelRewardLog = chTable(
+const camelRewardLog = ckTable(
   "order_reward_log",
   {
     userId: string("user_id"),
@@ -82,7 +82,7 @@ const camelRewardLog = chTable(
   }),
 );
 
-const pets = chTable(
+const pets = ckTable(
   "pets",
   {
     id: int32(),

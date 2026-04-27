@@ -4,7 +4,7 @@ import { isClickHouseORMError } from "./errors";
 import { fn } from "./functions";
 import { eq } from "./query";
 import { type ClickHouseClientConfig, type ClickHouseQueryOptions, clickhouseClient } from "./runtime";
-import { chTable } from "./schema";
+import { ckTable } from "./schema";
 import { sql } from "./sql";
 import { orderRewardLog } from "./test-schema/commerce";
 
@@ -268,7 +268,7 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
 
   it("reuses one session id and cleans temp tables after runInSession failure", async function testRunInSessionCleanup() {
     const bodies: string[] = [];
-    const tmpScope = chTable("tmp_scope", {
+    const tmpScope = ckTable("tmp_scope", {
       user_id: string(),
     });
     const { calls } = setFetchMock(async (_url, init) => {

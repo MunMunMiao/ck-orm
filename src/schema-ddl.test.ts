@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { dateTime, decimal, int32, string } from "./columns";
-import { alias, chTable } from "./schema";
+import { alias, ckTable } from "./schema";
 import { buildCreateTableStatement, buildCreateTemporaryTableStatement, buildDropTableStatement } from "./schema-ddl";
 import { sql } from "./sql";
 
@@ -8,7 +8,7 @@ const normalizeSql = (value: string) => value.replaceAll(/\s+/g, " ").trim();
 
 describe("ck-orm schema ddl", function describeSchemaDdl() {
   it("renders full create table statements from schema metadata", function testBuildCreateTableStatement() {
-    const events = chTable(
+    const events = ckTable(
       "events",
       {
         id: int32(),
@@ -52,7 +52,7 @@ describe("ck-orm schema ddl", function describeSchemaDdl() {
   });
 
   it("renders structured temporary tables with default Memory engine and create modes", function testBuildCreateTemporaryTableStatement() {
-    const scope = chTable("tmp_scope", {
+    const scope = ckTable("tmp_scope", {
       id: int32(),
       note: string().default(sql`'scoped'`),
     });
@@ -64,7 +64,7 @@ describe("ck-orm schema ddl", function describeSchemaDdl() {
   });
 
   it("renders configured physical column names in DDL and table expressions", function testConfiguredColumnNamesDdl() {
-    const rewards = chTable(
+    const rewards = ckTable(
       "reward_events",
       {
         userId: string("user_id"),
@@ -87,7 +87,7 @@ describe("ck-orm schema ddl", function describeSchemaDdl() {
   });
 
   it("rejects unsupported temporary table engines and conflicting column generation modes", function testTempEngineValidation() {
-    const replicatedScope = chTable(
+    const replicatedScope = ckTable(
       "tmp_replicated",
       {
         id: int32(),
@@ -107,7 +107,7 @@ describe("ck-orm schema ddl", function describeSchemaDdl() {
   });
 
   it("covers defensive ddl rendering branches without adding extra public API surface", function testDdlDefensiveBranches() {
-    const metrics = chTable(
+    const metrics = ckTable(
       "metrics",
       {
         id: int32(),
@@ -132,17 +132,17 @@ describe("ck-orm schema ddl", function describeSchemaDdl() {
       "SETTINGS flatten_nested = 0, index_granularity = 8192, min_bytes_for_wide_part = 0",
     );
 
-    const logTable = chTable("event_log", { id: int32() }, { engine: "Log" });
+    const logTable = ckTable("event_log", { id: int32() }, { engine: "Log" });
     const logStatement = normalizeSql(buildCreateTableStatement(logTable));
     expect(logStatement).toContain("ENGINE = Log");
     expect(logStatement).not.toContain("ORDER BY tuple()");
 
-    const opaqueEngine = chTable("opaque_engine", { id: int32() }, { engine: sql.raw("()") });
+    const opaqueEngine = ckTable("opaque_engine", { id: int32() }, { engine: sql.raw("()") });
     const opaqueStatement = normalizeSql(buildCreateTableStatement(opaqueEngine));
     expect(opaqueStatement).toContain("ENGINE = ()");
     expect(opaqueStatement).toContain("ORDER BY tuple()");
 
-    const retention = chTable(
+    const retention = ckTable(
       "retention",
       { id: int32(), expires_at: dateTime() },
       {
@@ -154,12 +154,12 @@ describe("ck-orm schema ddl", function describeSchemaDdl() {
   });
 
   it("rejects aliased tables, invalid bound columns, custom versionColumn engines and parameterized ddl fragments", function testDdlValidationEdges() {
-    const events = chTable("events", { id: int32() });
+    const events = ckTable("events", { id: int32() });
     expect(() => buildCreateTableStatement(alias(events, "e"))).toThrow(
       "Schema DDL requires a base table, not an aliased table",
     );
 
-    const brokenOrderBy = chTable(
+    const brokenOrderBy = ckTable(
       "broken_order_by",
       { id: int32() },
       {
@@ -169,13 +169,13 @@ describe("ck-orm schema ddl", function describeSchemaDdl() {
     );
     expect(() => buildCreateTableStatement(brokenOrderBy)).toThrow("Expected bound column name for String");
 
-    const customVersioned = chTable("custom_versioned", { id: int32(), version: int32() }, (table) => ({
+    const customVersioned = ckTable("custom_versioned", { id: int32(), version: int32() }, (table) => ({
       engine: sql.raw("CustomEngine()"),
       versionColumn: table.version,
     }));
     expect(() => buildCreateTableStatement(customVersioned)).toThrow("versionColumn only supports string engine names");
 
-    const parameterizedDefault = chTable("parameterized_default", {
+    const parameterizedDefault = ckTable("parameterized_default", {
       note: string().default(sql`${"oops"}`),
     });
     expect(() => buildCreateTableStatement(parameterizedDefault)).toThrow(

@@ -78,7 +78,7 @@ The current E2E suite covers:
   - counts, distributions, invariants, CDC physical rows vs logical rows
 - schema round-trip
   - all column factories
-  - `chTable`
+  - `ckTable`
   - `alias`
   - aliased table interpolation in `` sql`...` ``
 - basic API

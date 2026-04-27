@@ -1,12 +1,12 @@
-import { chTable, chType, csql } from "../index";
+import { ckTable, ckType, csql } from "../index";
 
-export const logicalMetrics = chTable(
+export const logicalMetrics = ckTable(
   "logical_metrics",
   {
-    userId: chType.string("user_id"),
-    metricValue: chType.decimal("metric_value", { precision: 20, scale: 5 }),
-    createdAt: chType.dateTime64("created_at", { precision: 9 }),
-    tags: chType.array("tag_names", chType.string()),
+    userId: ckType.string("user_id"),
+    metricValue: ckType.decimal("metric_value", { precision: 20, scale: 5 }),
+    createdAt: ckType.dateTime64("created_at", { precision: 9 }),
+    tags: ckType.array("tag_names", ckType.string()),
   },
   (table) => ({
     engine: "MergeTree",
@@ -14,22 +14,22 @@ export const logicalMetrics = chTable(
   }),
 );
 
-export const activityMetricLog = chTable(
+export const activityMetricLog = ckTable(
   "activity_metric_log",
   {
-    id: chType.int32(),
-    userId: chType.string("user_id"),
-    groupId: chType.int32("group_id"),
-    itemId: chType.uint64("item_id"),
-    metricValue: chType.decimal("metric_value", { precision: 20, scale: 5 }),
-    channel: chType.int8(),
-    status: chType.int8(),
-    eventType: chType.string("event_type"),
-    createdAt: chType.dateTime64("created_at", { precision: 6 }),
-    eventDate: chType.date("event_date"),
-    payload: chType.json<{ labels: string[] }>(),
-    _peerdb_is_deleted: chType.int8(),
-    _peerdb_version: chType.uint64(),
+    id: ckType.int32(),
+    userId: ckType.string("user_id"),
+    groupId: ckType.int32("group_id"),
+    itemId: ckType.uint64("item_id"),
+    metricValue: ckType.decimal("metric_value", { precision: 20, scale: 5 }),
+    channel: ckType.int8(),
+    status: ckType.int8(),
+    eventType: ckType.string("event_type"),
+    createdAt: ckType.dateTime64("created_at", { precision: 6 }),
+    eventDate: ckType.date("event_date"),
+    payload: ckType.json<{ labels: string[] }>(),
+    _peerdb_is_deleted: ckType.int8(),
+    _peerdb_version: ckType.uint64(),
   },
   (table) => ({
     engine: "ReplacingMergeTree",
@@ -38,34 +38,34 @@ export const activityMetricLog = chTable(
   }),
 );
 
-export const activityLedger = chTable("activity_ledger", {
-  system_id: chType.string(),
-  source_kind: chType.enum8<"alpha" | "beta">({ alpha: 1, beta: 2 }),
-  event_id: chType.uint64(),
-  batch_id: chType.int32(),
-  entity_id: chType.int32(),
-  actor_id: chType.int32(),
-  event_time: chType.dateTime64({ precision: 6 }),
-  event_phase: chType.int8(),
-  action_kind: chType.int8(),
-  observed_value: chType.decimal({ precision: 18, scale: 5 }),
-  delta_value: chType.decimal({ precision: 18, scale: 5 }),
-  _peerdb_is_deleted: chType.int8(),
-  _peerdb_version: chType.uint64(),
+export const activityLedger = ckTable("activity_ledger", {
+  system_id: ckType.string(),
+  source_kind: ckType.enum8<"alpha" | "beta">({ alpha: 1, beta: 2 }),
+  event_id: ckType.uint64(),
+  batch_id: ckType.int32(),
+  entity_id: ckType.int32(),
+  actor_id: ckType.int32(),
+  event_time: ckType.dateTime64({ precision: 6 }),
+  event_phase: ckType.int8(),
+  action_kind: ckType.int8(),
+  observed_value: ckType.decimal({ precision: 18, scale: 5 }),
+  delta_value: ckType.decimal({ precision: 18, scale: 5 }),
+  _peerdb_is_deleted: ckType.int8(),
+  _peerdb_version: ckType.uint64(),
 });
 
-export const workflowEntity = chTable(
+export const workflowEntity = ckTable(
   "workflow_entity",
   {
-    workflowId: chType.string("workflow_id"),
-    itemId: chType.uint64("item_id"),
-    userId: chType.string("user_id"),
-    itemCode: chType.string("item_code"),
-    quantity: chType.decimal({ precision: 18, scale: 5 }),
-    createdAt: chType.dateTime64("created_at", { precision: 6 }),
-    note: chType.nullable(chType.string()),
-    status: chType.int8(),
-    _peerdb_is_deleted: chType.int8(),
+    workflowId: ckType.string("workflow_id"),
+    itemId: ckType.uint64("item_id"),
+    userId: ckType.string("user_id"),
+    itemCode: ckType.string("item_code"),
+    quantity: ckType.decimal({ precision: 18, scale: 5 }),
+    createdAt: ckType.dateTime64("created_at", { precision: 6 }),
+    note: ckType.nullable(ckType.string()),
+    status: ckType.int8(),
+    _peerdb_is_deleted: ckType.int8(),
   },
   (table) => ({
     engine: "MergeTree",
@@ -73,19 +73,19 @@ export const workflowEntity = chTable(
   }),
 );
 
-export const workflowEvent = chTable(
+export const workflowEvent = ckTable(
   "workflow_event",
   {
-    workflowId: chType.string("workflow_id"),
-    itemId: chType.uint64("item_id"),
-    userId: chType.string("user_id"),
-    completedAt: chType.nullable(chType.dateTime64("completed_at", { precision: 6 })),
-    correctionScore: chType.float64("correction_score"),
-    quantity: chType.decimal({ precision: 18, scale: 5 }),
-    note: chType.nullable(chType.string()),
-    status: chType.int8(),
-    processedAt: chType.dateTime64("processed_at", { precision: 6 }),
-    _peerdb_is_deleted: chType.int8(),
+    workflowId: ckType.string("workflow_id"),
+    itemId: ckType.uint64("item_id"),
+    userId: ckType.string("user_id"),
+    completedAt: ckType.nullable(ckType.dateTime64("completed_at", { precision: 6 })),
+    correctionScore: ckType.float64("correction_score"),
+    quantity: ckType.decimal({ precision: 18, scale: 5 }),
+    note: ckType.nullable(ckType.string()),
+    status: ckType.int8(),
+    processedAt: ckType.dateTime64("processed_at", { precision: 6 }),
+    _peerdb_is_deleted: ckType.int8(),
   },
   (table) => ({
     engine: "MergeTree",
@@ -93,20 +93,20 @@ export const workflowEvent = chTable(
   }),
 );
 
-export const petOwners = chTable("pet_owners", {
-  id: chType.int32(),
-  name: chType.string(),
+export const petOwners = ckTable("pet_owners", {
+  id: ckType.int32(),
+  name: ckType.string(),
 });
 
-export const pets = chTable("pets", {
-  id: chType.int32(),
-  ownerId: chType.int32("owner_id"),
-  petName: chType.string("pet_name"),
+export const pets = ckTable("pets", {
+  id: ckType.int32(),
+  ownerId: ckType.int32("owner_id"),
+  petName: ckType.string("pet_name"),
 });
 
-export const tempMetricScope = chTable("tmp_metric_scope", {
-  userId: chType.string("user_id").default(csql`'anonymous'`),
-  groupId: chType.int32("group_id"),
+export const tempMetricScope = ckTable("tmp_metric_scope", {
+  userId: ckType.string("user_id").default(csql`'anonymous'`),
+  groupId: ckType.int32("group_id"),
 });
 
 export const typeScenarioSchema = {

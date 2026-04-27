@@ -17,12 +17,12 @@ import {
   resolveSqlOperation,
 } from "./observability";
 import { clickhouseClient } from "./runtime";
-import { chTable } from "./schema";
+import { ckTable } from "./schema";
 import { sql } from "./sql";
 
 const originalFetch = globalThis.fetch;
 
-const users = chTable(
+const users = ckTable(
   "users",
   {
     id: int32(),

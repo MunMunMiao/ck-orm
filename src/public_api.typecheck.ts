@@ -1,8 +1,8 @@
 import type * as RootApi from "./index";
 import {
-  chTable,
-  chType,
   ck,
+  ckTable,
+  ckType,
   clickhouseClient,
   csql,
   fn,
@@ -12,17 +12,17 @@ import {
   type Session,
 } from "./index";
 
-const users = chTable("users", {
-  id: chType.int32(),
-  name: chType.string(),
+const users = ckTable("users", {
+  id: ckType.int32(),
+  name: ckType.string(),
 });
-const tempUsers = chTable("tmp_users", {
-  id: chType.int32(),
-  name: chType.string().default(csql`'anonymous'`),
+const tempUsers = ckTable("tmp_users", {
+  id: ckType.int32(),
+  name: ckType.string().default(csql`'anonymous'`),
 });
-const stringArray = chType.array(chType.string());
-const nestedUsers = chType.nested({
-  id: chType.int32(),
+const stringArray = ckType.array(ckType.string());
+const nestedUsers = ckType.nested({
+  id: ckType.int32(),
 });
 
 const db = clickhouseClient({
@@ -190,15 +190,15 @@ ck.sql;
 // @ts-expect-error csql only supports tagged-template usage
 csql("select 1");
 
-// @ts-expect-error jsonExtract return type must come from chType
+// @ts-expect-error jsonExtract return type must come from ckType
 fn.jsonExtract(csql`payload`, "Array(String)");
 
 // @ts-expect-error SqlExpression should remain internal to the package root
 const hiddenSqlExpression: RootApi.SqlExpression | undefined = undefined;
 void hiddenSqlExpression;
 
-type HasChType = "chType" extends keyof typeof import("./index") ? true : false;
-const _hasChType: HasChType = true;
+type HasCkType = "ckType" extends keyof typeof import("./index") ? true : false;
+const _hasChType: HasCkType = true;
 
 type HasRootInt32 = "int32" extends keyof typeof import("./index") ? true : false;
 const _hasRootInt32: HasRootInt32 = false;

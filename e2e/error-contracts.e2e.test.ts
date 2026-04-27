@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { chTable, chType, ck, csql } from "./ck-orm";
+import { ck, ckTable, ckType, csql } from "./ck-orm";
 import { auditEvents, createE2EDb, createTempTableName } from "./shared";
 import { describeE2E, expectRejectsWithClickhouseError, waitForQueryLogException } from "./test-helpers";
 
@@ -50,7 +50,7 @@ describeE2E("ck-orm e2e error contracts", function describeErrorContracts() {
     const db = createE2EDb();
     const sessionId = ck.createSessionId();
     const tempTable = createTempTableName("expired_scope");
-    const tempScope = chTable(tempTable, { id: chType.int32() });
+    const tempScope = ckTable(tempTable, { id: ckType.int32() });
 
     await db.runInSession(
       async (session) => {
@@ -140,10 +140,10 @@ describeE2E("ck-orm e2e error contracts", function describeErrorContracts() {
     const db = createE2EDb();
     const queryId = `e2e_partial_json_each_row_${Date.now()}`;
     const tempTable = createTempTableName("tmp_partial_json_each_row");
-    const scope = chTable(tempTable, {
-      id: chType.int32(),
-      label: chType.string(),
-      created_at: chType.dateTime64({ precision: 3 }),
+    const scope = ckTable(tempTable, {
+      id: ckType.int32(),
+      label: ckType.string(),
+      created_at: ckType.dateTime64({ precision: 3 }),
     });
 
     await db.runInSession(async (session) => {

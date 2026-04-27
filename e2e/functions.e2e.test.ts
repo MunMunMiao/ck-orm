@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { chType, ck, csql, fn } from "./ck-orm";
+import { ck, ckType, csql, fn } from "./ck-orm";
 import { createE2EDb, users, webEvents } from "./shared";
 import { describeE2E, expectDate, expectPresent } from "./test-helpers";
 
@@ -142,12 +142,12 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
     });
 
     const [jsonRow] = await db.select({
-      tags: fn.jsonExtract(payload, chType.array(chType.string()), "account", "tags").as("tags"),
-      score: fn.jsonExtract(payload, chType.float64(), "account", "score").as("score"),
-      firstTicket: fn.jsonExtract(payload, chType.int64(), "orders", 1, "ticket").as("first_ticket"),
-      secondTicket: fn.jsonExtract(payload, chType.int64(), "orders", 2, "ticket").as("second_ticket"),
+      tags: fn.jsonExtract(payload, ckType.array(ckType.string()), "account", "tags").as("tags"),
+      score: fn.jsonExtract(payload, ckType.float64(), "account", "score").as("score"),
+      firstTicket: fn.jsonExtract(payload, ckType.int64(), "orders", 1, "ticket").as("first_ticket"),
+      secondTicket: fn.jsonExtract(payload, ckType.int64(), "orders", 2, "ticket").as("second_ticket"),
       nullableRegion: fn
-        .jsonExtract(payload, chType.nullable(chType.string()), "account", "audits", 2, "region")
+        .jsonExtract(payload, ckType.nullable(ckType.string()), "account", "audits", 2, "region")
         .as("nullable_region"),
     });
 

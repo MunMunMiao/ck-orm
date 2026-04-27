@@ -1,6 +1,6 @@
 export { buildCreateTableStatement, buildDropTableStatement } from "../src/schema-ddl";
 
-import { alias, type ClickHouseClientConfig, chTable, chType, clickhouseClient } from "./ck-orm";
+import { alias, type ClickHouseClientConfig, ckTable, ckType, clickhouseClient } from "./ck-orm";
 
 const requiredEnv = (name: string) => {
   const value = process.env[name];
@@ -44,13 +44,13 @@ export const datasetCounts = {
   quoteSnapshots: 40_000,
 } as const;
 
-export const users = chTable(
+export const users = ckTable(
   "users",
   {
-    id: chType.int32(),
-    name: chType.string(),
-    tier: chType.string(),
-    created_at: chType.dateTime64({ precision: 3 }),
+    id: ckType.int32(),
+    name: ckType.string(),
+    tier: ckType.string(),
+    created_at: ckType.dateTime64({ precision: 3 }),
   },
   (table) => ({
     engine: "MergeTree",
@@ -58,13 +58,13 @@ export const users = chTable(
   }),
 );
 
-export const pets = chTable(
+export const pets = ckTable(
   "pets",
   {
-    id: chType.int32(),
-    owner_id: chType.int32(),
-    pet_name: chType.string(),
-    created_at: chType.dateTime64({ precision: 3 }),
+    id: ckType.int32(),
+    owner_id: ckType.int32(),
+    pet_name: ckType.string(),
+    created_at: ckType.dateTime64({ precision: 3 }),
   },
   (table) => ({
     engine: "MergeTree",
@@ -72,17 +72,17 @@ export const pets = chTable(
   }),
 );
 
-export const webEvents = chTable(
+export const webEvents = ckTable(
   "web_events",
   {
-    event_id: chType.uint64(),
-    user_id: chType.int32(),
-    country: chType.lowCardinality(chType.string()),
-    device_type: chType.lowCardinality(chType.string()),
-    viewed_at: chType.dateTime64({ precision: 3 }),
-    revenue: chType.decimal({ precision: 18, scale: 2 }),
-    tags: chType.array(chType.string()),
-    tag_scores: chType.array(chType.uint8()),
+    event_id: ckType.uint64(),
+    user_id: ckType.int32(),
+    country: ckType.lowCardinality(ckType.string()),
+    device_type: ckType.lowCardinality(ckType.string()),
+    viewed_at: ckType.dateTime64({ precision: 3 }),
+    revenue: ckType.decimal({ precision: 18, scale: 2 }),
+    tags: ckType.array(ckType.string()),
+    tag_scores: ckType.array(ckType.uint8()),
   },
   (table) => ({
     engine: "MergeTree",
@@ -90,18 +90,18 @@ export const webEvents = chTable(
   }),
 );
 
-export const rewardEvents = chTable(
+export const rewardEvents = ckTable(
   "reward_events",
   {
-    id: chType.int32(),
-    user_id: chType.string(),
-    reward_points: chType.decimal({ precision: 20, scale: 5 }),
-    order_id: chType.int64(),
-    channel: chType.int32(),
-    created_at: chType.dateTime64({ precision: 3 }),
-    _peerdb_synced_at: chType.dateTime64({ precision: 3 }),
-    _peerdb_is_deleted: chType.uint8(),
-    _peerdb_version: chType.uint64(),
+    id: ckType.int32(),
+    user_id: ckType.string(),
+    reward_points: ckType.decimal({ precision: 20, scale: 5 }),
+    order_id: ckType.int64(),
+    channel: ckType.int32(),
+    created_at: ckType.dateTime64({ precision: 3 }),
+    _peerdb_synced_at: ckType.dateTime64({ precision: 3 }),
+    _peerdb_is_deleted: ckType.uint8(),
+    _peerdb_version: ckType.uint64(),
   },
   (table) => ({
     engine: "ReplacingMergeTree",
@@ -110,14 +110,14 @@ export const rewardEvents = chTable(
   }),
 );
 
-export const tradeFills = chTable(
+export const tradeFills = ckTable(
   "trade_fills",
   {
-    trade_id: chType.uint64(),
-    user_id: chType.int32(),
-    symbol: chType.lowCardinality(chType.string()),
-    filled_at: chType.dateTime64({ precision: 3 }),
-    quantity: chType.decimal({ precision: 18, scale: 2 }),
+    trade_id: ckType.uint64(),
+    user_id: ckType.int32(),
+    symbol: ckType.lowCardinality(ckType.string()),
+    filled_at: ckType.dateTime64({ precision: 3 }),
+    quantity: ckType.decimal({ precision: 18, scale: 2 }),
   },
   (table) => ({
     engine: "MergeTree",
@@ -125,12 +125,12 @@ export const tradeFills = chTable(
   }),
 );
 
-export const quoteSnapshots = chTable(
+export const quoteSnapshots = ckTable(
   "quote_snapshots",
   {
-    symbol: chType.lowCardinality(chType.string()),
-    quote_time: chType.dateTime64({ precision: 3 }),
-    bid: chType.decimal({ precision: 18, scale: 5 }),
+    symbol: ckType.lowCardinality(ckType.string()),
+    quote_time: ckType.dateTime64({ precision: 3 }),
+    bid: ckType.decimal({ precision: 18, scale: 5 }),
   },
   (table) => ({
     engine: "MergeTree",
@@ -138,13 +138,13 @@ export const quoteSnapshots = chTable(
   }),
 );
 
-export const userDailySummary = chTable(
+export const userDailySummary = ckTable(
   "user_daily_summary",
   {
-    day: chType.date(),
-    user_id: chType.int32(),
-    total_events: chType.uint64(),
-    total_revenue: chType.decimal({ precision: 18, scale: 2 }),
+    day: ckType.date(),
+    user_id: ckType.int32(),
+    total_events: ckType.uint64(),
+    total_revenue: ckType.decimal({ precision: 18, scale: 2 }),
   },
   (table) => ({
     engine: "MergeTree",
@@ -152,13 +152,13 @@ export const userDailySummary = chTable(
   }),
 );
 
-export const auditEvents = chTable(
+export const auditEvents = ckTable(
   "audit_events",
   {
-    id: chType.int32(),
-    user_id: chType.int32(),
-    event_name: chType.string(),
-    created_at: chType.dateTime64({ precision: 3 }),
+    id: ckType.int32(),
+    user_id: ckType.int32(),
+    event_name: ckType.string(),
+    created_at: ckType.dateTime64({ precision: 3 }),
   },
   (table) => ({
     engine: "MergeTree",
@@ -166,13 +166,13 @@ export const auditEvents = chTable(
   }),
 );
 
-export const writePathBigInts = chTable(
+export const writePathBigInts = ckTable(
   "write_path_bigints",
   {
-    id: chType.int32(),
-    label: chType.string(),
-    int64_value: chType.int64(),
-    uint64_value: chType.uint64(),
+    id: ckType.int32(),
+    label: ckType.string(),
+    int64_value: ckType.int64(),
+    uint64_value: ckType.uint64(),
   },
   (table) => ({
     engine: "MergeTree",
@@ -180,39 +180,39 @@ export const writePathBigInts = chTable(
   }),
 );
 
-export const schemaPrimitives = chTable(
+export const schemaPrimitives = ckTable(
   "schema_primitives",
   {
-    id: chType.int32(),
-    int8_value: chType.int8(),
-    int16_value: chType.int16(),
-    int32_value: chType.int32(),
-    int64_value: chType.int64(),
-    uint8_value: chType.uint8(),
-    uint16_value: chType.uint16(),
-    uint32_value: chType.uint32(),
-    uint64_value: chType.uint64(),
-    float32_value: chType.float32(),
-    float64_value: chType.float64(),
-    bfloat16_value: chType.bfloat16(),
-    string_value: chType.string(),
-    fixed_string_value: chType.fixedString({ length: 4 }),
-    decimal_value: chType.decimal({ precision: 18, scale: 2 }),
-    date_value: chType.date(),
-    date32_value: chType.date32(),
-    time_value: chType.time(),
-    time64_value: chType.time64({ precision: 3 }),
-    date_time_value: chType.dateTime(),
-    date_time64_value: chType.dateTime64({ precision: 3 }),
-    bool_value: chType.bool(),
-    uuid_value: chType.uuid(),
-    ipv4_value: chType.ipv4(),
-    ipv6_value: chType.ipv6(),
-    json_value: chType.json<{ id: number; label: string }>(),
-    dynamic_value: chType.dynamic<unknown>(),
-    qbit_value: chType.qbit(chType.float32(), { dimensions: 8 }),
-    enum8_value: chType.enum8({ active: 1, paused: 2 }),
-    enum16_value: chType.enum16({ bronze: 1000, silver: 2000 }),
+    id: ckType.int32(),
+    int8_value: ckType.int8(),
+    int16_value: ckType.int16(),
+    int32_value: ckType.int32(),
+    int64_value: ckType.int64(),
+    uint8_value: ckType.uint8(),
+    uint16_value: ckType.uint16(),
+    uint32_value: ckType.uint32(),
+    uint64_value: ckType.uint64(),
+    float32_value: ckType.float32(),
+    float64_value: ckType.float64(),
+    bfloat16_value: ckType.bfloat16(),
+    string_value: ckType.string(),
+    fixed_string_value: ckType.fixedString({ length: 4 }),
+    decimal_value: ckType.decimal({ precision: 18, scale: 2 }),
+    date_value: ckType.date(),
+    date32_value: ckType.date32(),
+    time_value: ckType.time(),
+    time64_value: ckType.time64({ precision: 3 }),
+    date_time_value: ckType.dateTime(),
+    date_time64_value: ckType.dateTime64({ precision: 3 }),
+    bool_value: ckType.bool(),
+    uuid_value: ckType.uuid(),
+    ipv4_value: ckType.ipv4(),
+    ipv6_value: ckType.ipv6(),
+    json_value: ckType.json<{ id: number; label: string }>(),
+    dynamic_value: ckType.dynamic<unknown>(),
+    qbit_value: ckType.qbit(ckType.float32(), { dimensions: 8 }),
+    enum8_value: ckType.enum8({ active: 1, paused: 2 }),
+    enum16_value: ckType.enum16({ bronze: 1000, silver: 2000 }),
   },
   (table) => ({
     engine: "MergeTree",
@@ -220,19 +220,19 @@ export const schemaPrimitives = chTable(
   }),
 );
 
-export const schemaCompound = chTable(
+export const schemaCompound = ckTable(
   "schema_compound",
   {
-    id: chType.int32(),
-    nullable_value: chType.nullable(chType.string()),
-    array_value: chType.array(chType.string()),
-    tuple_value: chType.tuple(chType.string(), chType.int32()),
-    map_value: chType.map(chType.string(), chType.int32()),
-    variant_value: chType.variant(chType.int32(), chType.string()),
-    low_cardinality_value: chType.lowCardinality(chType.string()),
-    nested_value: chType.nested({
-      name: chType.string(),
-      score: chType.int32(),
+    id: ckType.int32(),
+    nullable_value: ckType.nullable(ckType.string()),
+    array_value: ckType.array(ckType.string()),
+    tuple_value: ckType.tuple(ckType.string(), ckType.int32()),
+    map_value: ckType.map(ckType.string(), ckType.int32()),
+    variant_value: ckType.variant(ckType.int32(), ckType.string()),
+    low_cardinality_value: ckType.lowCardinality(ckType.string()),
+    nested_value: ckType.nested({
+      name: ckType.string(),
+      score: ckType.int32(),
     }),
   },
   (table) => ({
@@ -241,12 +241,12 @@ export const schemaCompound = chTable(
   }),
 );
 
-export const schemaAggregates = chTable(
+export const schemaAggregates = ckTable(
   "schema_aggregates",
   {
-    id: chType.uint32(),
-    agg_sum_state: chType.aggregateFunction<string>("sum", chType.uint64()),
-    simple_sum_value: chType.simpleAggregateFunction<number>("sum", chType.int64()),
+    id: ckType.uint32(),
+    agg_sum_state: ckType.aggregateFunction<string>("sum", ckType.uint64()),
+    simple_sum_value: ckType.simpleAggregateFunction<number>("sum", ckType.int64()),
   },
   (table) => ({
     engine: "AggregatingMergeTree",
@@ -254,16 +254,16 @@ export const schemaAggregates = chTable(
   }),
 );
 
-export const schemaGeo = chTable(
+export const schemaGeo = ckTable(
   "schema_geo",
   {
-    id: chType.int32(),
-    point_value: chType.point(),
-    ring_value: chType.ring(),
-    line_value: chType.lineString(),
-    multi_line_value: chType.multiLineString(),
-    polygon_value: chType.polygon(),
-    multi_polygon_value: chType.multiPolygon(),
+    id: ckType.int32(),
+    point_value: ckType.point(),
+    ring_value: ckType.ring(),
+    line_value: ckType.lineString(),
+    multi_line_value: ckType.multiLineString(),
+    polygon_value: ckType.polygon(),
+    multi_polygon_value: ckType.multiPolygon(),
   },
   (table) => ({
     engine: "MergeTree",

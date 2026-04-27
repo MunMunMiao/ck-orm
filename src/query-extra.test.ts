@@ -40,7 +40,7 @@ import {
   startsWith,
 } from "./query";
 import type { Predicate } from "./query-shared";
-import { chTable } from "./schema";
+import { ckTable } from "./schema";
 import { sql } from "./sql";
 
 const normalizeSql = (value: string) => value.replace(/\s+/g, " ").trim();
@@ -51,7 +51,7 @@ const buildCompiled = (compiled: { statement: string; params: Record<string, unk
   };
 };
 
-const orders = chTable(
+const orders = ckTable(
   "orders",
   {
     id: int32(),
@@ -64,7 +64,7 @@ const orders = chTable(
   }),
 );
 
-const taggedOrders = chTable(
+const taggedOrders = ckTable(
   "tagged_orders",
   {
     id: int32(),

@@ -6,14 +6,14 @@ import { clickhouseClient } from "./runtime";
 import { createClickHouseORMClient } from "./runtime/client";
 import type { FetchClickHouseTransport } from "./runtime/transport";
 import type { AnyTable } from "./schema";
-import { chTable } from "./schema";
+import { ckTable } from "./schema";
 import { sql } from "./sql";
 import { orderRewardLog } from "./test-schema/commerce";
 
 const originalFetch = globalThis.fetch;
 const originalRequest = globalThis.Request;
 
-const users = chTable(
+const users = ckTable(
   "users",
   {
     id: int32(),
@@ -25,7 +25,7 @@ const users = chTable(
   }),
 );
 
-const mappedRewards = chTable("mapped_rewards", {
+const mappedRewards = ckTable("mapped_rewards", {
   userId: string("user_id"),
   rewardPoints: decimal("reward_points", { precision: 20, scale: 5 }),
   note: string(),
@@ -174,7 +174,7 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
     ).toBe(true);
 
     expect(() => db.registerTempTable("tmp_scope")).toThrow();
-    await expectRejectsWithClickhouseError(db.createTemporaryTable(chTable("tmp_scope", { id: int32() })), {
+    await expectRejectsWithClickhouseError(db.createTemporaryTable(ckTable("tmp_scope", { id: int32() })), {
       kind: "session",
       executionState: "not_sent",
       message: "[ck-orm] createTemporaryTable() requires runInSession()",
@@ -1123,9 +1123,9 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
       schema: { users },
     });
 
-    const outerScope = chTable("tmp_outer_scope", { id: int32() });
-    const childOneScope = chTable("tmp_child_one_scope", { id: int32() });
-    const childTwoScope = chTable("tmp_child_two_scope", { id: int32() });
+    const outerScope = ckTable("tmp_outer_scope", { id: int32() });
+    const childOneScope = ckTable("tmp_child_one_scope", { id: int32() });
+    const childTwoScope = ckTable("tmp_child_two_scope", { id: int32() });
 
     await db.runInSession(async (session) => {
       await session.createTemporaryTable(outerScope);
@@ -1461,8 +1461,8 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
       databaseUrl: "http://localhost:8123/demo_store",
       schema: { users },
     });
-    const tmpA = chTable("tmp_a", { id: int32() });
-    const tmpB = chTable("tmp_b", { id: int32() });
+    const tmpA = ckTable("tmp_a", { id: int32() });
+    const tmpB = ckTable("tmp_b", { id: int32() });
 
     await expectRejectsWithClickhouseError(
       db.runInSession(async (session) => {
@@ -1492,7 +1492,7 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
       databaseUrl: "http://localhost:8123/demo_store",
       schema: { users },
     });
-    const tmpHook = chTable("tmp_hook", { id: int32() });
+    const tmpHook = ckTable("tmp_hook", { id: int32() });
 
     const cleanupReports: Array<{ count: number; sessionId: string }> = [];
     const userError = new Error("user callback failed");

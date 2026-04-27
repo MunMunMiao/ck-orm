@@ -1,5 +1,5 @@
 import { beforeEach, expect, it } from "bun:test";
-import { chTable, chType, ck, csql } from "./ck-orm";
+import { ck, ckTable, ckType, csql } from "./ck-orm";
 import { auditEvents, createE2EDb, createTempTableName, writePathBigInts } from "./shared";
 import { describeE2E } from "./test-helpers";
 
@@ -152,17 +152,17 @@ describeE2E("ck-orm e2e write paths", function describeWritePaths() {
   it("writes JSONEachRow rows with defaults, nullable values and compound columns", async function testJsonEachRowComplexColumns() {
     const db = createE2EDb();
     const tempTable = createTempTableName("tmp_json_each_row_complex");
-    const scope = chTable(tempTable, {
-      id: chType.int32(),
-      note: chType.string().default(csql`'auto'`),
-      nullable_note: chType.nullable(chType.string()),
-      tags: chType.array(chType.nullable(chType.string())),
-      signed_ids: chType.array(chType.int64()),
-      unsigned_ids: chType.array(chType.uint64()),
-      scores: chType.map(chType.string(), chType.int32()),
-      pair: chType.tuple(chType.string(), chType.int32()),
-      doubled: chType.int32().materialized(csql`id * 2`),
-      label: chType.string().aliasExpr(csql`concat('id=', toString(id))`),
+    const scope = ckTable(tempTable, {
+      id: ckType.int32(),
+      note: ckType.string().default(csql`'auto'`),
+      nullable_note: ckType.nullable(ckType.string()),
+      tags: ckType.array(ckType.nullable(ckType.string())),
+      signed_ids: ckType.array(ckType.int64()),
+      unsigned_ids: ckType.array(ckType.uint64()),
+      scores: ckType.map(ckType.string(), ckType.int32()),
+      pair: ckType.tuple(ckType.string(), ckType.int32()),
+      doubled: ckType.int32().materialized(csql`id * 2`),
+      label: ckType.string().aliasExpr(csql`concat('id=', toString(id))`),
     });
 
     await db.runInSession(async (session) => {
@@ -236,9 +236,9 @@ describeE2E("ck-orm e2e write paths", function describeWritePaths() {
   it("supports JSONEachRow unknown-field skipping when ClickHouse setting is enabled", async function testJsonEachRowSkipUnknownFields() {
     const db = createE2EDb();
     const tempTable = createTempTableName("tmp_json_each_row_unknown");
-    const scope = chTable(tempTable, {
-      id: chType.int32(),
-      label: chType.string(),
+    const scope = ckTable(tempTable, {
+      id: ckType.int32(),
+      label: ckType.string(),
     });
 
     await db.runInSession(async (session) => {
@@ -267,10 +267,10 @@ describeE2E("ck-orm e2e write paths", function describeWritePaths() {
   it("round-trips camelCase keys with configured snake_case column names", async function testConfiguredColumnNameRoundTrip() {
     const db = createE2EDb();
     const tempTable = createTempTableName("tmp_column_name_mapping");
-    const scope = chTable(tempTable, {
-      userId: chType.string("user_id"),
-      rewardPoints: chType.decimal("reward_points", { precision: 20, scale: 5 }),
-      eventRank: chType.int32("event_rank"),
+    const scope = ckTable(tempTable, {
+      userId: ckType.string("user_id"),
+      rewardPoints: ckType.decimal("reward_points", { precision: 20, scale: 5 }),
+      eventRank: ckType.int32("event_rank"),
     });
 
     await db.runInSession(async (session) => {
@@ -474,9 +474,9 @@ describeE2E("ck-orm e2e write paths", function describeWritePaths() {
   it("rejects object inputs (e.g. raw decimal.js instances) for Decimal columns", async function testDecimalRejectsObjectInput() {
     const db = createE2EDb();
     const tempTable = createTempTableName("tmp_decimal_object_reject");
-    const scope = chTable(tempTable, {
-      id: chType.int32(),
-      amount: chType.decimal({ precision: 18, scale: 5 }),
+    const scope = ckTable(tempTable, {
+      id: ckType.int32(),
+      amount: ckType.decimal({ precision: 18, scale: 5 }),
     });
 
     await db.runInSession(async (session) => {

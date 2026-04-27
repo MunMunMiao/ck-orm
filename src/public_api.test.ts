@@ -5,8 +5,8 @@ import { compileSql } from "./sql";
 
 const expectedRootRuntimeKeys = [
   "alias",
-  "chTable",
-  "chType",
+  "ckTable",
+  "ckType",
   "ck",
   "clickhouseClient",
   "csql",
@@ -237,7 +237,7 @@ describe("ck-orm public api", function describePublicApi() {
     expect(Object.keys(publicApi).sort()).toEqual([...expectedRootRuntimeKeys].sort());
     expect(Object.keys(publicApi.ck).sort()).toEqual([...expectedCkKeys].sort());
     expect(Object.keys(publicApi.csql).sort()).toEqual(["decimal", "identifier", "join"]);
-    expect(Object.keys(publicApi.chType).sort()).toEqual([...expectedChTypeKeys].sort());
+    expect(Object.keys(publicApi.ckType).sort()).toEqual([...expectedChTypeKeys].sort());
     expect(Object.keys(publicApi.fn).sort()).toEqual([...expectedFnKeys].sort());
     expect(Object.keys(publicApi.fn.table).sort()).toEqual(["call"]);
   });
@@ -253,8 +253,8 @@ describe("ck-orm public api", function describePublicApi() {
   it("keeps core schema and query builders available from the package root", function testPublicBuilders() {
     expect("ck" in publicApi).toBe(true);
     expect("csql" in publicApi).toBe(true);
-    expect("chType" in publicApi).toBe(true);
-    expect("chTable" in publicApi).toBe(true);
+    expect("ckType" in publicApi).toBe(true);
+    expect("ckTable" in publicApi).toBe(true);
     expect("clickhouseClient" in publicApi).toBe(true);
     expect("Grouping" in publicApi).toBe(false);
     expect("Order" in publicApi).toBe(false);
@@ -270,8 +270,8 @@ describe("ck-orm public api", function describePublicApi() {
     expect("decimal" in publicApi).toBe(false);
     expect("array" in publicApi).toBe(false);
     expect("tableFn" in publicApi).toBe(false);
-    expect(typeof publicApi.chType.int32).toBe("function");
-    expect(typeof publicApi.chType.string).toBe("function");
+    expect(typeof publicApi.ckType.int32).toBe("function");
+    expect(typeof publicApi.ckType.string).toBe("function");
     expect(publicApi.ck.fn).toBe(publicApi.fn);
     expect(typeof publicApi.ck.eq).toBe("function");
     expect(typeof publicApi.ck.desc).toBe("function");

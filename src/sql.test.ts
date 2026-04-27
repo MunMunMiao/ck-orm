@@ -3,10 +3,10 @@ import { int32, string } from "./columns";
 import { isClickHouseORMError } from "./errors";
 import { fn } from "./functions";
 import { assertDecimalParams, parseDecimalSqlType } from "./internal/decimal";
-import { alias, chTable } from "./schema";
+import { alias, ckTable } from "./schema";
 import { compileSql, sql } from "./sql";
 
-const users = chTable(
+const users = ckTable(
   "users",
   {
     id: int32(),

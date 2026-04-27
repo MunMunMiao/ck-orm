@@ -29,7 +29,7 @@ import {
   startsWithIgnoreCase,
 } from "./query";
 import { normalizeSingleStatementSql } from "./runtime/sql-scan";
-import { chTable } from "./schema";
+import { ckTable } from "./schema";
 import { compileSql, sql } from "./sql";
 
 const _normalizeSql = (value: string) => value.replace(/\s+/g, " ").trim();
@@ -235,7 +235,7 @@ describe("ck-orm sql security", function describeSqlSecurity() {
   });
 
   it("documents orderBy sql.raw behavior", function testOrderByRawBehavior() {
-    const testTable = chTable("users", { id: int32(), name: string() });
+    const testTable = ckTable("users", { id: int32(), name: string() });
     const builder = createSelectBuilder({ fromSource: testTable });
     const rawExpr = sql.raw("1; DROP TABLE users; --");
     const query = builder.orderBy(rawExpr);
@@ -244,7 +244,7 @@ describe("ck-orm sql security", function describeSqlSecurity() {
   });
 
   it("like compiles to parameterized query", function testLikeParameterization() {
-    const testTable = chTable("users", { id: int32(), name: string() });
+    const testTable = ckTable("users", { id: int32(), name: string() });
     const builder = createSelectBuilder({ fromSource: testTable });
     const query = builder.where(like(testTable.name, "'; DROP TABLE users; --"));
     const compiled = query[compileQuerySymbol]();
@@ -254,7 +254,7 @@ describe("ck-orm sql security", function describeSqlSecurity() {
   });
 
   it("keeps raw LIKE and ILIKE patterns unchanged", function testRawLikePatternSemantics() {
-    const testTable = chTable("users", { id: int32(), name: string() });
+    const testTable = ckTable("users", { id: int32(), name: string() });
     const builder = createSelectBuilder({ fromSource: testTable });
     const rawPattern = "50%_\\";
 
@@ -268,7 +268,7 @@ describe("ck-orm sql security", function describeSqlSecurity() {
   });
 
   it("notLike compiles to parameterized query", function testNotLikeParameterization() {
-    const testTable = chTable("users", { id: int32(), name: string() });
+    const testTable = ckTable("users", { id: int32(), name: string() });
     const builder = createSelectBuilder({ fromSource: testTable });
     const query = builder.where(notLike(testTable.name, "admin%"));
     const compiled = query[compileQuerySymbol]();
@@ -278,7 +278,7 @@ describe("ck-orm sql security", function describeSqlSecurity() {
   });
 
   it("semantic pattern helpers escape wildcard characters internally", function testSemanticPatternHelpers() {
-    const testTable = chTable("users", { id: int32(), name: string() });
+    const testTable = ckTable("users", { id: int32(), name: string() });
     const builder = createSelectBuilder({ fromSource: testTable });
     const literal = "50%_\\";
 

@@ -222,7 +222,7 @@ const remapExpressionListInput = (
   return remapExpressionInput(boundColumns, value as AnyColumn | DdlFragmentInput);
 };
 
-export const chTable = <TName extends string, TColumns extends Record<string, AnyColumn>>(
+export const ckTable = <TName extends string, TColumns extends Record<string, AnyColumn>>(
   name: TName,
   columns: TColumns,
   options?: TableOptionsInput<TColumns, TName>,

@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { chTable, chType, csql } from "./ck-orm";
+import { ckTable, ckType, csql } from "./ck-orm";
 import { createE2EDb, createTempTableName, users } from "./shared";
 import { describeE2E, expectClientValidationNotSent, expectNoMutationAfterRejectedInjection } from "./test-helpers";
 
@@ -120,7 +120,7 @@ describeE2E(
         const sessionRows = await db.runInSession(
           async (session) => {
             const sessionTempTable = createTempTableName("tmp_run_in_session_opts");
-            const sessionTempScope = chTable(sessionTempTable, { id: chType.int32() });
+            const sessionTempScope = ckTable(sessionTempTable, { id: ckType.int32() });
             await session.createTemporaryTable(sessionTempScope);
             await session.command(csql`INSERT INTO ${csql.identifier(sessionTempTable)} (id) VALUES (${2})`);
             return await session.execute(csql`SELECT id FROM ${csql.identifier(sessionTempTable)} ORDER BY id`);
@@ -162,11 +162,11 @@ describeE2E(
     it("supports structured temporary-table schema with DEFAULT, MATERIALIZED and ALIAS expressions", async function testStructuredTempTableSchema() {
       const db = createE2EDb();
       const tempTable = createTempTableName("tmp_structured_schema");
-      const structuredScope = chTable(tempTable, {
-        base: chType.int32(),
-        note: chType.string().default(csql`'auto'`),
-        doubled: chType.int32().materialized(csql`base * 2`),
-        label: chType.string().aliasExpr(csql`concat('n=', toString(base))`),
+      const structuredScope = ckTable(tempTable, {
+        base: ckType.int32(),
+        note: ckType.string().default(csql`'auto'`),
+        doubled: ckType.int32().materialized(csql`base * 2`),
+        label: ckType.string().aliasExpr(csql`concat('n=', toString(base))`),
       });
 
       await db.runInSession(async (session) => {

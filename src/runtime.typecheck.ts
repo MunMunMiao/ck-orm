@@ -3,13 +3,13 @@
 import { int32, string } from "./columns";
 import { csql } from "./public_api";
 import { clickhouseClient, type Session } from "./runtime";
-import { chTable } from "./schema";
+import { ckTable } from "./schema";
 
-const users = chTable("users", {
+const users = ckTable("users", {
   id: int32(),
   name: string(),
 });
-const tempUsers = chTable("tmp_users", {
+const tempUsers = ckTable("tmp_users", {
   id: int32(),
   name: string().default("anonymous"),
 });

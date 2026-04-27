@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { InferInsertModel, InferInsertSchema, InferSelectModel, InferSelectSchema } from "ck-orm";
 import { int32, string } from "./columns";
-import { alias, chTable } from "./schema";
+import { alias, ckTable } from "./schema";
 import type {
   commerceSchema,
   customerInvoice,
@@ -58,7 +58,7 @@ describe("ck-orm schema infer helpers", function describeClickHouseORMSchemaInfe
 
   it("keeps unmanaged orderBy columns stable when aliasing tables", function testAliasWithUnmanagedOrderByColumns() {
     const unmanagedOrderBy = int32();
-    const table = chTable(
+    const table = ckTable(
       "events",
       {
         id: int32(),
@@ -74,7 +74,7 @@ describe("ck-orm schema infer helpers", function describeClickHouseORMSchemaInfe
   });
 
   it("rebinds managed orderBy and versionColumn to the aliased columns", function testAliasRebindsOrderByAndVersionColumn() {
-    const events = chTable("events", { id: int32(), version: int32() }, (t) => ({
+    const events = ckTable("events", { id: int32(), version: int32() }, (t) => ({
       engine: "ReplacingMergeTree",
       orderBy: [t.id],
       versionColumn: t.version,
@@ -88,7 +88,7 @@ describe("ck-orm schema infer helpers", function describeClickHouseORMSchemaInfe
   });
 
   it("uses object keys as logical keys and rejects duplicate physical column names", function testPhysicalNames() {
-    const events = chTable("events", { userId: string("user_id"), createdAt: int32("created_at") }, (table) => ({
+    const events = ckTable("events", { userId: string("user_id"), createdAt: int32("created_at") }, (table) => ({
       engine: "MergeTree",
       orderBy: [table.userId, table.createdAt],
     }));
@@ -106,7 +106,7 @@ describe("ck-orm schema infer helpers", function describeClickHouseORMSchemaInfe
     expect(aliased.options.orderBy?.[1]).toBe(aliased.createdAt as never);
 
     expect(() =>
-      chTable("duplicate_columns", {
+      ckTable("duplicate_columns", {
         userId: string("user_id"),
         user_id: int32(),
       }),
@@ -114,7 +114,7 @@ describe("ck-orm schema infer helpers", function describeClickHouseORMSchemaInfe
   });
 
   it("rebinds partitionBy and primaryKey arrays when aliasing tables", function testAliasRebindsExpressionLists() {
-    const events = chTable("events", { id: int32(), tenant_id: int32(), bucket_id: int32() }, (t) => ({
+    const events = ckTable("events", { id: int32(), tenant_id: int32(), bucket_id: int32() }, (t) => ({
       engine: "MergeTree",
       partitionBy: [t.tenant_id, t.bucket_id],
       primaryKey: [t.id, t.tenant_id],
@@ -126,7 +126,7 @@ describe("ck-orm schema infer helpers", function describeClickHouseORMSchemaInfe
   });
 
   it("rebinds single partitionBy and primaryKey expressions when aliasing tables", function testAliasRebindsSingleExpressions() {
-    const events = chTable("events", { id: int32(), tenant_id: int32() }, (t) => ({
+    const events = ckTable("events", { id: int32(), tenant_id: int32() }, (t) => ({
       engine: "MergeTree",
       partitionBy: t.tenant_id,
       primaryKey: t.id,

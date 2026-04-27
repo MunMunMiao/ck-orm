@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { chTable, chType, ck } from "./ck-orm";
+import { ck, ckTable, ckType } from "./ck-orm";
 import { createE2EDb, createTempTableName, users } from "./shared";
 import { describeE2E } from "./test-helpers";
 
@@ -86,8 +86,8 @@ describeE2E("ck-orm e2e injection values", function describeInjectionValues() {
   it("treats semantic pattern helpers as literal-text matching helpers", async function testLiteralPatternHelpers() {
     const db = createE2EDb();
     const tempTable = createTempTableName("pattern_scope");
-    const patternScope = chTable(tempTable, {
-      name: chType.string(),
+    const patternScope = ckTable(tempTable, {
+      name: ckType.string(),
     });
 
     await db.runInSession(async (session) => {

@@ -1,23 +1,23 @@
-import { chTable, chType, csql, type InferInsertModel, type InferSelectModel, type InferSelectSchema } from "./ck-orm";
+import { ckTable, ckType, csql, type InferInsertModel, type InferSelectModel, type InferSelectSchema } from "./ck-orm";
 import type { commerceSchema, orderRewardLog } from "./schema/commerce";
 
-export const auditEvent = chTable(
+export const auditEvent = ckTable(
   "audit_events",
   {
-    id: chType.uuid().comment("Application event id"),
-    actor_id: chType.lowCardinality(chType.string()),
-    action: chType.enum8<"created" | "updated" | "deleted">({
+    id: ckType.uuid().comment("Application event id"),
+    actor_id: ckType.lowCardinality(ckType.string()),
+    action: ckType.enum8<"created" | "updated" | "deleted">({
       created: 1,
       updated: 2,
       deleted: 3,
     }),
-    payload: chType.json<Record<string, unknown>>(),
-    labels: chType.array(chType.string()).default(csql`[]`),
-    amount_delta: chType.nullable(chType.decimal({ precision: 18, scale: 5 })),
-    created_at: chType.dateTime64({ precision: 3, timezone: "UTC" }),
-    created_day: chType.date().materialized(csql`toDate(created_at)`),
-    search_text: chType.string().aliasExpr(csql`lowerUTF8(JSONExtractString(payload, 'message'))`),
-    _peerdb_version: chType.uint64(),
+    payload: ckType.json<Record<string, unknown>>(),
+    labels: ckType.array(ckType.string()).default(csql`[]`),
+    amount_delta: ckType.nullable(ckType.decimal({ precision: 18, scale: 5 })),
+    created_at: ckType.dateTime64({ precision: 3, timezone: "UTC" }),
+    created_day: ckType.date().materialized(csql`toDate(created_at)`),
+    search_text: ckType.string().aliasExpr(csql`lowerUTF8(JSONExtractString(payload, 'message'))`),
+    _peerdb_version: ckType.uint64(),
   },
   (table) => ({
     engine: "ReplacingMergeTree",
@@ -31,39 +31,39 @@ export const auditEvent = chTable(
   }),
 );
 
-export const logicalRewardEvent = chTable("logical_reward_events", {
-  userId: chType.string("user_id"),
-  rewardPoints: chType.decimal("reward_points", { precision: 20, scale: 5 }),
-  createdAt: chType.dateTime64("created_at", { precision: 3, timezone: "UTC" }),
+export const logicalRewardEvent = ckTable("logical_reward_events", {
+  userId: ckType.string("user_id"),
+  rewardPoints: ckType.decimal("reward_points", { precision: 20, scale: 5 }),
+  createdAt: ckType.dateTime64("created_at", { precision: 3, timezone: "UTC" }),
 });
 
-export const columnNameShowcase = chTable("column_name_showcase", {
-  id: chType.int32(),
-  userId: chType.string("user_id"),
-  rewardPoints: chType.decimal("reward_points", { precision: 20, scale: 5 }),
-  fixedCode: chType.fixedString("fixed_code", { length: 8 }),
-  tags: chType.array("tags", chType.string()),
-  attrs: chType.map("attrs", chType.string(), chType.string()),
-  embedding: chType.qbit("embedding", chType.float32(), { dimensions: 8 }),
+export const columnNameShowcase = ckTable("column_name_showcase", {
+  id: ckType.int32(),
+  userId: ckType.string("user_id"),
+  rewardPoints: ckType.decimal("reward_points", { precision: 20, scale: 5 }),
+  fixedCode: ckType.fixedString("fixed_code", { length: 8 }),
+  tags: ckType.array("tags", ckType.string()),
+  attrs: ckType.map("attrs", ckType.string(), ckType.string()),
+  embedding: ckType.qbit("embedding", ckType.float32(), { dimensions: 8 }),
   // The outer Nested column is "line_items"; nested field names come from shape keys.
-  lineItems: chType.nested("line_items", {
-    productSku: chType.string(),
-    quantity: chType.float64(),
+  lineItems: ckType.nested("line_items", {
+    productSku: ckType.string(),
+    quantity: ckType.float64(),
   }),
-  rewardSumState: chType.aggregateFunction("reward_sum_state", {
+  rewardSumState: ckType.aggregateFunction("reward_sum_state", {
     name: "sum",
-    args: [chType.decimal({ precision: 20, scale: 5 })],
+    args: [ckType.decimal({ precision: 20, scale: 5 })],
   }),
-  rewardSum: chType.simpleAggregateFunction("reward_sum", {
+  rewardSum: ckType.simpleAggregateFunction("reward_sum", {
     name: "sum",
-    value: chType.decimal({ precision: 20, scale: 5 }),
+    value: ckType.decimal({ precision: 20, scale: 5 }),
   }),
 });
 
-export const aggregateFunctionNameExample = chTable("aggregate_function_name_example", {
+export const aggregateFunctionNameExample = ckTable("aggregate_function_name_example", {
   // Here "sum" is the ClickHouse aggregate function name. The column names come from the object keys.
-  rewardSumState: chType.aggregateFunction("sum", chType.uint64()),
-  rewardSum: chType.simpleAggregateFunction("sum", chType.uint64()),
+  rewardSumState: ckType.aggregateFunction("sum", ckType.uint64()),
+  rewardSum: ckType.simpleAggregateFunction("sum", ckType.uint64()),
 });
 
 export type AuditEventRow = InferSelectModel<typeof auditEvent>;

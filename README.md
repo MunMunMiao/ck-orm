@@ -65,21 +65,21 @@ The examples below use a single table so the main flow stays easy to follow.
 ### 1. Define a schema
 
 ```ts
-import { chTable, chType } from "ck-orm";
+import { ckTable, ckType } from "ck-orm";
 
-export const orderRewardLog = chTable(
+export const orderRewardLog = ckTable(
   "order_reward_log",
   {
-    id: chType.int32(),
-    user_id: chType.string(),
-    campaign_id: chType.int32(),
-    order_id: chType.int64(),
-    reward_points: chType.decimal({ precision: 20, scale: 5 }),
-    status: chType.int16(),
-    created_at: chType.int32(),
-    _peerdb_synced_at: chType.dateTime64({ precision: 9 }),
-    _peerdb_is_deleted: chType.uint8(),
-    _peerdb_version: chType.uint64(),
+    id: ckType.int32(),
+    user_id: ckType.string(),
+    campaign_id: ckType.int32(),
+    order_id: ckType.int64(),
+    reward_points: ckType.decimal({ precision: 20, scale: 5 }),
+    status: ckType.int16(),
+    created_at: ckType.int32(),
+    _peerdb_synced_at: ckType.dateTime64({ precision: 9 }),
+    _peerdb_is_deleted: ckType.uint8(),
+    _peerdb_version: ckType.uint64(),
   },
   (table) => ({
     engine: "ReplacingMergeTree",
@@ -166,7 +166,7 @@ Public API coverage by guide:
 
 | API family | README section | Example files |
 | --- | --- | --- |
-| `chType`, `chTable`, `alias`, model inference | [Schema DSL](#schema-dsl) | [`schema-and-types.ts`](./examples/schema-and-types.ts), [`schema/commerce.ts`](./examples/schema/commerce.ts), [`schema/fulfillment.ts`](./examples/schema/fulfillment.ts) |
+| `ckType`, `ckTable`, `alias`, model inference | [Schema DSL](#schema-dsl) | [`schema-and-types.ts`](./examples/schema-and-types.ts), [`schema/commerce.ts`](./examples/schema/commerce.ts), [`schema/fulfillment.ts`](./examples/schema/fulfillment.ts) |
 | `clickhouseClient`, connection config, settings | [Client configuration](#client-configuration) | [`basic-select.ts`](./examples/basic-select.ts), [`runtime-observability.ts`](./examples/runtime-observability.ts) |
 | `select`, joins, filters, grouping, ordering, `limitBy`, CTEs | [Query builder](#query-builder) | [`basic-select.ts`](./examples/basic-select.ts), [`cte-and-subquery.ts`](./examples/cte-and-subquery.ts), [`fulfillment-order-lifecycle.ts`](./examples/fulfillment-order-lifecycle.ts) |
 | `count`, `count().toSafe()`, `count().toMixed()` | [`db.count()`](#dbcount) | [`count-and-errors.ts`](./examples/count-and-errors.ts) |
@@ -183,8 +183,8 @@ Public API coverage by guide:
 
 Use `ck-orm` with these boundaries in mind:
 
-- `chType.*` defines schema column types
-- `chTable(...)` defines table schemas
+- `ckType.*` defines schema column types
+- `ckTable(...)` defines table schemas
 - `ck.*` is the query-helper namespace
 - `fn.*` is the SQL function-helper namespace
 - schema describes tables and columns, not the database name
@@ -203,39 +203,39 @@ Use `ck-orm` with these boundaries in mind:
 
 ## Schema DSL
 
-### `chTable()`
+### `ckTable()`
 
-Use `chTable(name, columns, options?)` to define a table.
+Use `ckTable(name, columns, options?)` to define a table.
 
 Examples in this section assume:
 
 ```ts
-import { chTable, chType, csql } from "ck-orm";
+import { ckTable, ckType, csql } from "ck-orm";
 ```
 
 ```ts
-const orderRewardLog = chTable("order_reward_log", {
-  id: chType.int32(),
-  user_id: chType.string(),
-  order_id: chType.int64(),
-  reward_points: chType.decimal({ precision: 20, scale: 5 }),
-  created_at: chType.int32(),
-  _peerdb_version: chType.uint64(),
+const orderRewardLog = ckTable("order_reward_log", {
+  id: ckType.int32(),
+  user_id: ckType.string(),
+  order_id: ckType.int64(),
+  reward_points: ckType.decimal({ precision: 20, scale: 5 }),
+  created_at: ckType.int32(),
+  _peerdb_version: ckType.uint64(),
 });
 ```
 
 The third argument can be a plain object or a factory function:
 
 ```ts
-const orderRewardLog = chTable(
+const orderRewardLog = ckTable(
   "order_reward_log",
   {
-    id: chType.int32(),
-    user_id: chType.string(),
-    order_id: chType.int64(),
-    reward_points: chType.decimal({ precision: 20, scale: 5 }),
-    created_at: chType.int32(),
-    _peerdb_version: chType.uint64(),
+    id: ckType.int32(),
+    user_id: ckType.string(),
+    order_id: ckType.int64(),
+    reward_points: ckType.decimal({ precision: 20, scale: 5 }),
+    created_at: ckType.int32(),
+    _peerdb_version: ckType.uint64(),
   },
   (table) => ({
     engine: "ReplacingMergeTree",
@@ -271,18 +271,18 @@ Schema metadata has two jobs in `ck-orm`:
 - it drives typed queries, insert validation, and result decoding
 - it can render structured DDL for session temporary tables
 
-It does not automatically migrate or synchronize production ClickHouse tables. Keep production DDL in your migration tool, and keep `chTable(...)` aligned with the schema your application reads and writes.
+It does not automatically migrate or synchronize production ClickHouse tables. Keep production DDL in your migration tool, and keep `ckTable(...)` aligned with the schema your application reads and writes.
 
 Example:
 
 ```ts
-const orderRewardLog = chTable(
+const orderRewardLog = ckTable(
   "order_reward_log",
   {
-    id: chType.int32(),
-    created_at: chType.dateTime(),
-    shard_day: chType.date().materialized(csql`toDate(created_at)`),
-    note: chType.string().default(csql`'pending'`),
+    id: ckType.int32(),
+    created_at: ckType.dateTime(),
+    shard_day: ckType.date().materialized(csql`toDate(created_at)`),
+    note: ckType.string().default(csql`'pending'`),
   },
   (table) => ({
     engine: "ReplacingMergeTree",
@@ -341,18 +341,18 @@ Aliased columns are rebound automatically to the alias.
 The schema object key is the logical key used by TypeScript rows, decoded query results, and insert values. By default, that same key is also the ClickHouse column name:
 
 ```ts
-const rewardLog = chTable("reward_log", {
-  rewardPoints: chType.decimal({ precision: 20, scale: 5 }),
+const rewardLog = ckTable("reward_log", {
+  rewardPoints: ckType.decimal({ precision: 20, scale: 5 }),
 });
 ```
 
 When the database column uses a different name, pass that physical column name as the first argument:
 
 ```ts
-const rewardLog = chTable("reward_log", {
-  userId: chType.string("user_id"),
-  rewardPoints: chType.decimal("reward_points", { precision: 20, scale: 5 }),
-  createdAt: chType.dateTime64("created_at", { precision: 9 }),
+const rewardLog = ckTable("reward_log", {
+  userId: ckType.string("user_id"),
+  rewardPoints: ckType.decimal("reward_points", { precision: 20, scale: 5 }),
+  createdAt: ckType.dateTime64("created_at", { precision: 9 }),
 });
 
 await db.insert(rewardLog).values({
@@ -364,37 +364,37 @@ await db.insert(rewardLog).values({
 
 SQL, DDL, filters, ordering, grouping, and write column lists use the physical names (`user_id`, `reward_points`, `created_at`). Inferred models, default select results, explicit projection keys, and insert values use the schema object keys (`userId`, `rewardPoints`, `createdAt`).
 
-Every public `chType` builder supports an outer physical column name. Builders without extra configuration accept `name?`; builders with type configuration keep the optional physical column name first and put the type configuration in an object:
+Every public `ckType` builder supports an outer physical column name. Builders without extra configuration accept `name?`; builders with type configuration keep the optional physical column name first and put the type configuration in an object:
 
 ```ts
-const typedColumns = chTable("typed_columns", {
-  id: chType.int32("id"),
-  code: chType.fixedString("code", { length: 8 }),
-  amount: chType.decimal("amount", { precision: 20, scale: 5 }),
-  tags: chType.array("tags", chType.string()),
-  attrs: chType.map("attrs", chType.string(), chType.string()),
-  embedding: chType.qbit("embedding", chType.float32(), { dimensions: 8 }),
+const typedColumns = ckTable("typed_columns", {
+  id: ckType.int32("id"),
+  code: ckType.fixedString("code", { length: 8 }),
+  amount: ckType.decimal("amount", { precision: 20, scale: 5 }),
+  tags: ckType.array("tags", ckType.string()),
+  attrs: ckType.map("attrs", ckType.string(), ckType.string()),
+  embedding: ckType.qbit("embedding", ckType.float32(), { dimensions: 8 }),
 });
 ```
 
 `aggregateFunction` and `simpleAggregateFunction` have one extra wrinkle: in their natural ClickHouse-shaped form, the first string is the aggregate function name, not the column name:
 
 ```ts
-chType.aggregateFunction("sum", chType.uint64());
-chType.simpleAggregateFunction("sum", chType.uint64());
+ckType.aggregateFunction("sum", ckType.uint64());
+ckType.simpleAggregateFunction("sum", ckType.uint64());
 ```
 
 Use object config when you also need a physical column name:
 
 ```ts
-const aggregateStateColumns = chTable("aggregate_state_columns", {
-  rewardSumState: chType.aggregateFunction("reward_sum_state", {
+const aggregateStateColumns = ckTable("aggregate_state_columns", {
+  rewardSumState: ckType.aggregateFunction("reward_sum_state", {
     name: "sum",
-    args: [chType.decimal({ precision: 20, scale: 5 })],
+    args: [ckType.decimal({ precision: 20, scale: 5 })],
   }),
-  rewardSum: chType.simpleAggregateFunction("reward_sum", {
+  rewardSum: ckType.simpleAggregateFunction("reward_sum", {
     name: "sum",
-    value: chType.decimal({ precision: 20, scale: 5 }),
+    value: ckType.decimal({ precision: 20, scale: 5 }),
   }),
 });
 ```
@@ -402,17 +402,17 @@ const aggregateStateColumns = chTable("aggregate_state_columns", {
 `nested("items", shape)` names the outer `Nested(...)` column. Nested field names are the keys of `shape`; inner column `configuredName` values are not used for the nested field names:
 
 ```ts
-const orderLines = chTable("order_lines", {
-  items: chType.nested("items", {
-    productSku: chType.string(),
-    quantity: chType.float64(),
+const orderLines = ckTable("order_lines", {
+  items: ckType.nested("items", {
+    productSku: ckType.string(),
+    quantity: ckType.float64(),
   }),
 });
 ```
 
 ### Column builders
 
-Use `chType.*` for schema column builders. The schema DSL covers the common ClickHouse type families:
+Use `ckType.*` for schema column builders. The schema DSL covers the common ClickHouse type families:
 
 - integers: `int8`, `int16`, `int32`, `int64`, `uint8`, `uint16`, `uint32`, `uint64`
 - floating point and decimal: `float32`, `float64`, `bfloat16`, `decimal`
@@ -425,16 +425,16 @@ Use `chType.*` for schema column builders. The schema DSL covers the common Clic
 
 `int64` and `uint64` default to TypeScript `string` in schema-driven reads, writes, and inferred models so 64-bit values stay exact across the ClickHouse JSON wire format and JavaScript runtimes. When you explicitly want `bigint`, opt in with your own decoder such as `mapWith((value) => BigInt(String(value)))`.
 
-ClickHouse does not support `Nullable(Array(...))`, `Nullable(Map(...))`, or `Nullable(Tuple(...))`. `ck-orm` rejects those shapes at schema-definition time. Put `nullable(...)` inside the composite type instead, for example `chType.array(chType.nullable(chType.string()))`.
+ClickHouse does not support `Nullable(Array(...))`, `Nullable(Map(...))`, or `Nullable(Tuple(...))`. `ck-orm` rejects those shapes at schema-definition time. Put `nullable(...)` inside the composite type instead, for example `ckType.array(ckType.nullable(ckType.string()))`.
 
 Builders with type configuration use object config, with the optional physical column name first:
 
 ```ts
-chType.decimal({ precision: 20, scale: 5 });
-chType.decimal("reward_points", { precision: 20, scale: 5 });
-chType.fixedString({ length: 8 });
-chType.dateTime64("created_at", { precision: 9, timezone: "UTC" });
-chType.qbit("embedding", chType.float32(), { dimensions: 8 });
+ckType.decimal({ precision: 20, scale: 5 });
+ckType.decimal("reward_points", { precision: 20, scale: 5 });
+ckType.fixedString({ length: 8 });
+ckType.dateTime64("created_at", { precision: 9, timezone: "UTC" });
+ckType.qbit("embedding", ckType.float32(), { dimensions: 8 });
 ```
 
 ### Column Type Cookbook
@@ -443,16 +443,16 @@ Common schema shapes and their TypeScript values:
 
 | ClickHouse shape | Schema | TypeScript value shape |
 | --- | --- | --- |
-| enum | `chType.enum8<"new" | "paid">({ new: 1, paid: 2 })` | `"new" | "paid"` |
-| low-cardinality string | `chType.lowCardinality(chType.string())` | `string` |
-| nullable decimal | `chType.nullable(chType.decimal({ precision: 18, scale: 5 }))` | `string | null` |
-| array | `chType.array(chType.string())` | `string[]` |
-| nullable array item | `chType.array(chType.nullable(chType.string()))` | `(string | null)[]` |
-| tuple | `chType.tuple(chType.string(), chType.int32())` | `[string, number]` |
-| map | `chType.map(chType.string(), chType.string())` | `Record<string, string>` |
-| nested object array | `chType.nested({ sku: chType.string(), quantity: chType.float64() })` | `{ sku: string; quantity: number }[]` |
-| variant | `chType.variant(chType.string(), chType.int32())` | `string | number` |
-| JSON | `chType.json<{ risk?: { score?: number } }>()` | `{ risk?: { score?: number } }` |
+| enum | `ckType.enum8<"new" | "paid">({ new: 1, paid: 2 })` | `"new" | "paid"` |
+| low-cardinality string | `ckType.lowCardinality(ckType.string())` | `string` |
+| nullable decimal | `ckType.nullable(ckType.decimal({ precision: 18, scale: 5 }))` | `string | null` |
+| array | `ckType.array(ckType.string())` | `string[]` |
+| nullable array item | `ckType.array(ckType.nullable(ckType.string()))` | `(string | null)[]` |
+| tuple | `ckType.tuple(ckType.string(), ckType.int32())` | `[string, number]` |
+| map | `ckType.map(ckType.string(), ckType.string())` | `Record<string, string>` |
+| nested object array | `ckType.nested({ sku: ckType.string(), quantity: ckType.float64() })` | `{ sku: string; quantity: number }[]` |
+| variant | `ckType.variant(ckType.string(), ckType.int32())` | `string | number` |
+| JSON | `ckType.json<{ risk?: { score?: number } }>()` | `{ risk?: { score?: number } }` |
 
 Insert rows use the same inferred shape as `typeof table.$inferInsert`, except columns with ClickHouse defaults or generated expressions can be omitted when you call `insert(table).values(...)`.
 
@@ -970,7 +970,7 @@ await db.insertJsonEachRow("tmp_scope", [
 It accepts:
 
 - a string table name
-- a table object created by `chTable()`
+- a table object created by `ckTable()`
 - a regular array
 - an `AsyncIterable`
 
@@ -1084,10 +1084,10 @@ for await (const row of db.stream(csql`select 1`, {
 ### Decimal precision in expressions
 
 ```ts
-import { chType, csql, fn } from "ck-orm";
+import { ckType, csql, fn } from "ck-orm";
 
-const ledger = chTable("ledger", {
-  amount: chType.decimal({ precision: 18, scale: 5 }),
+const ledger = ckTable("ledger", {
+  amount: ckType.decimal({ precision: 18, scale: 5 }),
 });
 
 // fn.sum / sumIf / min / max auto-cast to Decimal(P, S) and decode as string.
@@ -1245,22 +1245,22 @@ Array helper names mirror the canonical headings in the ClickHouse [Array functi
 
 `fn.call(name, ...)` and `fn.withParams(name, ...)` validate `name` as a SQL identifier before compilation. `ck.has(...)`, `ck.hasAll(...)`, `ck.hasAny(...)`, and `ck.hasSubstr(...)` are where-friendly predicate shortcuts for the same ClickHouse functions.
 
-`fn.jsonExtract(json, returnType, ...path)` only accepts `chType.*` return types, so the ClickHouse return type and the TypeScript decoder stay together:
+`fn.jsonExtract(json, returnType, ...path)` only accepts `ckType.*` return types, so the ClickHouse return type and the TypeScript decoder stay together:
 
 The JSON and array snippets below use the richer example schema from [`examples/schema/commerce.ts`](./examples/schema/commerce.ts), where `orderRewardLog.metadata` is a `JSON` column and `orderRewardLog.tags` is `Array(String)`.
 
 ```ts
-import { chType, ck, fn } from "ck-orm";
+import { ckType, ck, fn } from "ck-orm";
 
 const regulatory = fn.jsonExtract(
   orderRewardLog.metadata,
-  chType.array(chType.string()),
+  ckType.array(ckType.string()),
   "regulatory",
 );
 
 const riskScore = fn.jsonExtract(
   orderRewardLog.metadata,
-  chType.nullable(chType.float64()),
+  ckType.nullable(ckType.float64()),
   "risk",
   "score",
 );
@@ -1282,7 +1282,7 @@ Path segments are ClickHouse JSON path arguments. Use string keys for object fie
 // { "orders": [{ "ticket": "900001" }, { "ticket": "900002" }] }
 const firstTicket = fn.jsonExtract(
   orderRewardLog.metadata,
-  chType.int64(),
+  ckType.int64(),
   "orders",
   1,
   "ticket",
@@ -1429,10 +1429,10 @@ Inside a session callback, `ck-orm` gives you:
 ### `runInSession()`
 
 ```ts
-import { chTable, chType, csql } from "ck-orm";
+import { ckTable, ckType, csql } from "ck-orm";
 
-const tmpScope = chTable("tmp_scope", {
-  user_id: chType.string(),
+const tmpScope = ckTable("tmp_scope", {
+  user_id: ckType.string(),
 });
 
 await db.runInSession(async (session) => {
@@ -1471,7 +1471,7 @@ await db.runInSession(async (session) => {
 });
 ```
 
-Use `createTemporaryTableRaw(name, definition)` only for trusted, developer-controlled table definitions that cannot be expressed with `chTable(...)`:
+Use `createTemporaryTableRaw(name, definition)` only for trusted, developer-controlled table definitions that cannot be expressed with `ckTable(...)`:
 
 ```ts
 await db.runInSession(async (session) => {
@@ -1825,7 +1825,7 @@ Do not return `responseText` or the raw error `message` to untrusted clients. Cl
 The built-in protections include:
 
 - identifiers passed to `csql.identifier()` are validated and quoted
-- function names used by `fn.call(...)`, `fn.withParams(...)`, `chType.aggregateFunction(...)`, `chType.simpleAggregateFunction(...)`, and `chType.nested({...})` keys are validated
+- function names used by `fn.call(...)`, `fn.withParams(...)`, `ckType.aggregateFunction(...)`, `ckType.simpleAggregateFunction(...)`, and `ckType.nested({...})` keys are validated
 - values interpolated into `` csql`...` `` become ClickHouse named parameters rather than raw SQL text
 - `query_params` keys that start with `orm_param` are rejected because that prefix is reserved for internal SQL-template parameters
 - only a single top-level statement is allowed per request

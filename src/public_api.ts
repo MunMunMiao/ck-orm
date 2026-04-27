@@ -139,7 +139,7 @@ type CsqlNamespace = {
   decimal(expression: unknown, precision: number, scale: number): SQLFragment<string>;
 };
 
-type ChTypeNamespace = {
+type CkTypeNamespace = {
   aggregateFunction: typeof aggregateFunction;
   array: typeof array;
   bfloat16: typeof bfloat16;
@@ -224,7 +224,7 @@ export {
 export type { AnyTable, Table } from "./schema";
 export {
   alias,
-  chTable,
+  ckTable,
   type InferInsertModel,
   type InferInsertSchema,
   type InferSelectModel,
@@ -251,7 +251,7 @@ const createCsqlNamespace = (): CsqlNamespace => {
 
 export const csql = createCsqlNamespace();
 
-export const chType: ChTypeNamespace = {
+export const ckType: CkTypeNamespace = {
   aggregateFunction,
   array,
   bfloat16,

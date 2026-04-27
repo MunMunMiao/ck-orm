@@ -1,21 +1,21 @@
-import { chTable, chType } from "../ck-orm";
+import { ckTable, ckType } from "../ck-orm";
 
-export const customerInvoice = chTable(
+export const customerInvoice = ckTable(
   "customer_invoices",
   {
-    id: chType.int32(),
-    invoice_number: chType.string(),
-    user_id: chType.string(),
-    channel_id: chType.int32(),
-    status: chType.int16(),
-    subtotal_amount: chType.decimal({ precision: 18, scale: 5 }),
-    fee_amount: chType.decimal({ precision: 18, scale: 5 }),
-    total_amount: chType.decimal({ precision: 18, scale: 5 }),
-    created_at: chType.int32(),
-    updated_at: chType.int32(),
-    _peerdb_synced_at: chType.dateTime64({ precision: 9 }),
-    _peerdb_is_deleted: chType.uint8(),
-    _peerdb_version: chType.uint64(),
+    id: ckType.int32(),
+    invoice_number: ckType.string(),
+    user_id: ckType.string(),
+    channel_id: ckType.int32(),
+    status: ckType.int16(),
+    subtotal_amount: ckType.decimal({ precision: 18, scale: 5 }),
+    fee_amount: ckType.decimal({ precision: 18, scale: 5 }),
+    total_amount: ckType.decimal({ precision: 18, scale: 5 }),
+    created_at: ckType.int32(),
+    updated_at: ckType.int32(),
+    _peerdb_synced_at: ckType.dateTime64({ precision: 9 }),
+    _peerdb_is_deleted: ckType.uint8(),
+    _peerdb_version: ckType.uint64(),
   },
   (table) => ({
     engine: "ReplacingMergeTree",
@@ -24,24 +24,24 @@ export const customerInvoice = chTable(
   }),
 );
 
-export const orderRewardLog = chTable(
+export const orderRewardLog = ckTable(
   "order_reward_log",
   {
-    id: chType.int32(),
-    user_id: chType.string(),
-    membership_id: chType.string(),
-    campaign_id: chType.int32(),
-    order_id: chType.int64(),
-    product_sku: chType.string(),
-    quantity: chType.decimal({ precision: 20, scale: 5 }),
-    reward_points: chType.decimal({ precision: 20, scale: 5 }),
-    channel: chType.int32(),
-    event_type: chType.string(),
-    status: chType.int16(),
-    region: chType.string(),
-    tags: chType.array(chType.string()),
-    attributes: chType.map(chType.string(), chType.string()),
-    metadata: chType.json<{
+    id: ckType.int32(),
+    user_id: ckType.string(),
+    membership_id: ckType.string(),
+    campaign_id: ckType.int32(),
+    order_id: ckType.int64(),
+    product_sku: ckType.string(),
+    quantity: ckType.decimal({ precision: 20, scale: 5 }),
+    reward_points: ckType.decimal({ precision: 20, scale: 5 }),
+    channel: ckType.int32(),
+    event_type: ckType.string(),
+    status: ckType.int16(),
+    region: ckType.string(),
+    tags: ckType.array(ckType.string()),
+    attributes: ckType.map(ckType.string(), ckType.string()),
+    metadata: ckType.json<{
       regulatory?: string[];
       risk?: {
         score?: number;
@@ -52,11 +52,11 @@ export const orderRewardLog = chTable(
         login: string;
       }>;
     }>(),
-    created_at: chType.int32(),
-    event_date: chType.int32(),
-    _peerdb_synced_at: chType.dateTime64({ precision: 9 }),
-    _peerdb_is_deleted: chType.uint8(),
-    _peerdb_version: chType.uint64(),
+    created_at: ckType.int32(),
+    event_date: ckType.int32(),
+    _peerdb_synced_at: ckType.dateTime64({ precision: 9 }),
+    _peerdb_is_deleted: ckType.uint8(),
+    _peerdb_version: ckType.uint64(),
   },
   (table) => ({
     engine: "ReplacingMergeTree",
