@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { int32, string } from "./columns";
 import { isClickHouseORMError } from "./errors";
 import { fn } from "./functions";
+import { assertDecimalParams, parseDecimalSqlType } from "./internal/decimal";
 import { alias, chTable } from "./schema";
 import { compileSql, sql } from "./sql";
 
@@ -132,5 +133,65 @@ describe("ck-orm sql", function describeClickHouseORMSql() {
     expect(() => compileSql(sql`select ${Symbol("bad") as unknown as string}`)).toThrow(
       "Unsupported SQL parameter value: Symbol(bad)",
     );
+  });
+
+  it("supports sql.decimal helper for Decimal precision casts", function testSqlDecimalHelper() {
+    const cast = sql.decimal(sql`sum(${users.id})`, 20, 5);
+    expect(compileSql(cast).query).toBe("CAST(sum(`users`.`id`) AS Decimal(20, 5))");
+    expect(cast.decoder("12.34")).toBe("12.34");
+    // Decoder coerces driver-side numbers (CH default JSON) into strings.
+    expect(cast.decoder(12.34 as never)).toBe("12.34");
+
+    const numericCast = sql.decimal(42, 18, 2);
+    const builtNumeric = compileSql(numericCast);
+    expect(builtNumeric.query).toBe("CAST({orm_param1:Int64} AS Decimal(18, 2))");
+    expect(builtNumeric.params).toEqual({ orm_param1: 42 });
+
+    expect(() => sql.decimal(sql`x`, 0, 0)).toThrow(/precision must be an integer between 1 and 76/);
+    expect(() => sql.decimal(sql`x`, 5, 6)).toThrow(/scale must be an integer between 0 and precision/);
+    expect(() => sql.decimal(sql`x`, 5.5 as number, 2)).toThrow(/precision must be an integer/);
+
+    // Callers needing a different decoded shape chain .mapWith().
+    const remapped = sql.decimal(sql`y`, 18, 2).mapWith((v) => Number(v));
+    expect(remapped.decoder("1.50")).toBe(1.5);
+  });
+});
+
+describe("ck-orm internal/decimal", function describeInternalDecimal() {
+  it("validates precision and scale ranges", function testAssertDecimalParams() {
+    expect(() => assertDecimalParams({ precision: 0, scale: 0 })).toThrow(
+      /precision must be an integer between 1 and 76/,
+    );
+    expect(() => assertDecimalParams({ precision: 77, scale: 5 })).toThrow(
+      /precision must be an integer between 1 and 76/,
+    );
+    expect(() => assertDecimalParams({ precision: 5.5, scale: 0 })).toThrow(/precision must be an integer/);
+    expect(() => assertDecimalParams({ precision: 18, scale: -1 })).toThrow(
+      /scale must be an integer between 0 and precision/,
+    );
+    expect(() => assertDecimalParams({ precision: 18, scale: 19 })).toThrow(
+      /scale must be an integer between 0 and precision/,
+    );
+    expect(() => assertDecimalParams({ precision: 18, scale: 5 })).not.toThrow();
+  });
+
+  it("parses ClickHouse Decimal sqlType strings", function testParseDecimalSqlType() {
+    expect(parseDecimalSqlType("Decimal(20, 5)")).toEqual({ precision: 20, scale: 5 });
+    expect(parseDecimalSqlType("Decimal( 18 ,2 )")).toEqual({ precision: 18, scale: 2 });
+    expect(parseDecimalSqlType("Decimal32(4)")).toEqual({ precision: 9, scale: 4 });
+    expect(parseDecimalSqlType("Decimal64(10)")).toEqual({ precision: 18, scale: 10 });
+    expect(parseDecimalSqlType("Decimal128(20)")).toEqual({ precision: 38, scale: 20 });
+    expect(parseDecimalSqlType("Decimal256(30)")).toEqual({ precision: 76, scale: 30 });
+
+    // Reject malformed / non-decimal / out-of-range inputs.
+    expect(parseDecimalSqlType(undefined)).toBeUndefined();
+    expect(parseDecimalSqlType("")).toBeUndefined();
+    expect(parseDecimalSqlType("Float64")).toBeUndefined();
+    expect(parseDecimalSqlType("Decimal(20)")).toBeUndefined();
+    expect(parseDecimalSqlType("Decimal(20, 5)) garbage")).toBeUndefined();
+    expect(parseDecimalSqlType("Decimal32(10)")).toBeUndefined();
+    expect(parseDecimalSqlType("Decimal(0, 0)")).toBeUndefined();
+    expect(parseDecimalSqlType("Decimal(20, 21)")).toBeUndefined();
+    expect(parseDecimalSqlType("Nullable(Decimal(20, 5))")).toBeUndefined();
   });
 });

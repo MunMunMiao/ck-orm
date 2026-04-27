@@ -137,6 +137,8 @@ const rows = await query;
 
 Builder queries are thenable, so `await query` executes the query directly.
 
+`fn.sum` over a `Decimal` column auto-casts to `Decimal(P, S)` and returns `string` to keep precision intact — see [Decimal precision in expressions](#decimal-precision-in-expressions).
+
 ## Examples
 
 The README is the reference path. The [`examples/`](./examples) directory is the copy-and-adapt path.
@@ -1079,6 +1081,35 @@ for await (const row of db.stream(csql`select 1`, {
 }
 ```
 
+### Decimal precision in expressions
+
+```ts
+import { chType, csql, fn } from "ck-orm";
+
+const ledger = chTable("ledger", {
+  amount: chType.decimal({ precision: 18, scale: 5 }),
+});
+
+// fn.sum / sumIf / min / max auto-cast to Decimal(P, S) and decode as string.
+db.select({ total: fn.sum(ledger.amount) }).from(ledger);
+// → CAST(sum(`ledger`.`amount`) AS Decimal(38, 5))   row.total: string
+
+// Explicit casts.
+fn.toDecimal128(ledger.amount, 5);     // toDecimal32 / 64 / 128 / 256
+csql.decimal(csql`sum(a) - sum(b)`, 20, 5);
+ledger.amount.cast(20, 2);             // column shortcut
+```
+
+- `sum` / `sumIf` widen P to ≥ 38; `min` / `max` keep the column's P. Auto-cast also fires through `nullable(decimal(...))` and `lowCardinality(decimal(...))`.
+- `avg` is **not** auto-cast — ClickHouse computes `avg(Decimal)` over Float64, so `fn.avg` returns `Selection<number>`. For exact Decimal averages, use `csql.decimal(csql\`sum(x) / count(x)\`, P, S)`.
+- `column.cast(P, S)` casts the column, not the aggregate — using it bare inside `GROUP BY` raises `NOT_AN_AGGREGATE`. Use `fn.sum(column)` or wrap the aggregate.
+- Inserts reject non-string/number objects (e.g. raw `decimal.js` instances) — pass `.toFixed(scale)`:
+
+```ts
+db.insert(ledger).values({ amount: new Decimal("1.23").toFixed(5) });   // ✅
+db.insert(ledger).values({ amount: new Decimal("1.23") as never });     // ❌ throws
+```
+
 ## Functions and table functions
 
 ### `fn`
@@ -1090,14 +1121,12 @@ Generic, conversion, aggregate, JSON, tuple, and table-related helpers include:
 - `fn.toString()`
 - `fn.toDate()`
 - `fn.toDateTime()`
+- `fn.toDecimal32()` / `fn.toDecimal64()` / `fn.toDecimal128()` / `fn.toDecimal256()`
 - `fn.toStartOfMonth()`
 - `fn.count()`
 - `fn.countIf()`
-- `fn.sum()`
-- `fn.sumIf()`
-- `fn.avg()`
-- `fn.min()`
-- `fn.max()`
+- `fn.sum()` / `fn.sumIf()` / `fn.min()` / `fn.max()` — auto-cast to `Decimal(P, S)` for Decimal columns; see [Decimal precision in expressions](#decimal-precision-in-expressions)
+- `fn.avg()` — `Selection<number>` (Float64), matching ClickHouse's native `avg(Decimal)` behavior
 - `fn.uniqExact()`
 - `fn.coalesce()`
 - `fn.jsonExtract()`

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { array as arrayColumn, dateTime, float64, int32, nullable, string } from "./columns";
+import { array as arrayColumn, dateTime, decimal, float64, int32, lowCardinality, nullable, string } from "./columns";
 import { fn, tableFn } from "./functions";
 import { compileSql, sql } from "./sql";
 
@@ -548,6 +548,65 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     expect(fn.hasSubstr(["vip"], ["vip"]).decoder("1")).toBe(true);
     expect(fn.kql_array_sort_asc(["vip"]).decoder([["vip"]])).toEqual([["vip"]]);
     expect(() => fn.emptyArrayFloat64().decoder("bad")).toThrow("Cannot convert value to emptyArrayFloat64 array");
+  });
+
+  it("compiles toDecimal* casts and Decimal-aware aggregates", function testDecimalAwareAggregates() {
+    const amount = decimal({ precision: 18, scale: 5 }).bind({ name: "amount", tableName: "ledger" });
+
+    const cast128 = fn.toDecimal128(amount, 5);
+    expect(compileSql(sql`${cast128.compile(createContext())}`).query).toContain("toDecimal128(`ledger`.`amount`, 5)");
+    expect(cast128.sqlType).toBe("Decimal(38, 5)");
+    expect(cast128.decoder("1.23")).toBe("1.23");
+    expect(() => fn.toDecimal128(amount, "5" as never)).toThrow(
+      /toDecimal128 scale must be an integer between 0 and 38 \(the toDecimal128 fixed width\)/,
+    );
+    expect(() => fn.toDecimal32(amount, 10)).toThrow(
+      /toDecimal32 scale must be an integer between 0 and 9 \(the toDecimal32 fixed width\)/,
+    );
+
+    const summed = fn.sum(amount);
+    const summedCompiled = compileSql(sql`${summed.compile(createContext())}`);
+    expect(summedCompiled.query).toBe("CAST(sum(`ledger`.`amount`) AS Decimal(38, 5))");
+    expect(summed.sqlType).toBe("Decimal(38, 5)");
+    expect(summed.decoder("9.99")).toBe("9.99");
+
+    // avg(Decimal) intentionally does NOT auto-cast — aligned with ClickHouse's
+    // native avg(Decimal) → Float64 behavior (sum-of-divides path).
+    const averaged = fn.avg(amount);
+    expect(compileSql(sql`${averaged.compile(createContext())}`).query).toBe("avg(`ledger`.`amount`)");
+    expect(averaged.sqlType).toBe("Float64");
+    expect(averaged.decoder("4.5")).toBe(4.5);
+
+    const summedIf = fn.sumIf(amount, sql`1`);
+    expect(compileSql(sql`${summedIf.compile(createContext())}`).query).toBe(
+      "CAST(sumIf(`ledger`.`amount`, 1) AS Decimal(38, 5))",
+    );
+
+    const minimal = fn.min(amount);
+    expect(compileSql(sql`${minimal.compile(createContext())}`).query).toBe(
+      "CAST(min(`ledger`.`amount`) AS Decimal(18, 5))",
+    );
+
+    expect(fn.sum(int32()).sqlType).toBeUndefined();
+    expect(fn.avg(int32()).decoder("4.5")).toBe(4.5);
+
+    // Wrapped Decimal columns must still trigger auto-cast.
+    const nullableAmount = nullable(decimal({ precision: 18, scale: 5 })).bind({
+      name: "amount",
+      tableName: "ledger",
+    });
+    const summedNullable = fn.sum(nullableAmount);
+    expect(compileSql(sql`${summedNullable.compile(createContext())}`).query).toBe(
+      "CAST(sum(`ledger`.`amount`) AS Decimal(38, 5))",
+    );
+
+    // Wrappers (lowCardinality / nullable) must NOT cause avg to auto-cast either.
+    const lowCardAmount = lowCardinality(decimal({ precision: 12, scale: 4 })).bind({
+      name: "fee",
+      tableName: "ledger",
+    });
+    expect(compileSql(sql`${fn.avg(lowCardAmount).compile(createContext())}`).query).toBe("avg(`ledger`.`fee`)");
+    expect(fn.avg(lowCardAmount).sqlType).toBe("Float64");
   });
 
   it("compiles table functions with and without alias", function testTableFunctions() {

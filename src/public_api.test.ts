@@ -220,6 +220,10 @@ const expectedFnKeys = [
   "table",
   "toDate",
   "toDateTime",
+  "toDecimal128",
+  "toDecimal256",
+  "toDecimal32",
+  "toDecimal64",
   "toStartOfMonth",
   "toString",
   "tuple",
@@ -232,7 +236,7 @@ describe("ck-orm public api", function describePublicApi() {
   it("keeps runtime public namespace keys explicit", function testPublicNamespaceSurface() {
     expect(Object.keys(publicApi).sort()).toEqual([...expectedRootRuntimeKeys].sort());
     expect(Object.keys(publicApi.ck).sort()).toEqual([...expectedCkKeys].sort());
-    expect(Object.keys(publicApi.csql).sort()).toEqual(["identifier", "join"]);
+    expect(Object.keys(publicApi.csql).sort()).toEqual(["decimal", "identifier", "join"]);
     expect(Object.keys(publicApi.chType).sort()).toEqual([...expectedChTypeKeys].sort());
     expect(Object.keys(publicApi.fn).sort()).toEqual([...expectedFnKeys].sort());
     expect(Object.keys(publicApi.fn.table).sort()).toEqual(["call"]);

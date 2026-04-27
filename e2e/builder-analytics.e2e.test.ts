@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { alias, ck, fn } from "./ck-orm";
+import { alias, ck, csql, fn } from "./ck-orm";
 import { createE2EDb, rewardEvents, users, webEvents } from "./shared";
 import { describeE2E } from "./test-helpers";
 
@@ -154,5 +154,63 @@ describeE2E("ck-orm e2e builder analytics", function describeBuilderAnalytics() 
       ownerId: 4001,
       rewardUserId: "user_4001",
     });
+  });
+
+  it("preserves Decimal precision via auto-cast aggregates, fn.toDecimal128 and csql.decimal", async function testDecimalPrecisionPaths() {
+    const db = createE2EDb();
+
+    const aggregateRows = await db
+      .select({
+        country: webEvents.country,
+        autoSum: fn.sum(webEvents.revenue).as("auto_sum"),
+        toDecimal: fn.toDecimal128(fn.sum(webEvents.revenue), 2).as("to_decimal"),
+        rawCast: csql.decimal(csql`sum(${webEvents.revenue})`, 18, 2).as("raw_cast"),
+      })
+      .from(webEvents)
+      .groupBy(webEvents.country)
+      .orderBy(webEvents.country)
+      .limit(2);
+
+    expect(aggregateRows.length).toBeGreaterThan(0);
+    for (const row of aggregateRows) {
+      expect(typeof row.autoSum).toBe("string");
+      expect(typeof row.toDecimal).toBe("string");
+      expect(typeof row.rawCast).toBe("string");
+      expect(row.autoSum).toMatch(/^-?\d+(?:\.\d+)?$/);
+      expect(row.toDecimal).toMatch(/^-?\d+(?:\.\d+)?$/);
+      expect(row.rawCast).toMatch(/^-?\d+(?:\.\d+)?$/);
+      expect(row.autoSum).toBe(row.rawCast);
+    }
+
+    const columnCastRows = await db
+      .select({
+        eventId: webEvents.event_id,
+        widened: webEvents.revenue.cast(20, 5).as("widened"),
+      })
+      .from(webEvents)
+      .orderBy(webEvents.event_id)
+      .limit(3);
+
+    expect(columnCastRows.length).toBeGreaterThan(0);
+    for (const row of columnCastRows) {
+      expect(typeof row.widened).toBe("string");
+      expect(row.widened).toMatch(/^-?\d+(?:\.\d+)?$/);
+    }
+
+    const minMaxRow = await db
+      .select({
+        userId: rewardEvents.user_id,
+        minRewardPoints: fn.min(rewardEvents.reward_points).as("min_reward_points"),
+        maxRewardPoints: fn.max(rewardEvents.reward_points).as("max_reward_points"),
+      })
+      .from(rewardEvents)
+      .groupBy(rewardEvents.user_id)
+      .orderBy(rewardEvents.user_id)
+      .limit(1);
+
+    expect(minMaxRow).toHaveLength(1);
+    expect(typeof minMaxRow[0]?.minRewardPoints).toBe("string");
+    expect(typeof minMaxRow[0]?.maxRewardPoints).toBe("string");
+    expect(minMaxRow[0]?.minRewardPoints).toMatch(/^-?\d+(?:\.\d+)?$/);
   });
 });

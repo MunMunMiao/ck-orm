@@ -359,6 +359,10 @@ const functionTypeMatrix = {
   sumIf: fn.sumIf(activityLedger.delta_value, ck.eq(activityLedger.event_phase, 1)),
   toDate: fn.toDate(activityLedger.event_time),
   toDateTime: fn.toDateTime(activityLedger.event_time, "UTC"),
+  toDecimal32: fn.toDecimal32(activityLedger.delta_value, 4),
+  toDecimal64: fn.toDecimal64(activityLedger.delta_value, 5),
+  toDecimal128: fn.toDecimal128(activityLedger.delta_value, 5),
+  toDecimal256: fn.toDecimal256(activityLedger.delta_value, 5),
   toStartOfMonth: fn.toStartOfMonth(activityLedger.event_time),
   toString: fn.toString(activityLedger.actor_id),
   tuple: fn.tuple(activityLedger.system_id, activityLedger.actor_id),
@@ -521,6 +525,7 @@ const ckApiMatrix = {
 const csqlMatrix = {
   identifier: csql.identifier({ table: "activity_ledger", column: "actor_id" }),
   join: csql.join([csql`select 1`, csql`select 2`], csql`, `),
+  decimal: csql.decimal(csql`sum(${activityLedger.delta_value})`, 20, 5),
 } satisfies { readonly [K in keyof typeof csql]: unknown };
 
 const csqlTaggedTemplate = {

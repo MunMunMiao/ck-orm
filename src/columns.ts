@@ -1,5 +1,6 @@
 import { toBoolean, toDate, toIntegerString, toNumber, toStringValue } from "./coercion";
 import { createClientValidationError, createDecodeError, type DecodeError, isDecodeError } from "./errors";
+import { assertDecimalParams, type DecimalParams, formatDecimalSqlType } from "./internal/decimal";
 import { assertValidSqlIdentifier } from "./internal/identifier";
 import { createExpression, type Decoder, type Encoder, type InferData, type SqlExpression } from "./query-shared";
 import { type SQLFragment, sql } from "./sql";
@@ -33,8 +34,10 @@ export interface Column<
   readonly tableAlias?: TTableAlias;
   readonly sqlType: TSqlType;
   readonly ddl?: ColumnDdlConfig;
+  readonly decimalConfig?: DecimalParams;
   mapToDriverValue(value: TData): unknown;
   mapFromDriverValue(value: unknown): TData;
+  cast(precision: number, scale: number): SQLFragment<string>;
   bind<TNextTableName extends string, TNextTableAlias extends string | undefined = undefined>(
     binding: ColumnBinding<TNextTableName, TNextTableAlias>,
   ): Column<TData, TSqlType, TNextTableName, TNextTableAlias>;
@@ -65,6 +68,8 @@ type ColumnFactoryConfig<TData, TSqlType extends string> = {
   readonly mapFromDriverValue: Decoder<TData>;
   readonly mapToDriverValue?: Encoder<TData>;
   readonly ddl?: ColumnDdlConfig;
+  readonly decimalConfig?: DecimalParams;
+  readonly rejectObjectInput?: boolean;
 };
 
 const identity = <TData>(value: TData) => value;
@@ -302,11 +307,22 @@ const createColumnFactory = <
     tableAlias: binding?.tableAlias as TTableAlias | undefined,
     sqlType: config.sqlType,
     ddl: config.ddl,
+    decimalConfig: config.decimalConfig,
     mapFromDriverValue(value: unknown) {
       return config.mapFromDriverValue(value);
     },
     mapToDriverValue(value: TData) {
+      if (config.rejectObjectInput && typeof value === "object" && value !== null && !(value instanceof Date)) {
+        const columnLabel = binding?.name ?? config.configuredName ?? config.sqlType;
+        throw createClientValidationError(
+          `${config.sqlType} column "${columnLabel}" expects string | number; got an object. ` +
+            `If you are using decimal.js, call .toFixed(scale) before passing it to ck-orm.`,
+        );
+      }
       return (config.mapToDriverValue ?? identity)(value);
+    },
+    cast(precision: number, scale: number): SQLFragment<string> {
+      return sql.decimal(this, precision, scale);
     },
     bind<TNextTableName extends string, TNextTableAlias extends string | undefined = undefined>(
       nextBinding: ColumnBinding<TNextTableName, TNextTableAlias>,
@@ -494,19 +510,14 @@ export function decimal(name: string, config: DecimalConfig): Decimal<string>;
 export function decimal(first: string | DecimalConfig, second?: DecimalConfig): Decimal<string> {
   const { name, config } = parseNamedConfig("decimal", first, second);
   const { precision, scale } = config;
-  if (!Number.isInteger(precision) || precision < 1 || precision > 76) {
-    throw createClientValidationError(`decimal precision must be an integer between 1 and 76, got ${precision}`);
-  }
-  if (!Number.isInteger(scale) || scale < 0 || scale > precision) {
-    throw createClientValidationError(
-      `decimal scale must be an integer between 0 and precision (${precision}), got ${scale}`,
-    );
-  }
+  assertDecimalParams({ precision, scale }, "decimal");
   return createColumnFactory({
     configuredName: name,
-    sqlType: `Decimal(${precision}, ${scale})`,
+    sqlType: formatDecimalSqlType({ precision, scale }),
     mapFromDriverValue: toStringValue,
     mapToDriverValue: toStringValue,
+    decimalConfig: { precision, scale },
+    rejectObjectInput: true,
   });
 }
 export const date = (name?: string): DateColumn<Date> =>
@@ -658,6 +669,7 @@ export function nullable<TInner extends AnyColumn>(first: string | TInner, secon
       }
       return inner.mapToDriverValue(value as InferData<TInner>);
     },
+    decimalConfig: inner.decimalConfig,
   });
 }
 export function array<TInner extends AnyColumn>(inner: TInner): ArrayColumn<TInner>;
@@ -781,6 +793,7 @@ export function lowCardinality<TInner extends AnyColumn>(
     sqlType: `LowCardinality(${inner.sqlType})`,
     mapFromDriverValue: (value) => inner.mapFromDriverValue(value) as InferData<TInner>,
     mapToDriverValue: (value) => inner.mapToDriverValue(value),
+    decimalConfig: inner.decimalConfig,
   });
 }
 export function nested<TShape extends Record<string, AnyColumn>>(shape: TShape): NestedColumn<TShape>;

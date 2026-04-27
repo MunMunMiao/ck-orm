@@ -5,7 +5,8 @@ import {
   toStringValue as toStringCoercion,
 } from "./coercion";
 import type { AnyColumn } from "./columns";
-import { createDecodeError } from "./errors";
+import { createClientValidationError, createDecodeError } from "./errors";
+import { type DecimalParams, parseDecimalSqlType } from "./internal/decimal";
 import { assertValidSqlIdentifier } from "./internal/identifier";
 import { createTableFunctionSource } from "./query";
 import {
@@ -76,6 +77,73 @@ const stringDecoder: Decoder<string> = toStringCoercion;
 const dateDecoder: Decoder<Date> = toDateCoercion;
 const booleanDecoder: Decoder<boolean> = toBooleanCoercion;
 
+const FIXED_WIDTH_DECIMAL_PRECISION = {
+  toDecimal32: 9,
+  toDecimal64: 18,
+  toDecimal128: 38,
+  toDecimal256: 76,
+} as const;
+
+type FixedWidthDecimalName = keyof typeof FIXED_WIDTH_DECIMAL_PRECISION;
+
+const isDecimalColumnLike = (value: unknown): value is { decimalConfig: DecimalParams } => {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "decimalConfig" in value &&
+    typeof (value as { decimalConfig?: unknown }).decimalConfig === "object" &&
+    (value as { decimalConfig?: unknown }).decimalConfig !== null
+  );
+};
+
+const resolveDecimalParams = (expression: unknown): DecimalParams | undefined => {
+  if (isDecimalColumnLike(expression)) {
+    return expression.decimalConfig;
+  }
+  if (
+    typeof expression === "object" &&
+    expression !== null &&
+    "sqlType" in expression &&
+    typeof (expression as { sqlType?: unknown }).sqlType === "string"
+  ) {
+    return parseDecimalSqlType((expression as { sqlType: string }).sqlType);
+  }
+  return undefined;
+};
+
+const widenForSum = (params: DecimalParams): DecimalParams => {
+  return {
+    precision: Math.min(76, Math.max(38, params.precision)),
+    scale: params.scale,
+  };
+};
+
+const createFixedWidthDecimalCast = (
+  fnName: FixedWidthDecimalName,
+  expression: unknown,
+  scale: unknown,
+): Selection<string> => {
+  const precision = FIXED_WIDTH_DECIMAL_PRECISION[fnName];
+  if (typeof scale !== "number" || !Number.isInteger(scale) || scale < 0 || scale > precision) {
+    throw createClientValidationError(
+      `${fnName} scale must be an integer between 0 and ${precision} (the ${fnName} fixed width), got ${String(scale)}`,
+    );
+  }
+  // ClickHouse `toDecimalNN(expr, scale)` requires a UInt8 literal for `scale`,
+  // so we inline it instead of binding through the parameter channel (which
+  // would produce `{orm_paramN:Int64}` and trigger ILLEGAL_TYPE_OF_ARGUMENT).
+  const sqlType = `Decimal(${precision}, ${scale})`;
+  return createExpression<string>({
+    compile: (ctx) => {
+      assertValidSqlIdentifier(fnName, "function");
+      const compiledExpr = compileValue(expression, ctx);
+      return sql`${sql.raw(fnName)}(${compiledExpr}, ${sql.raw(String(scale))})`;
+    },
+    decoder: stringDecoder,
+    sqlType,
+  });
+};
+
 const arrayDecoder = <TData>(label: string): Decoder<TData[]> => {
   return (value) => {
     if (!Array.isArray(value)) {
@@ -91,6 +159,52 @@ const resolveAggregateDecoder = (expression?: unknown): Decoder<number | string>
     return numberDecoder;
   }
   return stringDecoder;
+};
+
+type DecimalAwareAggregateConfig = {
+  /**
+   * Whether the aggregate may widen the precision (e.g. SUM accumulates
+   * across rows so we promote the precision up to 38). MIN/MAX preserve
+   * the column precision verbatim.
+   */
+  readonly widenForSum?: boolean;
+};
+
+const buildDecimalAwareAggregate = (
+  name: string,
+  expression: unknown,
+  config?: DecimalAwareAggregateConfig,
+): Selection<string> | undefined => {
+  const params = resolveDecimalParams(expression);
+  if (!params) return undefined;
+  const target = config?.widenForSum ? widenForSum(params) : params;
+  const sqlType = `Decimal(${target.precision}, ${target.scale})`;
+  return createExpression<string>({
+    compile: (ctx) => {
+      assertValidSqlIdentifier(name, "function");
+      const compiledArg = compileValue(expression, ctx);
+      return sql`CAST(${sql.raw(name)}(${compiledArg}) AS ${sql.raw(sqlType)})`;
+    },
+    decoder: stringDecoder,
+    sqlType,
+  });
+};
+
+const buildDecimalAwareSumIf = (expression: unknown, condition: unknown): Selection<string> | undefined => {
+  const params = resolveDecimalParams(expression);
+  if (!params) return undefined;
+  const target = widenForSum(params);
+  const sqlType = `Decimal(${target.precision}, ${target.scale})`;
+  return createExpression<string>({
+    compile: (ctx) => {
+      assertValidSqlIdentifier("sumIf", "function");
+      const compiledExpr = compileValue(expression, ctx);
+      const compiledCond = compileValue(condition, ctx);
+      return sql`CAST(sumIf(${compiledExpr}, ${compiledCond}) AS ${sql.raw(sqlType)})`;
+    },
+    decoder: stringDecoder,
+    sqlType,
+  });
 };
 
 const createArrayExpression = <TData>(
@@ -167,6 +281,18 @@ const scalarFns = {
       decoder: stringDecoder,
       sqlType: "String",
     });
+  },
+  toDecimal32(expression: unknown, scale: number): Selection<string> {
+    return createFixedWidthDecimalCast("toDecimal32", expression, scale);
+  },
+  toDecimal64(expression: unknown, scale: number): Selection<string> {
+    return createFixedWidthDecimalCast("toDecimal64", expression, scale);
+  },
+  toDecimal128(expression: unknown, scale: number): Selection<string> {
+    return createFixedWidthDecimalCast("toDecimal128", expression, scale);
+  },
+  toDecimal256(expression: unknown, scale: number): Selection<string> {
+    return createFixedWidthDecimalCast("toDecimal256", expression, scale);
   },
   toDate(expression: unknown): Selection<Date> {
     return createFunctionExpression("toDate", [expression], {
@@ -631,22 +757,31 @@ const aggregateFns = {
     });
   },
   sum(expression: unknown): Selection<number | string> {
+    const decimalAware = buildDecimalAwareAggregate("sum", expression, { widenForSum: true });
+    if (decimalAware) return decimalAware;
     return createFunctionExpression<number | string>("sum", [expression], {
       decoder: resolveAggregateDecoder(expression),
     });
   },
   sumIf(expression: unknown, condition: unknown): Selection<number | string> {
+    const decimalAware = buildDecimalAwareSumIf(expression, condition);
+    if (decimalAware) return decimalAware;
     return createFunctionExpression<number | string>("sumIf", [expression, condition], {
       decoder: resolveAggregateDecoder(expression),
     });
   },
   avg(expression: unknown): Selection<number> {
-    return createFunctionExpression("avg", [expression], {
+    // ClickHouse `avg(Decimal)` runs internally on Float64 (sum-of-divides).
+    // Don't auto-cast back to Decimal — the round-trip wouldn't recover lost
+    // precision and would lie about the runtime path. Match CH native behavior.
+    return createFunctionExpression<number>("avg", [expression], {
       decoder: numberDecoder,
       sqlType: "Float64",
     });
   },
   min<TData = unknown>(expression: unknown): Selection<TData> {
+    const decimalAware = buildDecimalAwareAggregate("min", expression);
+    if (decimalAware) return decimalAware as Selection<TData>;
     const wrapped = ensureExpression<TData>(expression);
     return createFunctionExpression<TData>("min", [expression], {
       decoder: wrapped.decoder,
@@ -654,6 +789,8 @@ const aggregateFns = {
     });
   },
   max<TData = unknown>(expression: unknown): Selection<TData> {
+    const decimalAware = buildDecimalAwareAggregate("max", expression);
+    if (decimalAware) return decimalAware as Selection<TData>;
     const wrapped = ensureExpression<TData>(expression);
     return createFunctionExpression<TData>("max", [expression], {
       decoder: wrapped.decoder,

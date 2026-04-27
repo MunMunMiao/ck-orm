@@ -373,7 +373,7 @@ describe("ck-orm query compile", function describeClickHouseORMQueryCompile() {
     const built = buildCompiled(query[compileQuerySymbol]());
 
     expect(normalizeSql(built.query)).toContain(
-      "select `orl`.`user_id` as `userId`, sum(`orl`.`reward_points`) as `total_reward_points`, uniqExact(`orl`.`user_id`) as `activeUsers`",
+      "select `orl`.`user_id` as `userId`, CAST(sum(`orl`.`reward_points`) AS Decimal(38, 5)) as `total_reward_points`, uniqExact(`orl`.`user_id`) as `activeUsers`",
     );
     expect(normalizeSql(built.query)).toContain("from `order_reward_log` as `orl` final");
     expect(normalizeSql(built.query)).toContain(
@@ -435,7 +435,7 @@ describe("ck-orm query compile", function describeClickHouseORMQueryCompile() {
     );
 
     expect(normalizeSql(built.query)).toContain(
-      "with `ranked` as (select `order_reward_log`.`user_id` as `userId`, sum(`order_reward_log`.`reward_points`) as `total_reward_points`",
+      "with `ranked` as (select `order_reward_log`.`user_id` as `userId`, CAST(sum(`order_reward_log`.`reward_points`) AS Decimal(38, 5)) as `total_reward_points`",
     );
     expect(normalizeSql(built.query)).toContain(
       "tuple(`shipment_orders`.`user_id`, `shipment_orders`.`order_id`) as `pair`",

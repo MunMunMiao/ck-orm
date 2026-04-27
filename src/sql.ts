@@ -1,4 +1,6 @@
+import { toStringValue } from "./coercion";
 import { createClientValidationError } from "./errors";
+import { assertDecimalParams, formatDecimalSqlType } from "./internal/decimal";
 import { assertValidSqlIdentifier } from "./internal/identifier";
 
 const sqlBrand = Symbol("clickhouseORMSqlBrand");
@@ -315,6 +317,19 @@ type SQLFactory = {
   raw(value: string): SQLFragment;
   join(parts: readonly SQLFragment<unknown>[], separator?: string | SQLFragment<unknown>): SQLFragment;
   identifier(value: IdentifierValue): SQLFragment;
+  /**
+   * Wraps an expression in `CAST(... AS Decimal(precision, scale))` and decodes
+   * the row value as `string` (via `toStringValue`) — so any aggregation /
+   * arithmetic over a Decimal column round-trips without precision loss.
+   *
+   * `precision` / `scale` are validated (1 ≤ P ≤ 76, 0 ≤ S ≤ P) and inlined
+   * verbatim — ClickHouse does not accept parameterised Decimal precision.
+   *
+   * The result is always `SQLFragment<string>`. If you need a different decoded
+   * shape (branded string, number, etc.), chain `.mapWith(...)` after this
+   * helper — that keeps the runtime decoder and the static type aligned.
+   */
+  decimal(expression: unknown, precision: number, scale: number): SQLFragment<string>;
 };
 
 const createSqlFactory = (): SQLFactory => {
@@ -378,6 +393,14 @@ const createSqlFactory = (): SQLFactory => {
     createSqlFragment({
       chunks: [{ kind: "identifier", value }],
     });
+
+  sqlFactory.decimal = (expression: unknown, precision: number, scale: number): SQLFragment<string> => {
+    assertDecimalParams({ precision, scale }, "sql.decimal");
+    const inner = isSqlFragment(expression) ? expression : sqlFactory`${expression}`;
+    const sqlType = formatDecimalSqlType({ precision, scale });
+    const fragment = sqlFactory`CAST(${inner} AS ${sqlFactory.raw(sqlType)})`;
+    return fragment.mapWith((value) => toStringValue(value));
+  };
 
   return sqlFactory;
 };

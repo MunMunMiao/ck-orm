@@ -110,6 +110,7 @@ This matrix records the public API coverage contract. Runtime behavior rows poin
 | `` csql`...` `` | most E2E files |
 | `csql.join` | `query-basics.e2e.test.ts`, `injection-transport-and-boundaries.e2e.test.ts` |
 | `csql.identifier` | `query-basics.e2e.test.ts`, `session-cdc-stream.e2e.test.ts`, `injection-identifiers.e2e.test.ts`, `injection-transport-and-boundaries.e2e.test.ts` |
+| `csql.decimal` (CAST(... AS Decimal(P, S)) precision wrapper) | `builder-analytics.e2e.test.ts` |
 
 ## Function API
 
@@ -120,6 +121,7 @@ This matrix records the public API coverage contract. Runtime behavior rows poin
 | `fn.toString` | `functions.e2e.test.ts` |
 | `fn.toDate` | `functions.e2e.test.ts` |
 | `fn.toDateTime` | `functions.e2e.test.ts` |
+| `fn.toDecimal32`, `fn.toDecimal64`, `fn.toDecimal128`, `fn.toDecimal256` | `builder-analytics.e2e.test.ts` |
 | `fn.toStartOfMonth` | `functions.e2e.test.ts`, `builder-analytics.e2e.test.ts` |
 | `fn.count` | `dataset-smoke.e2e.test.ts`, `functions.e2e.test.ts` |
 | `fn.countIf` | `functions.e2e.test.ts` |
@@ -174,6 +176,8 @@ All `fn` keys are guarded by `src/public_api.test.ts` and `src/type-scenarios/pu
 | `float32/float64/bfloat16` | `schema-roundtrip.e2e.test.ts` |
 | `string/fixedString` | `schema-roundtrip.e2e.test.ts` |
 | `decimal` | `schema-roundtrip.e2e.test.ts` |
+| `decimal.cast(P, S)` (column-level precision cast) | `builder-analytics.e2e.test.ts` |
+| Decimal column rejects object inputs (e.g. raw `decimal.js` instances) | `write-paths.e2e.test.ts` |
 | `date/date32/time/time64/dateTime/dateTime64` | `schema-roundtrip.e2e.test.ts` |
 | `bool` | `schema-roundtrip.e2e.test.ts` |
 | `uuid` | `schema-roundtrip.e2e.test.ts` |

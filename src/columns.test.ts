@@ -160,6 +160,25 @@ describe("ck-orm columns", function describeClickHouseORMColumns() {
 
     expect(decimal({ precision: 18, scale: 5 }).mapToDriverValue("12.50000")).toBe("12.50000");
     expect(decimal({ precision: 18, scale: 5 }).mapToDriverValue(12.5 as never)).toBe("12.5");
+
+    const amount = decimal({ precision: 18, scale: 5 });
+    expect(amount.decimalConfig).toEqual({ precision: 18, scale: 5 });
+    expect(() => amount.mapToDriverValue({ toFixed: () => "1.00" } as never)).toThrow(
+      /expects string \| number; got an object/,
+    );
+    const cast = amount.bind({ name: "amount", tableName: "ledger" }).cast(20, 2);
+    expect(compileSql(cast).query).toBe("CAST(`ledger`.`amount` AS Decimal(20, 2))");
+
+    const nullableAmount = nullable(amount);
+    expect(nullableAmount.decimalConfig).toEqual({ precision: 18, scale: 5 });
+    expect(nullableAmount.mapToDriverValue(null)).toBeNull();
+    expect(nullableAmount.mapToDriverValue("9.00000")).toBe("9.00000");
+    expect(() => nullableAmount.mapToDriverValue({ toFixed: () => "1.00" } as never)).toThrow(
+      /expects string \| number; got an object/,
+    );
+
+    const lowCardAmount = lowCardinality(decimal({ precision: 12, scale: 4 }));
+    expect(lowCardAmount.decimalConfig).toEqual({ precision: 12, scale: 4 });
   });
 
   it("preserves logical keys separately from configured database column names", function testConfiguredColumnNames() {

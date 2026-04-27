@@ -470,4 +470,40 @@ describeE2E("ck-orm e2e write paths", function describeWritePaths() {
       },
     ]);
   });
+
+  it("rejects object inputs (e.g. raw decimal.js instances) for Decimal columns", async function testDecimalRejectsObjectInput() {
+    const db = createE2EDb();
+    const tempTable = createTempTableName("tmp_decimal_object_reject");
+    const scope = chTable(tempTable, {
+      id: chType.int32(),
+      amount: chType.decimal({ precision: 18, scale: 5 }),
+    });
+
+    await db.runInSession(async (session) => {
+      await session.createTemporaryTable(scope);
+
+      const fakeDecimal = {
+        toFixed: (n: number) => "1.23".padEnd(2 + n, "0"),
+        toString: () => "1.23",
+      };
+
+      expect(() =>
+        session
+          .insert(scope)
+          .values({
+            id: 1,
+            amount: fakeDecimal as never,
+          })
+          .execute(),
+      ).toThrow(/expects string \| number; got an object/);
+
+      await session.insert(scope).values({
+        id: 1,
+        amount: "1.23000",
+      });
+
+      const rows = await session.select().from(scope);
+      expect(rows).toEqual([{ id: 1, amount: "1.23" }]);
+    });
+  });
 });

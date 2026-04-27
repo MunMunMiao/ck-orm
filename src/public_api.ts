@@ -131,6 +131,12 @@ type CsqlNamespace = {
           readonly as?: string;
         },
   ): SQLFragment;
+  /**
+   * See `sql.decimal` — wraps the expression in `CAST(... AS Decimal(P, S))`
+   * and decodes as `string` via `toStringValue`. Chain `.mapWith(...)` if you
+   * need a different decoded shape.
+   */
+  decimal(expression: unknown, precision: number, scale: number): SQLFragment<string>;
 };
 
 type ChTypeNamespace = {
@@ -237,6 +243,8 @@ const createCsqlNamespace = (): CsqlNamespace => {
 
   csqlFactory.join = (parts, separator = ", ") => sql.join(parts, separator);
   csqlFactory.identifier = (value) => sql.identifier(value);
+  csqlFactory.decimal = (expression: unknown, precision: number, scale: number) =>
+    sql.decimal(expression, precision, scale);
 
   return csqlFactory;
 };
