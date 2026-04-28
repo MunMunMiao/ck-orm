@@ -123,8 +123,8 @@ This matrix records the public API coverage contract. Runtime behavior rows poin
 | `fn.toDateTime` | `functions.e2e.test.ts` |
 | `fn.toDecimal32`, `fn.toDecimal64`, `fn.toDecimal128`, `fn.toDecimal256` | `builder-analytics.e2e.test.ts` |
 | `fn.toStartOfMonth` | `functions.e2e.test.ts`, `builder-analytics.e2e.test.ts` |
-| `fn.count` | `dataset-smoke.e2e.test.ts`, `functions.e2e.test.ts` |
-| `fn.countIf` | `functions.e2e.test.ts` |
+| `fn.count`, `fn.count().toUnsafe`, `fn.count().toSafe`, `fn.count().toMixed` | `dataset-smoke.e2e.test.ts`, `functions.e2e.test.ts` |
+| `fn.countIf`, `fn.countIf().toUnsafe`, `fn.countIf().toSafe`, `fn.countIf().toMixed` | `functions.e2e.test.ts` |
 | `fn.sum` | `functions.e2e.test.ts`, `builder-analytics.e2e.test.ts` |
 | `fn.sumIf` | `functions.e2e.test.ts` |
 | `fn.avg` | `functions.e2e.test.ts` |

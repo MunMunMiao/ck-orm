@@ -1123,8 +1123,7 @@ Generic, conversion, aggregate, JSON, tuple, and table-related helpers include:
 - `fn.toDateTime()`
 - `fn.toDecimal32()` / `fn.toDecimal64()` / `fn.toDecimal128()` / `fn.toDecimal256()`
 - `fn.toStartOfMonth()`
-- `fn.count()`
-- `fn.countIf()`
+- `fn.count()` / `fn.countIf()` — default `Selection<number>` wrapped as `toFloat64(count(...))`. Chain `.toSafe()` for `Selection<string>` (`toString(count(...))`), `.toMixed()` for `Selection<number | string>` (`toUInt64(count(...))`), or `.toUnsafe()` to revert to the default. Mirrors `db.count`. Decoders enforce non-negative integers and reject `NaN`, negatives, booleans, etc. — see [`fn.count` modes](#fncount-modes) for examples.
 - `fn.sum()` / `fn.sumIf()` / `fn.min()` / `fn.max()` — auto-cast to `Decimal(P, S)` for Decimal columns; see [Decimal precision in expressions](#decimal-precision-in-expressions)
 - `fn.avg()` — `Selection<number>` (Float64), matching ClickHouse's native `avg(Decimal)` behavior
 - `fn.uniqExact()`
@@ -1400,6 +1399,33 @@ const query = db
   .from(orderRewardLog)
   .where(ck.hasAny(orderRewardLog.tags, ["vip", "reward"]));
 ```
+
+### `fn.count` modes
+
+`fn.count()` and `fn.countIf(predicate)` are aggregate counterparts to `db.count(...)` and follow the same three modes — useful when the count appears mid-query (in `select`, `having`, group-bys, sub-queries) rather than as a top-level scalar. They share the same SQL wrappers and decoders, so the choice maps to the same trade-offs:
+
+```ts
+import { ck, fn } from "ck-orm";
+
+const summary = db
+  .select({
+    userId: orderRewardLog.user_id,
+    // default — Selection<number>, renders toFloat64(count(...))
+    orderCount: fn.count(orderRewardLog.order_id).as("order_count"),
+    // exact — Selection<string>, renders toString(count(...))
+    auditedOrderCount: fn.count(orderRewardLog.order_id).toSafe().as("audited_order_count"),
+    // wire-shape — Selection<number | string>, renders toUInt64(count(...))
+    rawOrderCount: fn.count(orderRewardLog.order_id).toMixed().as("raw_order_count"),
+    // countIf shares the same chainable modes
+    paidOrderCount: fn.countIf(ck.eq(orderRewardLog.status, 1)).as("paid_order_count"),
+  })
+  .from(orderRewardLog)
+  .groupBy(orderRewardLog.user_id)
+  // mode chooses the SQL semantics used in HAVING, ORDER BY, and other comparisons
+  .having(ck.gt(fn.count(orderRewardLog.order_id), 0));
+```
+
+The decoders reject anything that is not a non-negative integer — booleans, `NaN`, decimals, and negative numbers throw `Failed to decode count() result: ...` — so corrupt server output fails fast instead of silently producing `0`.
 
 ### `fn.table`
 

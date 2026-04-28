@@ -64,7 +64,7 @@ const summaryQuery = db
     month: monthlyMetrics.month,
     userId: monthlyMetrics.userId,
     groupId: monthlyMetrics.groupId,
-    itemCount: fn.count(monthlyMetrics.itemId).as("item_count"),
+    itemCount: fn.count(monthlyMetrics.itemId).toSafe().as("item_count"),
     uniqueItems: fn.uniqExact(monthlyMetrics.itemId).as("unique_items"),
     totalMetricValue: fn.sum(monthlyMetrics.metricValue).as("total_metric_value"),
     averageMetricValue: fn.avg(monthlyMetrics.metricValue).as("average_metric_value"),
@@ -72,7 +72,7 @@ const summaryQuery = db
   })
   .from(monthlyMetrics)
   .groupBy(monthlyMetrics.month, monthlyMetrics.userId, monthlyMetrics.groupId)
-  .having(ck.gt(fn.count(monthlyMetrics.itemId), "0"))
+  .having(ck.gt(fn.count(monthlyMetrics.itemId).toSafe(), "0"))
   .orderBy(ck.desc(monthlyMetrics.month), ck.asc(monthlyMetrics.userId))
   .limit(100)
   .offset(20);

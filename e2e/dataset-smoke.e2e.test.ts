@@ -19,13 +19,13 @@ describeE2E("ck-orm e2e dataset smoke", function describeDatasetSmoke() {
       .final()
       .where(ck.eq(rewardEvents._peerdb_is_deleted, 0));
 
-    expect(expectPresent(userCount, "userCount").total).toBe(String(datasetCounts.users));
-    expect(expectPresent(petCount, "petCount").total).toBe(String(datasetCounts.pets));
-    expect(expectPresent(eventCount, "eventCount").total).toBe(String(datasetCounts.webEvents));
-    expect(expectPresent(tradeCount, "tradeCount").total).toBe(String(datasetCounts.tradeFills));
-    expect(expectPresent(quoteCount, "quoteCount").total).toBe(String(datasetCounts.quoteSnapshots));
-    const physicalCdcTotal = Number(expectPresent(physicalCdcCount, "physicalCdcCount").total);
-    const logicalCdcTotal = Number(expectPresent(logicalCdcCount, "logicalCdcCount").total);
+    expect(expectPresent(userCount, "userCount").total).toBe(datasetCounts.users);
+    expect(expectPresent(petCount, "petCount").total).toBe(datasetCounts.pets);
+    expect(expectPresent(eventCount, "eventCount").total).toBe(datasetCounts.webEvents);
+    expect(expectPresent(tradeCount, "tradeCount").total).toBe(datasetCounts.tradeFills);
+    expect(expectPresent(quoteCount, "quoteCount").total).toBe(datasetCounts.quoteSnapshots);
+    const physicalCdcTotal = expectPresent(physicalCdcCount, "physicalCdcCount").total;
+    const logicalCdcTotal = expectPresent(logicalCdcCount, "logicalCdcCount").total;
     expect(physicalCdcTotal).toBeGreaterThan(logicalCdcTotal);
     expect(physicalCdcTotal).toBeLessThanOrEqual(datasetCounts.rewardEventsPhysicalRows);
     expect(logicalCdcTotal).toBe(19_000);

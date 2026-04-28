@@ -61,8 +61,8 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
       .from(webEvents);
 
     const presentAggregateRow = expectPresent(row, "aggregate row");
-    expect(presentAggregateRow.eventCount).toBe("100000");
-    expect(presentAggregateRow.usEventCount).toBe("25000");
+    expect(presentAggregateRow.eventCount).toBe(100000);
+    expect(presentAggregateRow.usEventCount).toBe(25000);
     expect(presentAggregateRow.totalRevenue).toMatch(/^\d+\.\d+$/);
     expect(presentAggregateRow.totalRevenueUs).toMatch(/^\d+\.\d+$/);
     expect(presentAggregateRow.avgRevenue).toBeGreaterThan(50_000);
@@ -88,6 +88,70 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
     expectDate(presentMonthRow.lastViewedAt);
     expectDate(presentMonthRow.month);
     expect(presentMonthRow.firstViewedAt.getTime()).toBeLessThan(presentMonthRow.lastViewedAt.getTime());
+  });
+
+  it("supports fn.count and fn.countIf chainable modes (toUnsafe/toSafe/toMixed)", async function testCountSelectionModes() {
+    const db = createE2EDb();
+
+    const [row] = await db
+      .select({
+        defaultEventCount: fn.count(webEvents.event_id).as("default_event_count"),
+        unsafeEventCount: fn.count(webEvents.event_id).toUnsafe().as("unsafe_event_count"),
+        safeEventCount: fn.count(webEvents.event_id).toSafe().as("safe_event_count"),
+        mixedEventCount: fn.count(webEvents.event_id).toMixed().as("mixed_event_count"),
+        defaultUsCount: fn.countIf(ck.eq(webEvents.country, "US")).as("default_us_count"),
+        safeUsCount: fn.countIf(ck.eq(webEvents.country, "US")).toSafe().as("safe_us_count"),
+        mixedUsCount: fn.countIf(ck.eq(webEvents.country, "US")).toMixed().as("mixed_us_count"),
+      })
+      .from(webEvents);
+
+    const presentRow = expectPresent(row, "count modes row");
+    // unsafe / default → number
+    expect(presentRow.defaultEventCount).toBe(100000);
+    expect(presentRow.unsafeEventCount).toBe(100000);
+    expect(presentRow.defaultUsCount).toBe(25000);
+    // safe → string
+    expect(presentRow.safeEventCount).toBe("100000");
+    expect(presentRow.safeUsCount).toBe("25000");
+    // mixed → string under default lossless 64-bit JSON settings
+    expect(presentRow.mixedEventCount).toBe("100000");
+    expect(presentRow.mixedUsCount).toBe("25000");
+
+    // The chosen mode controls the SQL semantics: count(...) used in HAVING with a numeric literal
+    // requires a numeric (default/unsafe) or string-castable variant. Default mode here pairs with
+    // groupBy-having to filter only groups that have rows.
+    const groupedRows = await db
+      .select({
+        country: webEvents.country,
+        eventCount: fn.count(webEvents.event_id).as("event_count"),
+      })
+      .from(webEvents)
+      .groupBy(webEvents.country)
+      .having(ck.gt(fn.count(webEvents.event_id), 1))
+      .orderBy(ck.desc(fn.count(webEvents.event_id)))
+      .limit(3);
+
+    expect(groupedRows.length).toBeGreaterThan(0);
+    for (const groupedRow of groupedRows) {
+      expect(typeof groupedRow.eventCount).toBe("number");
+      expect(groupedRow.eventCount).toBeGreaterThan(1);
+    }
+
+    // toSafe() embedded as a sub-expression keeps its String SQL semantics; comparing with a
+    // string literal works at the SQL level (lexicographic), so we instead route through Number()
+    // on the decoded result to confirm the safe-decoded shape.
+    const [safeAggregateRow] = await db
+      .select({
+        safeEventCount: fn.count(webEvents.event_id).toSafe().as("safe_event_count"),
+        mixedEventCount: fn.count(webEvents.event_id).toMixed().as("mixed_event_count"),
+      })
+      .from(webEvents)
+      .where(ck.eq(webEvents.country, "US"));
+
+    const presentSafeRow = expectPresent(safeAggregateRow, "safe aggregate row");
+    expect(presentSafeRow.safeEventCount).toBe("25000");
+    expect(presentSafeRow.mixedEventCount).toBe("25000");
+    expect(Number(presentSafeRow.safeEventCount)).toBe(25000);
   });
 
   it("supports fn.coalesce, fn.tuple, fn.arrayZip and fn.not", async function testCompositeFunctions() {

@@ -465,7 +465,7 @@ type _FunctionDataMatrix = Expect<
       readonly arraySimilarity: number;
       readonly arraySum: number;
       readonly arrayZip: unknown[];
-      readonly count: string;
+      readonly count: number;
       readonly emptyArrayDate: Date[];
       readonly emptyArrayFloat64: number[];
       readonly emptyArrayInt64: string[];

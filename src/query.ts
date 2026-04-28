@@ -1,5 +1,6 @@
 import type { AnyColumn } from "./columns";
 import { createClientValidationError, createInternalError } from "./errors";
+import { type CountMode, type CountModeResult, getCountDecoder, getCountSqlType, wrapCountSql } from "./internal/count";
 import { createUuid } from "./platform";
 import type { InferSelectionResult, NoJoinedSources, SelectionRecord } from "./query/types";
 import {
@@ -459,110 +460,8 @@ const normalizeLimitValue = (value: PrimitiveValue | Selection<unknown>, ctx: Bu
   return compileValue(value, ctx, "Int64");
 };
 
-type CountMode = "unsafe" | "safe" | "mixed";
-type CountModeResult<TMode extends CountMode> = TMode extends "safe"
-  ? string
-  : TMode extends "mixed"
-    ? number | string
-    : number;
-
-const COUNT_DECIMAL_PATTERN = /^(0|[1-9]\d*)$/;
-
-const createInvalidCountValueError = (value: unknown) =>
-  createClientValidationError(
-    `Failed to decode count() result: ${String(value)}. Expected a non-negative integer count value from ClickHouse.`,
-    { cause: value },
-  );
-
-const isNonNegativeIntegerNumber = (value: number): boolean => {
-  return Number.isFinite(value) && Number.isInteger(value) && value >= 0;
-};
-
-const countUnsafeDecoder: Decoder<number> = (value) => {
-  if (typeof value === "number" && isNonNegativeIntegerNumber(value)) {
-    return value;
-  }
-
-  if (typeof value === "bigint" && value >= 0n) {
-    const nextValue = Number(value);
-    if (isNonNegativeIntegerNumber(nextValue)) {
-      return nextValue;
-    }
-  }
-
-  if (typeof value === "string" && value.length > 0 && value.trim() === value) {
-    const nextValue = Number(value);
-    if (isNonNegativeIntegerNumber(nextValue)) {
-      return nextValue;
-    }
-  }
-
-  throw createInvalidCountValueError(value);
-};
-
-const countSafeDecoder: Decoder<string> = (value) => {
-  if (typeof value === "string" && COUNT_DECIMAL_PATTERN.test(value)) {
-    return value;
-  }
-
-  if (typeof value === "bigint" && value >= 0n) {
-    return value.toString();
-  }
-
-  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) {
-    return String(value);
-  }
-
-  throw createInvalidCountValueError(value);
-};
-
-const countMixedDecoder: Decoder<number | string> = (value) => {
-  if (typeof value === "string" && COUNT_DECIMAL_PATTERN.test(value)) {
-    return value;
-  }
-
-  if (typeof value === "number" && isNonNegativeIntegerNumber(value)) {
-    return value;
-  }
-
-  if (typeof value === "bigint" && value >= 0n) {
-    return value.toString();
-  }
-
-  throw createInvalidCountValueError(value);
-};
-
-const getCountSqlType = (mode: CountMode): string => {
-  switch (mode) {
-    case "safe":
-      return "String";
-    case "mixed":
-      return "UInt64";
-    case "unsafe":
-      return "Float64";
-  }
-};
-
-const getCountDecoder = <TMode extends CountMode>(mode: TMode): Decoder<CountModeResult<TMode>> => {
-  switch (mode) {
-    case "safe":
-      return countSafeDecoder as Decoder<CountModeResult<TMode>>;
-    case "mixed":
-      return countMixedDecoder as Decoder<CountModeResult<TMode>>;
-    case "unsafe":
-      return countUnsafeDecoder as Decoder<CountModeResult<TMode>>;
-  }
-};
-
 const renderCountExpression = (mode: CountMode): SQLFragment => {
-  switch (mode) {
-    case "safe":
-      return sql.raw("toString(count())");
-    case "mixed":
-      return sql.raw("toUInt64(count())");
-    case "unsafe":
-      return sql.raw("toFloat64(count())");
-  }
+  return wrapCountSql(sql.raw("count()"), mode);
 };
 
 const buildLogicalPredicate = (operator: "and" | "or", predicates: readonly SqlPredicate[]): SqlPredicate => {

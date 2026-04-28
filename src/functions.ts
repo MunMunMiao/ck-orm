@@ -6,6 +6,14 @@ import {
 } from "./coercion";
 import type { AnyColumn } from "./columns";
 import { createClientValidationError, createDecodeError } from "./errors";
+import {
+  type CountMode,
+  type CountModeResult,
+  type CountSqlType,
+  getCountDecoder,
+  getCountSqlType,
+  wrapCountSql,
+} from "./internal/count";
 import { type DecimalParams, parseDecimalSqlType } from "./internal/decimal";
 import { assertValidSqlIdentifier } from "./internal/identifier";
 import { createTableFunctionSource } from "./query";
@@ -20,7 +28,7 @@ import {
   passThroughDecoder,
   type Selection,
 } from "./query-shared";
-import { sql } from "./sql";
+import { type SQLFragment, sql } from "./sql";
 
 /* ── shared helpers ────────────────────────────────────────────── */
 
@@ -742,19 +750,42 @@ const scalarFns = {
 
 /* ── aggregate functions ───────────────────────────────────────── */
 
+export type CountSelection<TMode extends CountMode = "unsafe"> = Selection<CountModeResult<TMode>> & {
+  readonly sqlType: CountSqlType;
+  toSafe(): CountSelection<"safe">;
+  toUnsafe(): CountSelection<"unsafe">;
+  toMixed(): CountSelection<"mixed">;
+};
+
+const createCountSelection = <TMode extends CountMode>(
+  innerCall: (ctx: BuildContext) => SQLFragment,
+  mode: TMode,
+): CountSelection<TMode> => {
+  const expr = createExpression<CountModeResult<TMode>>({
+    compile: (ctx) => wrapCountSql(innerCall(ctx), mode),
+    decoder: getCountDecoder(mode),
+    sqlType: getCountSqlType(mode),
+  });
+  return Object.assign(expr, {
+    toSafe(): CountSelection<"safe"> {
+      return createCountSelection(innerCall, "safe");
+    },
+    toUnsafe(): CountSelection<"unsafe"> {
+      return createCountSelection(innerCall, "unsafe");
+    },
+    toMixed(): CountSelection<"mixed"> {
+      return createCountSelection(innerCall, "mixed");
+    },
+  }) as unknown as CountSelection<TMode>;
+};
+
 const aggregateFns = {
-  count(expression?: unknown): Selection<string> {
+  count(expression?: unknown): CountSelection {
     const args = expression === undefined ? [] : [expression];
-    return createFunctionExpression("count", args, {
-      decoder: stringDecoder,
-      sqlType: "UInt64",
-    });
+    return createCountSelection((ctx) => compileFunctionCall("count", args, ctx), "unsafe");
   },
-  countIf(condition: unknown): Selection<string> {
-    return createFunctionExpression("countIf", [condition], {
-      decoder: stringDecoder,
-      sqlType: "UInt64",
-    });
+  countIf(condition: unknown): CountSelection {
+    return createCountSelection((ctx) => compileFunctionCall("countIf", [condition], ctx), "unsafe");
   },
   sum(expression: unknown): Selection<number | string> {
     const decimalAware = buildDecimalAwareAggregate("sum", expression, { widenForSum: true });

@@ -54,7 +54,13 @@ const namespaceFlag: Selection<boolean> = ck.expr<boolean>(csql`1`, {
 const namespacePredicate: Predicate = ck.eq(users.id, 1);
 const namespacePredicateGroup: Predicate = ck.and(namespacePredicate, ck.eq(users.id, 2));
 const namespaceSortOrder: Order = ck.desc(namespaceFlag);
-const namespaceCount: Selection<string> = ck.fn.count();
+const namespaceCount: Selection<number> = ck.fn.count();
+const namespaceCountSafe: Selection<string> = ck.fn.count().toSafe();
+const namespaceCountMixed: Selection<number | string> = ck.fn.count().toMixed();
+const namespaceCountUnsafe: Selection<number> = ck.fn.count().toUnsafe();
+void namespaceCountSafe;
+void namespaceCountMixed;
+void namespaceCountUnsafe;
 const namespaceContains: Predicate = ck.contains(users.name, "user_100%");
 const namespaceStartsWith: Predicate = ck.startsWith(users.name, "arch_");
 const namespaceEndsWith: Predicate = ck.endsWith(users.name, "_done");

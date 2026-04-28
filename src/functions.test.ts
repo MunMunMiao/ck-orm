@@ -168,14 +168,37 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     });
 
     const countBuilt = compileExpression(fn.count());
-    expect(countBuilt.query).toContain("count()");
-    expect(fn.count().decoder(10)).toBe("10");
+    expect(countBuilt.query).toContain("toFloat64(count())");
+    expect(fn.count().decoder(10)).toBe(10);
+    expect(fn.count().decoder("10")).toBe(10);
+    expect(fn.count().decoder(1n)).toBe(1);
+    expect(() => fn.count().decoder(true)).toThrow("Failed to decode count() result");
+    expect(() => fn.count().decoder(-1)).toThrow("Failed to decode count() result");
+
+    const countSafeBuilt = compileExpression(fn.count().toSafe());
+    expect(countSafeBuilt.query).toContain("toString(count())");
+    expect(fn.count().toSafe().decoder("10")).toBe("10");
+    expect(fn.count().toSafe().decoder(1n)).toBe("1");
+
+    const countMixedBuilt = compileExpression(fn.count().toMixed());
+    expect(countMixedBuilt.query).toContain("toUInt64(count())");
+    expect(fn.count().toMixed().decoder("10")).toBe("10");
+    expect(fn.count().toMixed().decoder(10)).toBe(10);
+
+    const countUnsafeBuilt = compileExpression(fn.count().toMixed().toUnsafe());
+    expect(countUnsafeBuilt.query).toContain("toFloat64(count())");
 
     const countIfBuilt = compileExpression(fn.countIf(fn.not(int32().bind({ name: "id", tableName: "orders" }))));
-    expect(countIfBuilt.query).toContain("countIf(not(`orders`.`id`))");
+    expect(countIfBuilt.query).toContain("toFloat64(countIf(not(`orders`.`id`)))");
+    expect(fn.countIf(fn.not(int32())).decoder(9)).toBe(9);
+    const countIfSafeBuilt = compileExpression(
+      fn.countIf(fn.not(int32().bind({ name: "id", tableName: "orders" }))).toSafe(),
+    );
+    expect(countIfSafeBuilt.query).toContain("toString(countIf(not(`orders`.`id`)))");
+    expect(fn.countIf(fn.not(int32())).toSafe().decoder("9")).toBe("9");
 
     const countWithArg = compileExpression(fn.count(string().bind({ name: "name", tableName: "orders" })));
-    expect(countWithArg.query).toContain("count(`orders`.`name`)");
+    expect(countWithArg.query).toContain("toFloat64(count(`orders`.`name`))");
 
     const minBuilt = compileExpression(fn.min(int32().bind({ name: "id", tableName: "orders" })));
     expect(minBuilt.query).toContain("min(`orders`.`id`)");
@@ -435,7 +458,7 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     expect(fn.sum(int32()).decoder(12)).toBe("12");
     expect(fn.sum(int32()).decoder(7n)).toBe("7");
     expect(fn.sumIf(float64(), fn.not(fn.count())).decoder(7n)).toBe(7);
-    expect(fn.countIf(fn.not(int32())).decoder(9)).toBe("9");
+    expect(fn.countIf(fn.not(int32())).decoder(9)).toBe(9);
     expect(fn.avg(int32()).decoder("4.5")).toBe(4.5);
     expect(fn.min(int32()).decoder("8")).toBe(8);
     expect(fn.max(string()).decoder(1n)).toBe("1");
@@ -443,8 +466,8 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     expect(fn.min(dateTime()).decoder(aggregateDate)).toBe(aggregateDate);
     expect(fn.max(dateTime()).decoder("2026-04-21T00:00:00.000Z")).toEqual(new Date("2026-04-21T00:00:00.000Z"));
     expect(fn.uniqExact(int32()).decoder(5)).toBe("5");
-    expect(fn.count().decoder(true)).toBe("true");
-    expect(fn.count().decoder(1n)).toBe("1");
+    expect(() => fn.count().decoder(true)).toThrow("Failed to decode count() result");
+    expect(fn.count().decoder(1n)).toBe(1);
     expect(fn.toString(int32()).decoder(1n)).toBe("1");
     expect(fn.toString(int32()).decoder(false)).toBe("false");
     expect(fn.avg(int32()).decoder(9n)).toBe(9);
@@ -607,6 +630,77 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     });
     expect(compileSql(sql`${fn.avg(lowCardAmount).compile(createContext())}`).query).toBe("avg(`ledger`.`fee`)");
     expect(fn.avg(lowCardAmount).sqlType).toBe("Float64");
+  });
+
+  it("fn.count and fn.countIf expose three chainable count modes", function testCountModes() {
+    const defaultCount = fn.count();
+    expect(defaultCount.sqlType).toBe("Float64");
+    expect(compileExpression(defaultCount).query).toContain("toFloat64(count())");
+
+    const safeCount = fn.count().toSafe();
+    expect(safeCount.sqlType).toBe("String");
+    expect(compileExpression(safeCount).query).toContain("toString(count())");
+
+    const mixedCount = fn.count().toMixed();
+    expect(mixedCount.sqlType).toBe("UInt64");
+    expect(compileExpression(mixedCount).query).toContain("toUInt64(count())");
+
+    // Mode switches are independent — switching from one mode to another must keep the inner SQL.
+    const flippedToSafe = fn
+      .count(int32().bind({ name: "id", tableName: "orders" }))
+      .toMixed()
+      .toSafe();
+    expect(flippedToSafe.sqlType).toBe("String");
+    expect(compileExpression(flippedToSafe).query).toContain("toString(count(`orders`.`id`))");
+
+    const flippedToUnsafe = fn.count().toSafe().toUnsafe();
+    expect(flippedToUnsafe.sqlType).toBe("Float64");
+    expect(compileExpression(flippedToUnsafe).query).toContain("toFloat64(count())");
+
+    // Decoder semantics per mode.
+    expect(fn.count().decoder(0)).toBe(0);
+    expect(fn.count().decoder("9007199254740991")).toBe(9007199254740991);
+    expect(fn.count().decoder(42n)).toBe(42);
+    expect(() => fn.count().decoder(Number.NaN)).toThrow("Failed to decode count() result");
+    expect(() => fn.count().decoder(1.5)).toThrow("Failed to decode count() result");
+    expect(() => fn.count().decoder(-1)).toThrow("Failed to decode count() result");
+    expect(() => fn.count().decoder(true)).toThrow("Failed to decode count() result");
+    expect(() => fn.count().decoder(" 7 ")).toThrow("Failed to decode count() result");
+
+    expect(fn.count().toSafe().decoder("0")).toBe("0");
+    expect(fn.count().toSafe().decoder(99n)).toBe("99");
+    expect(fn.count().toSafe().decoder(7)).toBe("7");
+    expect(() => fn.count().toSafe().decoder(-1n)).toThrow("Failed to decode count() result");
+    expect(() => fn.count().toSafe().decoder("1.0")).toThrow("Failed to decode count() result");
+    expect(() => fn.count().toSafe().decoder(Number.NaN)).toThrow("Failed to decode count() result");
+
+    expect(fn.count().toMixed().decoder("100")).toBe("100");
+    expect(fn.count().toMixed().decoder(100)).toBe(100);
+    expect(fn.count().toMixed().decoder(7n)).toBe("7");
+    expect(() => fn.count().toMixed().decoder(true)).toThrow("Failed to decode count() result");
+    expect(() => fn.count().toMixed().decoder(-2)).toThrow("Failed to decode count() result");
+
+    // countIf preserves the predicate body inside every wrapper.
+    const condition = fn.not(int32().bind({ name: "id", tableName: "orders" }));
+    expect(compileExpression(fn.countIf(condition)).query).toContain("toFloat64(countIf(not(`orders`.`id`)))");
+    expect(compileExpression(fn.countIf(condition).toSafe()).query).toContain("toString(countIf(not(`orders`.`id`)))");
+    expect(compileExpression(fn.countIf(condition).toMixed()).query).toContain("toUInt64(countIf(not(`orders`.`id`)))");
+    expect(fn.countIf(condition).decoder(3)).toBe(3);
+    expect(fn.countIf(condition).toSafe().decoder("3")).toBe("3");
+    expect(fn.countIf(condition).toMixed().decoder("3")).toBe("3");
+
+    // The same selection is reusable as a SQL operand inside other expressions (e.g. HAVING).
+    const composed = fn.count();
+    const composedQuery = compileExpression({
+      compile: (ctx) => sql`${composed.compile(ctx)} > {orm_paramN:Int64}`,
+    }).query;
+    expect(composedQuery).toContain("toFloat64(count()) > {orm_paramN:Int64}");
+
+    // .as() preserves chosen mode and decoder.
+    const aliased = fn.count().toMixed().as("total");
+    const aliasedBuilt = compileExpression(aliased);
+    expect(aliasedBuilt.query).toContain("toUInt64(count())");
+    expect(aliased.decoder("4")).toBe("4");
   });
 
   it("compiles table functions with and without alias", function testTableFunctions() {
