@@ -171,11 +171,25 @@ describe("ck-orm observability", function describeClickHouseORMObservability() {
       queryKind: "typed",
       statement: "select * from users",
       operation: "SELECT",
+      databaseName: "demo_store",
+      serverAddress: "localhost",
+      serverPort: 8123,
+      requestTimeoutMs: 30_000,
+      queryId: "query_1",
+      tableName: "users",
       startedAt: 100,
     });
 
     await instrumentation.onQueryStart?.(event);
-    await instrumentation.onQuerySuccess?.(createQuerySuccessEvent(event, 8, 1));
+    await instrumentation.onQuerySuccess?.(
+      createQuerySuccessEvent(event, 8, 1, {
+        serverElapsedMs: 2,
+        readRows: 10,
+        readBytes: 128,
+        resultRows: 1,
+        rowsBeforeLimitAtLeast: 20,
+      }),
+    );
 
     expect(tracer.spans).toHaveLength(1);
     expect(tracer.spans[0]).toMatchObject({
@@ -183,12 +197,28 @@ describe("ck-orm observability", function describeClickHouseORMObservability() {
       ended: true,
       attributes: expect.objectContaining({
         "db.system": "clickhouse",
+        "db.system.name": "clickhouse",
         "db.operation": "SELECT",
+        "db.operation.name": "SELECT",
+        "db.namespace": "demo_store",
+        "db.name": "demo_store",
+        "db.collection.name": "users",
+        "db.query.summary": "SELECT users",
+        "db.response.returned_rows": 1,
         "db.response.row_count": 1,
+        "server.address": "localhost",
+        "server.port": 8123,
+        "ck_orm.query_id": "query_1",
+        "ck_orm.statement.hash": hashStatement("select * from users"),
+        "ck_orm.server.elapsed_ms": 2,
+        "ck_orm.read.rows": 10,
+        "ck_orm.read.bytes": 128,
+        "ck_orm.rows_before_limit_at_least": 20,
         scope: "custom",
       }),
     });
     expect(tracer.spans[0]?.attributes["db.statement"]).toBeUndefined();
+    expect(tracer.spans[0]?.attributes["db.query.text"]).toBeUndefined();
 
     const streamEvent = createQueryEvent({
       mode: "stream",
@@ -255,6 +285,91 @@ describe("ck-orm observability", function describeClickHouseORMObservability() {
     });
 
     expect(order).toEqual(["start:a", "start:b", "success:b", "success:a", "start:a", "start:b", "error:b", "error:a"]);
+  });
+
+  it("derives database and server fields from both structured config and databaseUrl", async function testRuntimeEventContext() {
+    const events: Array<{
+      databaseName?: string;
+      serverAddress?: string;
+      serverPort?: number;
+      requestTimeoutMs?: number;
+      querySummary?: string;
+      statementHash?: string;
+      readRows?: number;
+      readBytes?: number;
+      resultRows?: number;
+      tableName?: string;
+    }> = [];
+
+    globalThis.fetch = mock(async () => {
+      return new Response(
+        JSON.stringify({
+          data: [{ id: 1, name: "alice" }],
+          rows: 1,
+          rows_before_limit_at_least: 4,
+          statistics: {
+            elapsed: 0.002,
+            rows_read: 4,
+            bytes_read: 128,
+          },
+        }),
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch;
+
+    const instrumentation: ClickHouseORMInstrumentation = {
+      onQuerySuccess(event) {
+        events.push({
+          databaseName: event.databaseName,
+          serverAddress: event.serverAddress,
+          serverPort: event.serverPort,
+          requestTimeoutMs: event.requestTimeoutMs,
+          querySummary: event.querySummary,
+          statementHash: event.statementHash,
+          readRows: event.readRows,
+          readBytes: event.readBytes,
+          resultRows: event.resultRows,
+          tableName: event.tableName,
+        });
+      },
+    };
+
+    const structuredDb = clickhouseClient({
+      host: "http://clickhouse.local:8123",
+      database: "structured_db",
+      schema: { users },
+      request_timeout: 12_000,
+      instrumentation: [instrumentation],
+    });
+    const urlDb = clickhouseClient({
+      databaseUrl: "https://default:secret@clickhouse.example/url_db",
+      schema: { users },
+      instrumentation: [instrumentation],
+    });
+
+    await structuredDb.select().from(users).execute();
+    await urlDb.execute(sql`select 1 as id`);
+
+    expect(events[0]).toMatchObject({
+      databaseName: "structured_db",
+      serverAddress: "clickhouse.local",
+      serverPort: 8123,
+      requestTimeoutMs: 12_000,
+      querySummary: "SELECT users",
+      readRows: 4,
+      readBytes: 128,
+      resultRows: 1,
+      tableName: "users",
+    });
+    expect(events[0]?.statementHash).toBeDefined();
+    expect(events[1]).toMatchObject({
+      databaseName: "url_db",
+      serverAddress: "clickhouse.example",
+      serverPort: 443,
+      requestTimeoutMs: 30_000,
+      querySummary: "SELECT",
+      tableName: undefined,
+    });
   });
 
   it("records system endpoint helpers through logger, tracing and instrumentation", async function testSystemEndpointObservability() {
@@ -357,7 +472,9 @@ describe("ck-orm observability", function describeClickHouseORMObservability() {
 
     expect(traced.spans[0]?.attributes["db.response.format"]).toBe("JSONEachRow");
     expect(traced.spans[0]?.attributes["db.response.row_count"]).toBe(2);
+    expect(traced.spans[0]?.attributes["db.response.returned_rows"]).toBe(2);
     expect(traced.spans[1]?.exceptions).toEqual([boom]);
+    expect(traced.spans[1]?.attributes["error.type"]).toBe("Error");
     expect(traced.spans[1]?.attributes["db.response.row_count"]).toBe(3);
 
     const noCountTracer = createCapturedTracer();
@@ -368,6 +485,7 @@ describe("ck-orm observability", function describeClickHouseORMObservability() {
     await noCountInstrumentation.onQueryStart?.(baseEvent);
     await noCountInstrumentation.onQuerySuccess?.(createQuerySuccessEvent(baseEvent, 7, 4));
     expect(noCountTracer.spans[0]?.attributes["db.response.row_count"]).toBeUndefined();
+    expect(noCountTracer.spans[0]?.attributes["db.response.returned_rows"]).toBeUndefined();
 
     expect(resolveSqlOperation("/* lead */ with scoped as (select 1) insert into sink select 1")).toBe("INSERT");
     expect(resolveSqlOperation("with scoped as (select 1)")).toBe("QUERY");

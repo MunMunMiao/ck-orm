@@ -1751,12 +1751,13 @@ const db = clickhouseClient({
   schema: commerceSchema,
   tracing: {
     tracer: trace.getTracer("ck-orm-example"),
-    dbName: "demo_store",
     includeStatement: false,
     includeRowCount: true,
   },
 });
 ```
+
+Tracing derives the database name, server address, server port, and request timeout from the `clickhouseClient(...)` configuration. Pass service-level labels through `tracing.attributes`; keys starting with `db.` are ignored so application code cannot overwrite built-in database attributes.
 
 `includeStatement: false` is the safer setting for shared tracing backends. The library default is `true`; turn it off when table names, column names, or query shape should not leave the service boundary. Bound values are not embedded in the compacted statement, but SQL shape can still be operationally sensitive.
 
@@ -1789,8 +1790,11 @@ Public event types:
 - `ClickHouseORMQueryEvent`
 - `ClickHouseORMQueryResultEvent`
 - `ClickHouseORMQueryErrorEvent`
+- `ClickHouseORMQueryStatistics`
 - `ClickHouseORMTracingOptions`
 - `ClickHouseORMLogLevel`
+
+Built-in event fields include `databaseName`, `serverAddress`, `serverPort`, `requestTimeoutMs`, `statementHash`, `querySummary`, `queryId`, `sessionId`, and `tableName` when ck-orm can identify one table without guessing from raw SQL. Eager JSON queries also include ClickHouse response statistics when the server returns them: `serverElapsedMs`, `readRows`, `readBytes`, `resultRows`, and `rowsBeforeLimitAtLeast`.
 
 ## Error model
 
@@ -1889,9 +1893,9 @@ The built-in protections include:
 
 ### Tracing data exposure
 
-`tracing.includeStatement` defaults to `true`, so compacted SQL text is attached to spans as `db.statement`.
+`tracing.includeStatement` defaults to `true`, so compacted SQL text is attached to spans as `db.statement` and `db.query.text`.
 
-Bound values are stored separately as ClickHouse named parameters and are not included in the statement text, but table names, column names, and query shape still appear in tracing output. If your trace backend is shared or off-host, disable `includeStatement` or filter `db.statement` in your collector.
+Bound values are stored separately as ClickHouse named parameters and are not included in the statement text, but table names, column names, and query shape still appear in tracing output. If your trace backend is shared or off-host, disable `includeStatement` or filter `db.statement` / `db.query.text` in your collector.
 
 ### Error responses
 

@@ -47,7 +47,6 @@ export const createInstrumentedCommerceDb = () => {
     instrumentation: [instrumentation],
     tracing: {
       tracer: trace.getTracer("ck-orm-examples"),
-      dbName: "demo_store",
       includeStatement: false,
       includeRowCount: true,
     },

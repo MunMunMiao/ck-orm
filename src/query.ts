@@ -172,6 +172,7 @@ interface JoinClause {
 
 export interface CompiledQueryMetadata {
   readonly rootSourceName?: string;
+  readonly tableName?: string;
   readonly joinCount?: number;
   readonly tags?: ReadonlyArray<string>;
 }
@@ -478,6 +479,13 @@ const getSourceKey = (source: QuerySource): string | undefined => {
   }
 };
 
+const getSingleTableName = (source: QuerySource | undefined, joins: readonly JoinClause[] = []): string | undefined => {
+  if (!source || joins.length > 0 || source.kind !== "table") {
+    return undefined;
+  }
+  return source.originalName;
+};
+
 const renderSelection = (selectionItems: readonly SelectionItem[], ctx: BuildContext) => {
   const selectionParts = selectionItems.map((item) => {
     return sql`${item.expression.compile(ctx)}${sql.raw(" as ")}${sql.identifier(item.sqlAlias)}`;
@@ -675,6 +683,9 @@ const createCountQuery = <TMode extends CountMode = "unsafe">(config: {
           "query",
           compiledResult.params,
           forcedSettings,
+          config.source.kind === "table"
+            ? { rootSourceName: getSourceKey(config.source), tableName: config.source.originalName }
+            : undefined,
         ),
         options,
       )
@@ -1253,6 +1264,7 @@ export const createSelectBuilder = <
         const metadata: CompiledQueryMetadata | undefined = state.fromSource
           ? {
               rootSourceName: getSourceKey(state.fromSource),
+              tableName: getSingleTableName(state.fromSource, state.joins),
               joinCount: state.joins.length,
             }
           : state.joins.length > 0
@@ -1386,9 +1398,19 @@ export const createInsertBuilder = <TTable extends AnyTable>(
       )}) values ${joinSqlParts(valueRows, ", ")}`;
       const compiled = compileSql(statement, ctx);
 
-      return createCompiledQuery(compiled.query, [], "command", {
-        ...compiled.params,
-      });
+      return createCompiledQuery(
+        compiled.query,
+        [],
+        "command",
+        {
+          ...compiled.params,
+        },
+        undefined,
+        {
+          rootSourceName: table.originalName,
+          tableName: table.originalName,
+        },
+      );
     },
   } as InsertBuilder<TTable>;
 

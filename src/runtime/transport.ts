@@ -1,4 +1,5 @@
 import { createClientValidationError, normalizeTransportError } from "../errors";
+import type { ClickHouseORMQueryStatistics } from "../observability";
 import { createUuid } from "../platform";
 import { compileSql, sql } from "../sql";
 import { createAbortController } from "./abort";
@@ -27,15 +28,22 @@ import {
   validateFormat,
 } from "./config";
 import {
+  type ClickHouseJsonResponse,
   createJsonEachRowBody,
   createLineStream,
+  extractClickHouseJsonStatistics,
   parseJsonEachRowLine,
   parseValidatedResponseJson,
   readValidatedResponseText,
 } from "./json-stream";
 
+export type ClickHouseJSONResult<T> = {
+  readonly rows: T[];
+  readonly statistics?: ClickHouseORMQueryStatistics;
+};
+
 export interface FetchClickHouseTransport {
-  queryJSON<T = Record<string, unknown>>(input: TransportQueryInput): Promise<T[]>;
+  queryJSON<T = Record<string, unknown>>(input: TransportQueryInput): Promise<ClickHouseJSONResult<T>>;
   queryStream<T = Record<string, unknown>>(input: TransportQueryInput): AsyncGenerator<T, void, unknown>;
   command(
     statement: string,
@@ -176,7 +184,7 @@ export const createFetchClickHouseTransport = (config: NormalizedClientConfig): 
   };
 
   const transport: FetchClickHouseTransport = {
-    async queryJSON<T = Record<string, unknown>>(input: TransportQueryInput): Promise<T[]> {
+    async queryJSON<T = Record<string, unknown>>(input: TransportQueryInput): Promise<ClickHouseJSONResult<T>> {
       const format = input.format ?? "JSON";
       validateFormat("query", format);
       const request = await send({
@@ -188,14 +196,18 @@ export const createFetchClickHouseTransport = (config: NormalizedClientConfig): 
         sendQueryInBody: true,
       });
       try {
-        const result = await parseValidatedResponseJson<{ data?: T[] }>({
+        const result = await parseValidatedResponseJson<ClickHouseJsonResponse<T>>({
           response: request.response,
           queryId: request.queryId,
           sessionId: request.options.session_id,
           json: config.json,
           ignoreErrorResponse: request.options.ignore_error_response ?? false,
         });
-        return result.data ?? [];
+        const statistics = extractClickHouseJsonStatistics(result);
+        return {
+          rows: result.data ?? [],
+          ...(statistics === undefined ? {} : { statistics }),
+        };
       } finally {
         request.finalize();
       }

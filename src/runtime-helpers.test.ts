@@ -15,6 +15,7 @@ import {
 import {
   createJsonEachRowBody,
   createLineStream,
+  extractClickHouseJsonStatistics,
   parseJsonEachRowLine,
   parseValidatedResponseJson,
   readValidatedResponseText,
@@ -200,6 +201,28 @@ describe("ck-orm runtime/json-stream", function describeJsonStream() {
         ignoreErrorResponse: false,
       }),
     );
+  });
+
+  it("extracts ClickHouse JSON response statistics without requiring query_log", function testJsonStatistics() {
+    expect(
+      extractClickHouseJsonStatistics({
+        data: [{ id: 1 }],
+        rows: "1",
+        rows_before_limit_at_least: 10,
+        statistics: {
+          elapsed: 0.0015,
+          rows_read: "20",
+          bytes_read: 512,
+        },
+      }),
+    ).toEqual({
+      serverElapsedMs: 1.5,
+      readRows: 20,
+      readBytes: 512,
+      resultRows: 1,
+      rowsBeforeLimitAtLeast: 10,
+    });
+    expect(extractClickHouseJsonStatistics({ data: [] })).toBeUndefined();
   });
 
   it("rejects ClickHouse exception lines and malformed lines in parseJsonEachRowLine", function testParseLineFailures() {

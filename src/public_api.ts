@@ -203,6 +203,7 @@ export type {
   ClickHouseORMQueryErrorEvent,
   ClickHouseORMQueryEvent,
   ClickHouseORMQueryResultEvent,
+  ClickHouseORMQueryStatistics,
   ClickHouseORMTracingOptions,
 } from "./observability";
 export type { CompiledQuery, CompiledQueryMetadata } from "./query";

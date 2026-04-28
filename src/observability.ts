@@ -1,4 +1,5 @@
 import { type Span, SpanKind, SpanStatusCode, type Tracer, trace } from "@opentelemetry/api";
+import { isClickHouseORMError } from "./errors";
 import { createUuid, hashString } from "./platform";
 
 export type ClickHouseORMLogLevel = "trace" | "debug" | "info" | "warn" | "error";
@@ -18,7 +19,14 @@ export interface ClickHouseORMTracingOptions {
   readonly attributes?: Record<string, string | number | boolean>;
   readonly includeStatement?: boolean;
   readonly includeRowCount?: boolean;
-  readonly dbName?: string;
+}
+
+export interface ClickHouseORMQueryStatistics {
+  readonly serverElapsedMs?: number;
+  readonly readRows?: number;
+  readonly readBytes?: number;
+  readonly resultRows?: number;
+  readonly rowsBeforeLimitAtLeast?: number;
 }
 
 export interface ClickHouseORMQueryEvent {
@@ -27,7 +35,13 @@ export interface ClickHouseORMQueryEvent {
   readonly mode: ClickHouseORMQueryMode;
   readonly queryKind: ClickHouseORMQueryKind;
   readonly statement: string;
+  readonly statementHash: string;
+  readonly querySummary: string;
   readonly operation: string;
+  readonly databaseName?: string;
+  readonly serverAddress?: string;
+  readonly serverPort?: number;
+  readonly requestTimeoutMs?: number;
   /** ClickHouse-assigned (or caller-overridden) query id. Filled when the request actually reaches the server; absent for purely client-side validation failures. */
   readonly queryId?: string;
   /** Set whenever the request runs inside a `runInSession()` block; otherwise undefined. */
@@ -45,6 +59,11 @@ export interface ClickHouseORMQueryResultEvent extends ClickHouseORMQueryEvent {
   readonly durationMs: number;
   /** Number of rows produced by the query / yielded by the stream. Undefined for command and insert modes. */
   readonly rowCount?: number;
+  readonly serverElapsedMs?: number;
+  readonly readRows?: number;
+  readonly readBytes?: number;
+  readonly resultRows?: number;
+  readonly rowsBeforeLimitAtLeast?: number;
 }
 
 export interface ClickHouseORMQueryErrorEvent extends ClickHouseORMQueryEvent {
@@ -86,11 +105,13 @@ export const resolveSafeClickHouseDestination = (url: string | undefined): strin
 };
 
 export const createQueryEvent = (
-  event: Omit<ClickHouseORMQueryEvent, "executionId" | "system">,
+  event: Omit<ClickHouseORMQueryEvent, "executionId" | "system" | "statementHash" | "querySummary">,
 ): ClickHouseORMQueryEvent => {
   return {
     executionId: createUuid(),
     system: "clickhouse",
+    statementHash: hashStatement(event.statement),
+    querySummary: buildQuerySummary(event.operation, event.tableName),
     ...event,
   };
 };
@@ -99,11 +120,19 @@ export const createQuerySuccessEvent = (
   event: ClickHouseORMQueryEvent,
   durationMs: number,
   rowCount?: number,
+  statistics?: ClickHouseORMQueryStatistics,
 ): ClickHouseORMQueryResultEvent => {
   return {
     ...event,
     durationMs,
     ...(rowCount === undefined ? {} : { rowCount }),
+    ...(statistics?.serverElapsedMs === undefined ? {} : { serverElapsedMs: statistics.serverElapsedMs }),
+    ...(statistics?.readRows === undefined ? {} : { readRows: statistics.readRows }),
+    ...(statistics?.readBytes === undefined ? {} : { readBytes: statistics.readBytes }),
+    ...(statistics?.resultRows === undefined ? {} : { resultRows: statistics.resultRows }),
+    ...(statistics?.rowsBeforeLimitAtLeast === undefined
+      ? {}
+      : { rowsBeforeLimitAtLeast: statistics.rowsBeforeLimitAtLeast }),
   };
 };
 
@@ -204,6 +233,11 @@ export const createLoggerInstrumentation = (
         durationMs: event.durationMs,
         outcome: "success",
         rowCount: event.rowCount,
+        serverElapsedMs: event.serverElapsedMs,
+        readRows: event.readRows,
+        readBytes: event.readBytes,
+        resultRows: event.resultRows,
+        rowsBeforeLimitAtLeast: event.rowsBeforeLimitAtLeast,
       });
     },
     onQueryError(event) {
@@ -212,6 +246,11 @@ export const createLoggerInstrumentation = (
         durationMs: event.durationMs,
         outcome: "error",
         rowCount: event.rowCount,
+        errorKind: isClickHouseORMError(event.error) ? event.error.kind : undefined,
+        executionState: isClickHouseORMError(event.error) ? event.error.executionState : undefined,
+        httpStatus: isClickHouseORMError(event.error) ? event.error.httpStatus : undefined,
+        clickhouseCode: isClickHouseORMError(event.error) ? event.error.clickhouseCode : undefined,
+        clickhouseName: isClickHouseORMError(event.error) ? event.error.clickhouseName : undefined,
         error: event.error,
       });
     },
@@ -222,7 +261,6 @@ export const createTracingInstrumentation = (
   options: ClickHouseORMTracingOptions = {},
 ): ClickHouseORMInstrumentation => {
   const tracer = options.tracer ?? trace.getTracer("ck-orm");
-  const dbName = options.dbName;
   const includeStatement = options.includeStatement ?? true;
   const spanByExecutionId = new Map<string, Span>();
 
@@ -232,7 +270,6 @@ export const createTracingInstrumentation = (
         kind: SpanKind.CLIENT,
         attributes: buildSpanAttributes(event, {
           attributes: options.attributes,
-          dbName,
           includeStatement,
         }),
       });
@@ -249,8 +286,15 @@ export const createTracingInstrumentation = (
       }
       if (shouldIncludeRowCount(options.includeRowCount, event.mode) && typeof event.rowCount === "number") {
         span.setAttribute("db.response.row_count", event.rowCount);
+        span.setAttribute("db.response.returned_rows", event.rowCount);
       }
+      setOptionalNumberAttribute(span, "ck_orm.server.elapsed_ms", event.serverElapsedMs);
+      setOptionalNumberAttribute(span, "ck_orm.read.rows", event.readRows);
+      setOptionalNumberAttribute(span, "ck_orm.read.bytes", event.readBytes);
+      setOptionalNumberAttribute(span, "ck_orm.result.rows", event.resultRows);
+      setOptionalNumberAttribute(span, "ck_orm.rows_before_limit_at_least", event.rowsBeforeLimitAtLeast);
       span.setAttribute("db.query.duration_ms", event.durationMs);
+      span.setAttribute("ck_orm.duration_ms", event.durationMs);
       span.setStatus({ code: SpanStatusCode.OK });
       span.end();
     },
@@ -265,8 +309,11 @@ export const createTracingInstrumentation = (
       }
       if (shouldIncludeRowCount(options.includeRowCount, event.mode) && typeof event.rowCount === "number") {
         span.setAttribute("db.response.row_count", event.rowCount);
+        span.setAttribute("db.response.returned_rows", event.rowCount);
       }
+      setErrorAttributes(span, event.error);
       span.setAttribute("db.query.duration_ms", event.durationMs);
+      span.setAttribute("ck_orm.duration_ms", event.durationMs);
       span.recordException(toSpanException(event.error));
       span.setStatus({
         code: SpanStatusCode.ERROR,
@@ -292,6 +339,28 @@ const toSpanException = (error: unknown): Error | string => {
   return String(error);
 };
 
+const setOptionalNumberAttribute = (span: Span, key: string, value: number | undefined) => {
+  if (typeof value === "number") {
+    span.setAttribute(key, value);
+  }
+};
+
+const setErrorAttributes = (span: Span, error: unknown) => {
+  if (!isClickHouseORMError(error)) {
+    span.setAttribute("error.type", error instanceof Error ? error.name : typeof error);
+    return;
+  }
+
+  span.setAttribute("error.type", error.clickhouseName ?? error.kind);
+  span.setAttribute("ck_orm.error.kind", error.kind);
+  span.setAttribute("ck_orm.execution_state", error.executionState);
+  if (typeof error.clickhouseCode === "number") {
+    span.setAttribute("db.response.status_code", String(error.clickhouseCode));
+  } else if (typeof error.httpStatus === "number") {
+    span.setAttribute("db.response.status_code", String(error.httpStatus));
+  }
+};
+
 const buildBaseLogFields = (event: ClickHouseORMQueryEvent) => {
   return {
     executionId: event.executionId,
@@ -300,8 +369,13 @@ const buildBaseLogFields = (event: ClickHouseORMQueryEvent) => {
     mode: event.mode,
     queryKind: event.queryKind,
     operation: event.operation,
+    databaseName: event.databaseName,
+    serverAddress: event.serverAddress,
+    serverPort: event.serverPort,
+    requestTimeoutMs: event.requestTimeoutMs,
     statement: event.statement,
-    statementHash: hashStatement(event.statement),
+    statementHash: event.statementHash,
+    querySummary: event.querySummary,
     queryId: event.queryId,
     sessionId: event.sessionId,
     format: event.format,
@@ -315,30 +389,47 @@ const buildSpanAttributes = (
   event: ClickHouseORMQueryEvent,
   options: {
     attributes?: Record<string, string | number | boolean>;
-    dbName?: string;
     includeStatement: boolean;
   },
 ) => {
   const customAttributes = filterCustomTracingAttributes(options.attributes);
   const attributes: Record<string, string | number | boolean> = {
+    ...customAttributes,
     "db.system": "clickhouse",
+    "db.system.name": "clickhouse",
     "db.operation": event.operation,
+    "db.operation.name": event.operation,
+    "db.query.summary": event.querySummary,
     "db.query.kind": event.queryKind,
     "db.query.mode": event.mode,
-    "db.statement.hash": hashStatement(event.statement),
-    ...(options.dbName === undefined ? {} : { "db.name": options.dbName }),
+    "db.statement.hash": event.statementHash,
+    "ck_orm.execution_id": event.executionId,
+    "ck_orm.query.kind": event.queryKind,
+    "ck_orm.query.mode": event.mode,
+    "ck_orm.statement.hash": event.statementHash,
+    ...(event.databaseName === undefined ? {} : { "db.name": event.databaseName, "db.namespace": event.databaseName }),
     ...(event.queryId === undefined ? {} : { "db.query.id": event.queryId }),
+    ...(event.queryId === undefined ? {} : { "ck_orm.query_id": event.queryId }),
     ...(event.sessionId === undefined ? {} : { "db.session.id": event.sessionId }),
-    ...(event.tableName === undefined ? {} : { "db.table": event.tableName }),
+    ...(event.sessionId === undefined ? {} : { "ck_orm.session_id": event.sessionId }),
+    ...(event.tableName === undefined ? {} : { "db.table": event.tableName, "db.collection.name": event.tableName }),
     ...(event.format === undefined ? {} : { "db.response.format": event.format }),
-    ...customAttributes,
+    ...(event.format === undefined ? {} : { "ck_orm.format": event.format }),
+    ...(event.serverAddress === undefined ? {} : { "server.address": event.serverAddress }),
+    ...(event.serverPort === undefined ? {} : { "server.port": event.serverPort }),
+    ...(event.requestTimeoutMs === undefined ? {} : { "ck_orm.request_timeout_ms": event.requestTimeoutMs }),
   };
 
   if (options.includeStatement) {
     attributes["db.statement"] = compactStatement(event.statement);
+    attributes["db.query.text"] = compactStatement(event.statement);
   }
 
   return attributes;
+};
+
+const buildQuerySummary = (operation: string, tableName: string | undefined): string => {
+  return tableName ? `${operation} ${tableName}` : operation;
 };
 
 const filterCustomTracingAttributes = (attributes: Record<string, string | number | boolean> | undefined) => {

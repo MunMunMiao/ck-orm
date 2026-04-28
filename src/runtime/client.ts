@@ -3,6 +3,7 @@ import {
   type ClickHouseORMInstrumentation,
   type ClickHouseORMQueryKind,
   type ClickHouseORMQueryMode,
+  type ClickHouseORMQueryStatistics,
   createQueryErrorEvent,
   createQueryEvent,
   createQuerySuccessEvent,
@@ -58,6 +59,10 @@ type ClickHouseORMClientConfig<TSchema, TJoinUseNulls extends 0 | 1> = {
   client: FetchClickHouseTransport;
   defaultOptions?: ClickHouseBaseQueryOptions;
   instrumentations?: readonly ClickHouseORMInstrumentation[];
+  databaseName?: string;
+  serverAddress?: string;
+  serverPort?: number;
+  requestTimeoutMs?: number;
   sessionController?: SessionController;
   sessionConcurrencyController?: SessionConcurrencyController;
   joinUseNulls?: TJoinUseNulls;
@@ -157,6 +162,10 @@ export const createClickHouseORMClient = <TSchema, TJoinUseNulls extends 0 | 1 =
       queryKind: input.queryKind,
       statement: input.statement,
       operation: input.operation ?? resolveSqlOperation(input.statement),
+      databaseName: config.databaseName,
+      serverAddress: config.serverAddress,
+      serverPort: config.serverPort,
+      requestTimeoutMs: config.requestTimeoutMs,
       queryId: input.options.query_id,
       sessionId: input.options.session_id,
       format: input.format,
@@ -176,7 +185,7 @@ export const createClickHouseORMClient = <TSchema, TJoinUseNulls extends 0 | 1 =
       tableName?: string;
       operation?: string;
     },
-    operation: () => Promise<{ value: TValue; rowCount?: number }>,
+    operation: () => Promise<{ value: TValue; rowCount?: number; statistics?: ClickHouseORMQueryStatistics }>,
   ): Promise<TValue> => {
     const event = buildQueryEvent(input);
     await emitQueryStart(instrumentations, event);
@@ -185,7 +194,7 @@ export const createClickHouseORMClient = <TSchema, TJoinUseNulls extends 0 | 1 =
       const result = await operation();
       await emitQuerySuccess(
         instrumentations,
-        createQuerySuccessEvent(event, Date.now() - event.startedAt, result.rowCount),
+        createQuerySuccessEvent(event, Date.now() - event.startedAt, result.rowCount, result.statistics),
       );
       return result.value;
     } catch (error) {
@@ -264,6 +273,7 @@ export const createClickHouseORMClient = <TSchema, TJoinUseNulls extends 0 | 1 =
           options: mergedOptions,
           format: compiled.mode === "command" ? undefined : "JSON",
           operation,
+          tableName: compiled.metadata?.tableName,
         },
         async () => {
           if (compiled.mode === "command") {
@@ -271,23 +281,26 @@ export const createClickHouseORMClient = <TSchema, TJoinUseNulls extends 0 | 1 =
             return { value: [] as TResult[] };
           }
 
-          const rows = await config.client.queryJSON<Record<string, unknown>>({
+          const result = await config.client.queryJSON<Record<string, unknown>>({
             statement: queryConfig.query,
             query_params: queryConfig.query_params,
             options: mergedOptions,
             format: "JSON",
           });
+          const rows = result.rows;
 
           if (compiled.selection.length === 0) {
             return {
               value: rows as TResult[],
               rowCount: rows.length,
+              statistics: result.statistics,
             };
           }
 
           return {
             value: rows.map((row) => decodeRow<TResult>(row, compiled.selection)),
             rowCount: rows.length,
+            statistics: result.statistics,
           };
         },
       );
@@ -335,6 +348,7 @@ export const createClickHouseORMClient = <TSchema, TJoinUseNulls extends 0 | 1 =
           options: mergedOptions,
           format: "JSONEachRow",
           operation,
+          tableName: compiled.metadata?.tableName,
         },
         () => createStreamGenerator(compiled, queryConfig.query, queryConfig.query_params, mergedOptions),
       ),
@@ -351,6 +365,10 @@ export const createClickHouseORMClient = <TSchema, TJoinUseNulls extends 0 | 1 =
       defaultOptions: nextDefaultOptions,
       instrumentations,
       schema: config.schema,
+      databaseName: config.databaseName,
+      serverAddress: config.serverAddress,
+      serverPort: config.serverPort,
+      requestTimeoutMs: config.requestTimeoutMs,
       sessionController: nextSessionController,
       sessionConcurrencyController,
       joinUseNulls: nextJoinUseNulls ?? (joinUseNulls as unknown as TNextJoinUseNulls),
@@ -431,15 +449,17 @@ export const createClickHouseORMClient = <TSchema, TJoinUseNulls extends 0 | 1 =
             format: "JSON",
           },
           async () => {
-            const rows = await config.client.queryJSON<Record<string, unknown>>({
+            const result = await config.client.queryJSON<Record<string, unknown>>({
               statement: normalized.query,
               query_params: mergeQueryParams(normalized.params, mergedOptions.query_params),
               options: mergedOptions,
               format: mergedOptions.format ?? "JSON",
             });
+            const rows = result.rows;
             return {
               value: rows,
               rowCount: rows.length,
+              statistics: result.statistics,
             };
           },
         );

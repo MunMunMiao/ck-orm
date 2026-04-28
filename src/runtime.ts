@@ -36,14 +36,7 @@ export const clickhouseClient = <TSchema, TSettings extends ClickHouseSettings |
   const normalizedConfig = normalizeClientConfig(clientOptions);
   const instrumentations = [
     ...(logger ? [createLoggerInstrumentation(logger, logLevel ?? "warn")] : []),
-    ...(tracing === false || tracing === undefined
-      ? []
-      : [
-          createTracingInstrumentation({
-            ...tracing,
-            dbName: tracing.dbName ?? normalizedConfig.database,
-          }),
-        ]),
+    ...(tracing === false || tracing === undefined ? [] : [createTracingInstrumentation(tracing)]),
     ...(instrumentation ?? []),
   ] satisfies ClickHouseORMInstrumentation[];
 
@@ -57,6 +50,10 @@ export const clickhouseClient = <TSchema, TSettings extends ClickHouseSettings |
     schema,
     client,
     instrumentations,
+    databaseName: normalizedConfig.database,
+    serverAddress: normalizedConfig.url.hostname,
+    serverPort: resolveServerPort(normalizedConfig.url),
+    requestTimeoutMs: normalizedConfig.request_timeout,
     joinUseNulls,
     sessionConcurrencyController,
     defaultOptions: {
@@ -66,4 +63,17 @@ export const clickhouseClient = <TSchema, TSettings extends ClickHouseSettings |
       role: normalizedConfig.role,
     },
   });
+};
+
+const resolveServerPort = (url: URL): number | undefined => {
+  if (url.port) {
+    return Number(url.port);
+  }
+  if (url.protocol === "http:") {
+    return 80;
+  }
+  if (url.protocol === "https:") {
+    return 443;
+  }
+  return undefined;
 };

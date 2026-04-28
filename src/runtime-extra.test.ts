@@ -206,7 +206,7 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
   it("runs direct clients without an optional session concurrency controller", async function testDirectClientWithoutSessionController() {
     const transport: FetchClickHouseTransport = {
       async queryJSON() {
-        return [{ id: 1 }];
+        return { rows: [{ id: 1 }] };
       },
       async *queryStream() {
         yield { id: 2 };

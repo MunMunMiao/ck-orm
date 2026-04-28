@@ -133,3 +133,12 @@ clickhouseClient({
   // @ts-expect-error session_max_concurrent_requests must be a number
   session_max_concurrent_requests: "2",
 });
+
+clickhouseClient({
+  databaseUrl: "http://localhost:8123/typecheck_db",
+  schema: { users },
+  tracing: {
+    // @ts-expect-error tracing database name is derived from the client config
+    dbName: "typecheck_db",
+  },
+});

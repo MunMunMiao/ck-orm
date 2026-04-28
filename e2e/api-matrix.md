@@ -202,8 +202,8 @@ All `fn` keys are guarded by `src/public_api.test.ts` and `src/type-scenarios/pu
 | API | Coverage location |
 | --- | --- |
 | `logger` | `observability.e2e.test.ts` |
-| `tracing` | `observability.e2e.test.ts` |
-| `instrumentation` | `observability.e2e.test.ts` |
+| `tracing`, including derived database/server fields and JSON response statistics | `observability.e2e.test.ts` |
+| `instrumentation`, including derived database/server fields and JSON response statistics | `observability.e2e.test.ts` |
 
 ## Error contracts
 

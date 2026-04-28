@@ -4,6 +4,7 @@ import {
   extractClickHouseException,
   normalizeTransportError,
 } from "../errors";
+import type { ClickHouseORMQueryStatistics } from "../observability";
 import { resolveStreamRequestBodyMode } from "../platform";
 
 export type JsonHandling = {
@@ -14,6 +15,49 @@ export type JsonHandling = {
 export type JsonEachRowRequestBody = {
   body: string | ReadableStream<Uint8Array>;
   duplex?: "half";
+};
+
+type ClickHouseJsonStatistics = {
+  readonly elapsed?: unknown;
+  readonly rows_read?: unknown;
+  readonly bytes_read?: unknown;
+};
+
+export type ClickHouseJsonResponse<T> = {
+  readonly data?: T[];
+  readonly rows?: unknown;
+  readonly rows_before_limit_at_least?: unknown;
+  readonly statistics?: ClickHouseJsonStatistics;
+};
+
+const toFiniteNumber = (value: unknown): number | undefined => {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : undefined;
+  }
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+};
+
+export const extractClickHouseJsonStatistics = <T>(
+  response: ClickHouseJsonResponse<T>,
+): ClickHouseORMQueryStatistics | undefined => {
+  const elapsedSeconds = toFiniteNumber(response.statistics?.elapsed);
+  const readRows = toFiniteNumber(response.statistics?.rows_read);
+  const readBytes = toFiniteNumber(response.statistics?.bytes_read);
+  const resultRows = toFiniteNumber(response.rows);
+  const rowsBeforeLimitAtLeast = toFiniteNumber(response.rows_before_limit_at_least);
+  const statistics: ClickHouseORMQueryStatistics = {
+    ...(elapsedSeconds === undefined ? {} : { serverElapsedMs: elapsedSeconds * 1000 }),
+    ...(readRows === undefined ? {} : { readRows }),
+    ...(readBytes === undefined ? {} : { readBytes }),
+    ...(resultRows === undefined ? {} : { resultRows }),
+    ...(rowsBeforeLimitAtLeast === undefined ? {} : { rowsBeforeLimitAtLeast }),
+  };
+
+  return Object.keys(statistics).length === 0 ? undefined : statistics;
 };
 
 const readResponseText = async (response: Response) => {

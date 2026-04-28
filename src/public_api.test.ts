@@ -320,6 +320,7 @@ describe("ck-orm public api", function describePublicApi() {
     expectType<RootApi.ClickHouseORMQueryEvent | undefined>(undefined);
     expectType<RootApi.ClickHouseORMQueryResultEvent | undefined>(undefined);
     expectType<RootApi.ClickHouseORMTracingOptions | undefined>(undefined);
+    expectType<RootApi.ClickHouseORMQueryStatistics | undefined>(undefined);
     expectType<RootApi.ClickHouseQueryOptions | undefined>(undefined);
     expectType<RootApi.ClickHouseSettings | undefined>(undefined);
     expectType<RootApi.ClickHouseSettingValue | undefined>(undefined);
