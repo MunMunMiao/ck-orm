@@ -62,6 +62,9 @@ describe("ck-orm columns", function describeClickHouseORMColumns() {
     expect(intColumn.mapFromDriverValue("2")).toBe(2);
     expect(intColumn.mapFromDriverValue(3n)).toBe(3);
     expect(() => intColumn.mapFromDriverValue({})).toThrow("Cannot convert value to number");
+    expect(() => intColumn.mapFromDriverValue(Number.NaN)).toThrow("Cannot convert value to finite number");
+    expect(() => int8().mapFromDriverValue(128)).toThrow("Cannot convert value to integer in range -128..127");
+    expect(() => uint32().mapFromDriverValue(-1)).toThrow("Cannot convert value to integer in range 0..4294967295");
 
     const int64Column = int64();
     expect(int64Column.mapFromDriverValue(4n)).toBe("4");
@@ -80,6 +83,7 @@ describe("ck-orm columns", function describeClickHouseORMColumns() {
     expect(uint64Column.mapToDriverValue(9 as never)).toBe("9");
     expect(uint64Column.mapToDriverValue(9n as never)).toBe("9");
     expect(() => uint64Column.mapFromDriverValue(false)).toThrow("Cannot convert value to string");
+    expect(() => uint64Column.mapFromDriverValue("-1")).toThrow("Cannot convert value to integer string");
 
     const stringColumn = string();
     expect(stringColumn.mapFromDriverValue("plain")).toBe("plain");
@@ -94,6 +98,18 @@ describe("ck-orm columns", function describeClickHouseORMColumns() {
     const parsedDate = dateColumn.mapFromDriverValue("2026-04-21T00:00:00.000Z");
     expect(parsedDate).toBeInstanceOf(Date);
     expect(() => dateColumn.mapFromDriverValue(false)).toThrow("Cannot convert value to Date");
+    expect(() => dateColumn.mapFromDriverValue("not-a-date")).toThrow("Cannot convert value to valid Date");
+
+    const parsedTime = time().mapFromDriverValue("12:34:56");
+    expect(parsedTime).toBeInstanceOf(Date);
+    expect(parsedTime.getUTCHours()).toBe(12);
+    expect(parsedTime.getUTCMinutes()).toBe(34);
+    expect(parsedTime.getUTCSeconds()).toBe(56);
+
+    const parsedTime64 = time64({ precision: 6 }).mapFromDriverValue("12:34:56.789123");
+    expect(parsedTime64).toBeInstanceOf(Date);
+    expect(parsedTime64.getUTCMilliseconds()).toBe(789);
+    expect(() => time().mapFromDriverValue("12:99:56")).toThrow("Cannot convert value to valid Date");
 
     const booleanColumn = bool();
     expect(booleanColumn.mapFromDriverValue(true)).toBe(true);
@@ -246,6 +262,8 @@ describe("ck-orm columns", function describeClickHouseORMColumns() {
     expect(tupleColumn.mapFromDriverValue(["login", "42"])).toEqual(["login", 42]);
     expect(tupleColumn.mapToDriverValue(["login", 42])).toEqual(["login", 42]);
     expect(() => tupleColumn.mapFromDriverValue("bad")).toThrow("Cannot convert value to tuple");
+    expect(() => tupleColumn.mapFromDriverValue(["login"])).toThrow("expected 2 items, got 1");
+    expect(() => tupleColumn.mapToDriverValue(["login"] as never)).toThrow("expected 2 items, got 1");
 
     const mapColumn = map(string(), int32());
     expect(mapColumn.sqlType).toBe("Map(String, Int32)");
@@ -255,6 +273,7 @@ describe("ck-orm columns", function describeClickHouseORMColumns() {
     });
     expect(mapColumn.mapToDriverValue({ a: 1, b: 2 })).toEqual({ a: 1, b: 2 });
     expect(() => mapColumn.mapFromDriverValue(null)).toThrow("Cannot convert value to map");
+    expect(() => map(int32(), string())).toThrow("ckType.map() currently supports only String keys");
 
     const variantColumn = variant(string(), int32());
     expect(variantColumn.sqlType).toBe("Variant(String, Int32)");
@@ -349,12 +368,6 @@ describe("ck-orm columns", function describeClickHouseORMColumns() {
   it("annotates container decode failures with the offending path", function testContainerDecodePath() {
     const items = array(int32());
     let arrErr: unknown;
-    try {
-      items.mapFromDriverValue([1, "not-a-number-but-actually-coerced", "abc"] as unknown);
-    } catch (error) {
-      arrErr = error;
-    }
-    // Strings get coerced via toNumber happily, so force an obvious failure with a non-coercible value:
     try {
       items.mapFromDriverValue([1, true] as unknown);
     } catch (error) {

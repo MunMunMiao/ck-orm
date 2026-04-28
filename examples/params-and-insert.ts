@@ -19,11 +19,11 @@ export const buildDirectValueQueryExample = () => {
 
   const query = commerceDb
     .select({
-      userId: orderRewardLog.user_id,
-      rewardPoints: orderRewardLog.reward_points,
+      userId: orderRewardLog.userId,
+      rewardPoints: orderRewardLog.rewardPoints,
     })
     .from(orderRewardLog)
-    .where(ck.eq(orderRewardLog.user_id, "user_100"))
+    .where(ck.eq(orderRewardLog.userId, "user_100"))
     .limit(10);
 
   return {
@@ -54,18 +54,18 @@ export const buildInsertExample = () => {
   const commerceDb = createCommerceDb();
   const insert = commerceDb.insert(customerInvoice).values({
     id: 1,
-    invoice_number: "INV_EXAMPLE_001",
-    user_id: "user_100",
-    channel_id: 1,
+    invoiceNumber: "INV_EXAMPLE_001",
+    userId: "user_100",
+    channelId: 1,
     status: 1,
-    subtotal_amount: "100.00000",
-    fee_amount: "5.00000",
-    total_amount: "105.00000",
-    created_at: 1710000000,
-    updated_at: 1710000000,
-    _peerdb_synced_at: new Date("2026-04-21T00:00:00.000Z"),
-    _peerdb_is_deleted: 0,
-    _peerdb_version: "1",
+    subtotalAmount: "100.00000",
+    feeAmount: "5.00000",
+    totalAmount: "105.00000",
+    createdAt: 1710000000,
+    updatedAt: 1710000000,
+    peerdbSyncedAt: new Date("2026-04-21T00:00:00.000Z"),
+    peerdbIsDeleted: 0,
+    peerdbVersion: "1",
   });
 
   return {

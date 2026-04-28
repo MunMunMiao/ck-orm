@@ -192,6 +192,44 @@ describe("session concurrency controller", function describeSessionConcurrencyCo
     await expect(second).resolves.toBe("second");
   });
 
+  it("removes queued waiters when their abort signal fires", async function testQueuedAbort() {
+    const controller = createSessionConcurrencyController(1);
+    const firstGate = createDeferred<void>();
+    const abortController = new AbortController();
+    let secondStarted = false;
+    let thirdStarted = false;
+
+    const first = controller.run("shared_session", async () => {
+      await firstGate.promise;
+      return "first";
+    });
+    const second = controller.run(
+      "shared_session",
+      async () => {
+        secondStarted = true;
+        return "second";
+      },
+      abortController.signal,
+    );
+
+    await flushAsyncWork();
+    expect(secondStarted).toBe(false);
+
+    abortController.abort("queued stop");
+    await expect(second).rejects.toThrow("queued stop");
+
+    const third = controller.run("shared_session", async () => {
+      thirdStarted = true;
+      return "third";
+    });
+
+    firstGate.resolve();
+    await expect(first).resolves.toBe("first");
+    await expect(third).resolves.toBe("third");
+    expect(secondStarted).toBe(false);
+    expect(thirdStarted).toBe(true);
+  });
+
   it("holds a same-session slot until the stream iterator closes", async function testStreamSlotLifetime() {
     const controller = createSessionConcurrencyController(1);
     const events: string[] = [];

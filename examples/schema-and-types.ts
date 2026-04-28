@@ -5,7 +5,7 @@ export const auditEvent = ckTable(
   "audit_events",
   {
     id: ckType.uuid().comment("Application event id"),
-    actor_id: ckType.lowCardinality(ckType.string()),
+    actorId: ckType.lowCardinality("actor_id", ckType.string()),
     action: ckType.enum8<"created" | "updated" | "deleted">({
       created: 1,
       updated: 2,
@@ -13,17 +13,17 @@ export const auditEvent = ckTable(
     }),
     payload: ckType.json<Record<string, unknown>>(),
     labels: ckType.array(ckType.string()).default(csql`[]`),
-    amount_delta: ckType.nullable(ckType.decimal({ precision: 18, scale: 5 })),
-    created_at: ckType.dateTime64({ precision: 3, timezone: "UTC" }),
-    created_day: ckType.date().materialized(csql`toDate(created_at)`),
-    search_text: ckType.string().aliasExpr(csql`lowerUTF8(JSONExtractString(payload, 'message'))`),
-    _peerdb_version: ckType.uint64(),
+    amountDelta: ckType.nullable("amount_delta", ckType.decimal({ precision: 18, scale: 5 })),
+    createdAt: ckType.dateTime64("created_at", { precision: 3, timezone: "UTC" }),
+    createdDay: ckType.date("created_day").materialized(csql`toDate(created_at)`),
+    searchText: ckType.string("search_text").aliasExpr(csql`lowerUTF8(JSONExtractString(payload, 'message'))`),
+    peerdbVersion: ckType.uint64("_peerdb_version"),
   },
   (table) => ({
     engine: "ReplacingMergeTree",
-    partitionBy: csql`toYYYYMM(${table.created_at})`,
-    orderBy: [table.actor_id, table.created_at, table.id],
-    versionColumn: table._peerdb_version,
+    partitionBy: csql`toYYYYMM(${table.createdAt})`,
+    orderBy: [table.actorId, table.createdAt, table.id],
+    versionColumn: table.peerdbVersion,
     settings: {
       index_granularity: 8192,
     },
@@ -78,7 +78,7 @@ export type RewardLogInsert = typeof orderRewardLog.$inferInsert;
 
 export const exampleAuditInsert = {
   id: "018fc4c4-7d57-7112-812a-8c8c36d0f8c1",
-  actor_id: "user_100",
+  actorId: "user_100",
   action: "updated",
   payload: {
     message: "Reward status changed",
@@ -86,9 +86,9 @@ export const exampleAuditInsert = {
     after: 1,
   },
   labels: ["reward", "status"],
-  amount_delta: "42.50000",
-  created_at: new Date("2026-04-24T00:00:00.000Z"),
-  _peerdb_version: "1",
+  amountDelta: "42.50000",
+  createdAt: new Date("2026-04-24T00:00:00.000Z"),
+  peerdbVersion: "1",
 } satisfies Partial<AuditEventInsert>;
 
 export const exampleLogicalRewardInsert = {

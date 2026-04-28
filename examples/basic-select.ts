@@ -17,18 +17,18 @@ const createCommerceDb = () => {
 export const buildRewardLeaderboardExample = () => {
   const commerceDb = createCommerceDb();
   const rewardLog = alias(orderRewardLog, "orl");
-  const totalRewardPoints = fn.sum(rewardLog.reward_points).as("total_reward_points");
+  const totalRewardPoints = fn.sum(rewardLog.rewardPoints).as("total_reward_points");
 
   const query = commerceDb
     .select({
-      userId: rewardLog.user_id,
+      userId: rewardLog.userId,
       totalRewardPoints,
       rewardEventCount: fn.count().as("reward_event_count"),
-      campaignCount: fn.uniqExact(rewardLog.campaign_id).as("campaign_count"),
+      campaignCount: fn.uniqExact(rewardLog.campaignId).as("campaign_count"),
     })
     .from(rewardLog)
-    .where(ck.and(ck.eq(rewardLog._peerdb_is_deleted, 0), ck.inArray(rewardLog.channel, [1, 2])))
-    .groupBy(rewardLog.user_id)
+    .where(ck.and(ck.eq(rewardLog.peerdbIsDeleted, 0), ck.inArray(rewardLog.channel, [1, 2])))
+    .groupBy(rewardLog.userId)
     .orderBy(ck.desc(totalRewardPoints))
     .limit(20)
     .final();

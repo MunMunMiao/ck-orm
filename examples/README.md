@@ -67,5 +67,5 @@ Files with `build*Example()` return a query or insert builder for inspection and
 To type-check the examples without connecting to ClickHouse:
 
 ```bash
-bun run type-check:examples
+bun run type-check
 ```

@@ -19,7 +19,7 @@ export const buildDefaultLeftJoinExample = () => {
   const query = commerceDb
     .select()
     .from(customerInvoice)
-    .leftJoin(orderRewardLog, ck.eq(customerInvoice.user_id, orderRewardLog.user_id));
+    .leftJoin(orderRewardLog, ck.eq(customerInvoice.userId, orderRewardLog.userId));
 
   return {
     query,
@@ -40,7 +40,7 @@ export const runClickHouseDefaultJoinExample = async () => {
   return rawDefaultDb
     .select()
     .from(customerInvoice)
-    .leftJoin(orderRewardLog, ck.eq(customerInvoice.user_id, orderRewardLog.user_id))
+    .leftJoin(orderRewardLog, ck.eq(customerInvoice.userId, orderRewardLog.userId))
     .execute();
 };
 
@@ -48,13 +48,13 @@ export const buildExplicitSelectJoinExample = () => {
   const commerceDb = createCommerceDb();
   const query = commerceDb
     .select({
-      userId: customerInvoice.user_id,
+      userId: customerInvoice.userId,
       invoiceId: customerInvoice.id,
       rewardEventId: orderRewardLog.id,
-      rewardPoints: orderRewardLog.reward_points,
+      rewardPoints: orderRewardLog.rewardPoints,
     })
     .from(customerInvoice)
-    .leftJoin(orderRewardLog, ck.eq(customerInvoice.user_id, orderRewardLog.user_id));
+    .leftJoin(orderRewardLog, ck.eq(customerInvoice.userId, orderRewardLog.userId));
 
   return {
     query,

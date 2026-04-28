@@ -491,6 +491,17 @@ describe("ck-orm runtime/config validation", function describeConfigValidation()
     expect(searchParams.get("session_timeout")).toBe("30");
     expect(searchParams.get("session_check")).toBe("1");
     expect(searchParams.getAll("role")).toEqual(["analyst", "auditor"]);
+
+    for (const key of ["query", "database", "session_id", "role", "param_orm_param1"]) {
+      expect(() =>
+        buildSearchParams({
+          query_id: "query_1",
+          clickhouse_settings: {
+            [key]: 1,
+          },
+        }),
+      ).toThrow("conflicts with a reserved ClickHouse HTTP parameter");
+    }
   });
 
   it("covers config guards, authless header creation and async insert normalization", function testRuntimeConfigBranches() {

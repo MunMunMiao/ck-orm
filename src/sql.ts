@@ -5,6 +5,8 @@ import { assertValidSqlIdentifier } from "./internal/identifier";
 
 const sqlBrand = Symbol("clickhouseORMSqlBrand");
 const compileSqlSymbol = Symbol("clickhouseORMCompileSql");
+const trustedExpressionObjects = new WeakSet<object>();
+const trustedSourceObjects = new WeakSet<object>();
 
 export type QueryParams = Record<string, unknown>;
 
@@ -46,8 +48,20 @@ type SqlChunk =
   | { readonly kind: "fragment"; readonly value: SQLFragment<unknown> }
   | {
       readonly kind: "runtime";
-      readonly value: (ctx: BuildContext) => string | SQLFragment<unknown>;
+      readonly value: (ctx: BuildContext) => SQLFragment<unknown>;
     };
+
+export const trustSqlExpressionObject = <TValue extends object>(value: TValue): TValue => {
+  trustedExpressionObjects.add(value);
+  return value;
+};
+
+export const isTrustedSqlExpressionObject = (value: object): boolean => trustedExpressionObjects.has(value);
+
+export const trustSqlSourceObject = <TValue extends object>(value: TValue): TValue => {
+  trustedSourceObjects.add(value);
+  return value;
+};
 
 const inferArrayType = (values: readonly unknown[]): string => {
   if (values.length === 0) {
@@ -125,19 +139,34 @@ const renderIdentifier = (value: IdentifierValue) => {
   }
 
   const parts: string[] = [];
-  if (value.table) {
+  if (value.table !== undefined) {
+    if (value.table === "") {
+      throw createClientValidationError("Invalid SQL identifier object: table must be a non-empty identifier");
+    }
     parts.push(escapeIdentifier(value.table));
   }
-  if (value.column) {
+  if (value.column !== undefined) {
+    if (value.column === "") {
+      throw createClientValidationError("Invalid SQL identifier object: column must be a non-empty identifier");
+    }
     parts.push(escapeIdentifier(value.column));
   }
   const rendered = parts.join(".");
 
-  if (value.as) {
+  if (value.as !== undefined) {
+    if (value.as === "") {
+      throw createClientValidationError("Invalid SQL identifier object: as must be a non-empty identifier");
+    }
     if (!rendered) {
       return escapeIdentifier(value.as);
     }
     return `${rendered} as ${escapeIdentifier(value.as)}`;
+  }
+
+  if (!rendered) {
+    throw createClientValidationError(
+      "Invalid SQL identifier object: provide table, column, or as with a non-empty identifier",
+    );
   }
 
   return rendered;
@@ -206,7 +235,10 @@ const compileChunk = (chunk: SqlChunk, ctx: BuildContext): string => {
       return (chunk.value as CompilableSqlFragment)[compileSqlSymbol](ctx);
     case "runtime": {
       const resolved = chunk.value(ctx);
-      return typeof resolved === "string" ? resolved : (resolved as CompilableSqlFragment)[compileSqlSymbol](ctx);
+      if (!isCompilableSqlFragment(resolved)) {
+        throw createClientValidationError("Invalid SQL fragment: runtime chunks must return a trusted SQL fragment");
+      }
+      return resolved[compileSqlSymbol](ctx);
     }
     case "param":
       return allocParam(ctx, chunk.value, chunk.sqlType);
@@ -235,12 +267,22 @@ export const isSqlFragment = (value: unknown): value is SQLFragment<unknown> => 
 };
 
 const isCompilableExpression = (value: unknown): value is CompilableExpression => {
-  return typeof value === "object" && value !== null && "compile" in value && typeof value.compile === "function";
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    trustedExpressionObjects.has(value) &&
+    "compile" in value &&
+    typeof value.compile === "function"
+  );
 };
 
 const isCompilableSource = (value: unknown): value is CompilableSource => {
   return (
-    typeof value === "object" && value !== null && "compileSource" in value && typeof value.compileSource === "function"
+    typeof value === "object" &&
+    value !== null &&
+    trustedSourceObjects.has(value) &&
+    "compileSource" in value &&
+    typeof value.compileSource === "function"
   );
 };
 

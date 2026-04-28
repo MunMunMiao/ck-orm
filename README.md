@@ -71,20 +71,20 @@ export const orderRewardLog = ckTable(
   "order_reward_log",
   {
     id: ckType.int32(),
-    user_id: ckType.string(),
-    campaign_id: ckType.int32(),
-    order_id: ckType.int64(),
-    reward_points: ckType.decimal({ precision: 20, scale: 5 }),
+    userId: ckType.string("user_id"),
+    campaignId: ckType.int32("campaign_id"),
+    orderId: ckType.int64("order_id"),
+    rewardPoints: ckType.decimal("reward_points", { precision: 20, scale: 5 }),
     status: ckType.int16(),
-    created_at: ckType.int32(),
-    _peerdb_synced_at: ckType.dateTime64({ precision: 9 }),
-    _peerdb_is_deleted: ckType.uint8(),
-    _peerdb_version: ckType.uint64(),
+    createdAt: ckType.int32("created_at"),
+    peerdbSyncedAt: ckType.dateTime64("_peerdb_synced_at", { precision: 9 }),
+    peerdbIsDeleted: ckType.uint8("_peerdb_is_deleted"),
+    peerdbVersion: ckType.uint64("_peerdb_version"),
   },
   (table) => ({
     engine: "ReplacingMergeTree",
-    orderBy: [table.user_id, table.created_at, table.id],
-    versionColumn: table._peerdb_version,
+    orderBy: [table.userId, table.createdAt, table.id],
+    versionColumn: table.peerdbVersion,
   }),
 );
 
@@ -121,15 +121,15 @@ import { orderRewardLog } from "./schema";
 
 const query = db
   .select({
-    userId: orderRewardLog.user_id,
-    totalRewardPoints: fn.sum(orderRewardLog.reward_points).as(
+    userId: orderRewardLog.userId,
+    totalRewardPoints: fn.sum(orderRewardLog.rewardPoints).as(
       "total_reward_points",
     ),
   })
   .from(orderRewardLog)
   .where(ck.eq(orderRewardLog.status, 1))
-  .groupBy(orderRewardLog.user_id)
-  .orderBy(ck.desc(fn.sum(orderRewardLog.reward_points)))
+  .groupBy(orderRewardLog.userId)
+  .orderBy(ck.desc(fn.sum(orderRewardLog.rewardPoints)))
   .limit(20);
 
 const rows = await query;
@@ -216,11 +216,11 @@ import { ckTable, ckType, csql } from "ck-orm";
 ```ts
 const orderRewardLog = ckTable("order_reward_log", {
   id: ckType.int32(),
-  user_id: ckType.string(),
-  order_id: ckType.int64(),
-  reward_points: ckType.decimal({ precision: 20, scale: 5 }),
-  created_at: ckType.int32(),
-  _peerdb_version: ckType.uint64(),
+  userId: ckType.string("user_id"),
+  orderId: ckType.int64("order_id"),
+  rewardPoints: ckType.decimal("reward_points", { precision: 20, scale: 5 }),
+  createdAt: ckType.int32("created_at"),
+  peerdbVersion: ckType.uint64("_peerdb_version"),
 });
 ```
 
@@ -231,16 +231,16 @@ const orderRewardLog = ckTable(
   "order_reward_log",
   {
     id: ckType.int32(),
-    user_id: ckType.string(),
-    order_id: ckType.int64(),
-    reward_points: ckType.decimal({ precision: 20, scale: 5 }),
-    created_at: ckType.int32(),
-    _peerdb_version: ckType.uint64(),
+    userId: ckType.string("user_id"),
+    orderId: ckType.int64("order_id"),
+    rewardPoints: ckType.decimal("reward_points", { precision: 20, scale: 5 }),
+    createdAt: ckType.int32("created_at"),
+    peerdbVersion: ckType.uint64("_peerdb_version"),
   },
   (table) => ({
     engine: "ReplacingMergeTree",
-    orderBy: [table.user_id, table.created_at, table.id],
-    versionColumn: table._peerdb_version,
+    orderBy: [table.userId, table.createdAt, table.id],
+    versionColumn: table.peerdbVersion,
   }),
 );
 ```
@@ -280,15 +280,15 @@ const orderRewardLog = ckTable(
   "order_reward_log",
   {
     id: ckType.int32(),
-    created_at: ckType.dateTime(),
-    shard_day: ckType.date().materialized(csql`toDate(created_at)`),
+    createdAt: ckType.dateTime("created_at"),
+    shardDay: ckType.date("shard_day").materialized(csql`toDate(created_at)`),
     note: ckType.string().default(csql`'pending'`),
   },
   (table) => ({
     engine: "ReplacingMergeTree",
     partitionBy: csql`toYYYYMM(created_at)`,
     orderBy: [table.id],
-    versionColumn: table.created_at,
+    versionColumn: table.createdAt,
   }),
 );
 ```
@@ -304,8 +304,8 @@ Every table exposes:
 type RewardLogRow = typeof orderRewardLog.$inferSelect;
 type RewardLogInsert = typeof orderRewardLog.$inferInsert;
 
-const orderId: RewardLogRow["order_id"] = "900001";
-const peerdbVersion: RewardLogInsert["_peerdb_version"] = "1";
+const orderId: RewardLogRow["orderId"] = "900001";
+const peerdbVersion: RewardLogInsert["peerdbVersion"] = "1";
 ```
 
 For generic helpers, use:
@@ -454,7 +454,9 @@ Common schema shapes and their TypeScript values:
 | variant | `ckType.variant(ckType.string(), ckType.int32())` | `string | number` |
 | JSON | `ckType.json<{ risk?: { score?: number } }>()` | `{ risk?: { score?: number } }` |
 
-Insert rows use the same inferred shape as `typeof table.$inferInsert`, except columns with ClickHouse defaults or generated expressions can be omitted when you call `insert(table).values(...)`.
+`ckType.map(...)` currently supports `String` keys only and maps them to a JavaScript record, so it does not model ClickHouse's duplicate-key `Map(K, V)` edge case.
+
+Insert rows use the same inferred shape as `typeof table.$inferInsert`, except columns with ClickHouse defaults or generated expressions can be omitted when you call `insert(table).values(...)`. `MATERIALIZED` and `ALIAS` columns are never written in the generated `INSERT` column list; passing them explicitly is rejected.
 
 ## Client configuration
 
@@ -546,6 +548,8 @@ Keep the default `1` unless you intentionally want to remove local serialization
 
 `clickhouse_settings` is only for ClickHouse session/query settings, the same kind of keys documented in ClickHouse's [Session Settings](https://clickhouse.com/docs/operations/settings/settings) and accepted by the HTTP API as query parameters. It is separate from ck-orm client configuration such as `host`, `database`, `request_timeout`, `http_headers`, and `session_max_concurrent_requests`.
 
+Do not put HTTP transport fields such as `query`, `database`, `session_id`, `role`, or `param_*` in `clickhouse_settings`; ck-orm rejects those keys because they collide with the request envelope and named-parameter channel.
+
 Official setting keys have TypeScript completion, and arbitrary keys remain valid for newer ClickHouse versions or deployment-specific settings:
 
 ```ts
@@ -589,8 +593,8 @@ Explicit selection gives you an explicitly shaped result:
 ```ts
 const rows = await db
   .select({
-    userId: orderRewardLog.user_id,
-    rewardPoints: orderRewardLog.reward_points,
+    userId: orderRewardLog.userId,
+    rewardPoints: orderRewardLog.rewardPoints,
   })
   .from(orderRewardLog)
   .limit(10);
@@ -616,14 +620,14 @@ const matchedRewardLog = alias(orderRewardLog, "matched_reward_log");
 
 const rows = await db
   .select({
-    userId: rewardLog.user_id,
+    userId: rewardLog.userId,
     rewardEventId: rewardLog.id,
     matchedRewardEventId: matchedRewardLog.id,
   })
   .from(rewardLog)
   .leftJoin(
     matchedRewardLog,
-    ck.eq(rewardLog.user_id, matchedRewardLog.user_id),
+    ck.eq(rewardLog.userId, matchedRewardLog.userId),
   );
 ```
 
@@ -666,14 +670,14 @@ import { ck } from "ck-orm";
 
 const query = db
   .select({
-    userId: orderRewardLog.user_id,
-    rewardPoints: orderRewardLog.reward_points,
+    userId: orderRewardLog.userId,
+    rewardPoints: orderRewardLog.rewardPoints,
   })
   .from(orderRewardLog)
   .where(
     ck.eq(orderRewardLog.status, 1),
-    ck.inArray(orderRewardLog.campaign_id, [10, 20, 30]),
-    ck.between(orderRewardLog.created_at, 1710000000, 1719999999),
+    ck.inArray(orderRewardLog.campaignId, [10, 20, 30]),
+    ck.between(orderRewardLog.createdAt, 1710000000, 1719999999),
   );
 ```
 
@@ -741,10 +745,10 @@ import { ck } from "ck-orm";
 
 const rows = await db
   .select({
-    userId: orderRewardLog.user_id,
+    userId: orderRewardLog.userId,
   })
   .from(orderRewardLog)
-  .where(ck.contains(orderRewardLog.user_id, "user_100%"));
+  .where(ck.contains(orderRewardLog.userId, "user_100%"));
 ```
 
 Advanced pattern example:
@@ -754,10 +758,10 @@ import { ck } from "ck-orm";
 
 const rows = await db
   .select({
-    userId: orderRewardLog.user_id,
+    userId: orderRewardLog.userId,
   })
   .from(orderRewardLog)
-  .where(ck.like(orderRewardLog.user_id, "user_%"));
+  .where(ck.like(orderRewardLog.userId, "user_%"));
 ```
 
 ### `groupBy()`, `having()`, `orderBy()`, `limit()`, `offset()`
@@ -765,19 +769,19 @@ const rows = await db
 ```ts
 import { ck, fn } from "ck-orm";
 
-const totalRewardPoints = fn.sum(orderRewardLog.reward_points).as(
+const totalRewardPoints = fn.sum(orderRewardLog.rewardPoints).as(
   "total_reward_points",
 );
 
 const query = db
   .select({
-    userId: orderRewardLog.user_id,
+    userId: orderRewardLog.userId,
     totalRewardPoints,
   })
   .from(orderRewardLog)
-  .groupBy(orderRewardLog.user_id)
-  .having(ck.gt(fn.sum(orderRewardLog.reward_points), "100.00000"))
-  .orderBy(ck.desc(orderRewardLog.created_at))
+  .groupBy(orderRewardLog.userId)
+  .having(ck.gt(fn.sum(orderRewardLog.rewardPoints), "100.00000"))
+  .orderBy(ck.desc(orderRewardLog.createdAt))
   .limit(20)
   .offset(0);
 ```
@@ -807,12 +811,12 @@ import { ck } from "ck-orm";
 
 const query = db
   .select({
-    userId: orderRewardLog.user_id,
-    createdAt: orderRewardLog.created_at,
+    userId: orderRewardLog.userId,
+    createdAt: orderRewardLog.createdAt,
   })
   .from(orderRewardLog)
-  .orderBy(ck.desc(orderRewardLog.created_at))
-  .limitBy([orderRewardLog.user_id], 1);
+  .orderBy(ck.desc(orderRewardLog.createdAt))
+  .limitBy([orderRewardLog.userId], 1);
 ```
 
 ### Execution modes
@@ -841,11 +845,11 @@ Use `.as("alias")` to turn a builder into a subquery:
 ```ts
 const latestRewardEvent = db
   .select({
-    userId: orderRewardLog.user_id,
-    createdAt: orderRewardLog.created_at,
+    userId: orderRewardLog.userId,
+    createdAt: orderRewardLog.createdAt,
   })
   .from(orderRewardLog)
-  .orderBy(ck.desc(orderRewardLog.created_at))
+  .orderBy(ck.desc(orderRewardLog.createdAt))
   .limit(10)
   .as("latest_reward_event");
 ```
@@ -858,13 +862,13 @@ import { ck, fn } from "ck-orm";
 const rankedUsers = db.$with("ranked_users").as(
   db
     .select({
-      userId: orderRewardLog.user_id,
-      totalRewardPoints: fn.sum(orderRewardLog.reward_points).as(
+      userId: orderRewardLog.userId,
+      totalRewardPoints: fn.sum(orderRewardLog.rewardPoints).as(
         "total_reward_points",
       ),
     })
     .from(orderRewardLog)
-    .groupBy(orderRewardLog.user_id),
+    .groupBy(orderRewardLog.userId),
 );
 
 const rows = await db
@@ -895,7 +899,7 @@ For more complex result sets, count a subquery or CTE:
 ```ts
 const activeUsers = db
   .select({
-    userId: orderRewardLog.user_id,
+    userId: orderRewardLog.userId,
   })
   .from(orderRewardLog)
   .where(ck.eq(orderRewardLog.status, 1))
@@ -942,15 +946,15 @@ Use the builder when you want typed inserts that follow the table schema:
 ```ts
 await db.insert(orderRewardLog).values({
   id: 1,
-  user_id: "user_100",
-  campaign_id: 10,
-  order_id: "900001",
-  reward_points: "42.50000",
+  userId: "user_100",
+  campaignId: 10,
+  orderId: "900001",
+  rewardPoints: "42.50000",
   status: 1,
-  created_at: 1710000000,
-  _peerdb_synced_at: new Date("2026-04-21T00:00:00.000Z"),
-  _peerdb_is_deleted: 0,
-  _peerdb_version: "1",
+  createdAt: 1710000000,
+  peerdbSyncedAt: new Date("2026-04-21T00:00:00.000Z"),
+  peerdbIsDeleted: 0,
+  peerdbVersion: "1",
 });
 ```
 
@@ -987,11 +991,11 @@ import { csql, fn } from "ck-orm";
 
 const rows = await db.execute(csql`
   select
-    ${orderRewardLog.user_id},
-    ${fn.sum(orderRewardLog.reward_points)} as total_reward_points
+    ${orderRewardLog.userId},
+    ${fn.sum(orderRewardLog.rewardPoints)} as total_reward_points
   from ${orderRewardLog}
   where ${orderRewardLog.id} > ${10}
-  group by ${orderRewardLog.user_id}
+  group by ${orderRewardLog.userId}
 `);
 ```
 
@@ -1123,10 +1127,10 @@ Generic, conversion, aggregate, JSON, tuple, and table-related helpers include:
 - `fn.toDateTime()`
 - `fn.toDecimal32()` / `fn.toDecimal64()` / `fn.toDecimal128()` / `fn.toDecimal256()`
 - `fn.toStartOfMonth()`
-- `fn.count()` / `fn.countIf()` — default `Selection<number>` wrapped as `toFloat64(count(...))`. Chain `.toSafe()` for `Selection<string>` (`toString(count(...))`), `.toMixed()` for `Selection<number | string>` (`toUInt64(count(...))`), or `.toUnsafe()` to revert to the default. Mirrors `db.count`. Decoders enforce non-negative integers and reject `NaN`, negatives, booleans, etc. — see [`fn.count` modes](#fncount-modes) for examples.
+- `fn.count()` / `fn.countIf()` — default `Selection<number>` wrapped as `toFloat64(count(...))`. Chain `.toSafe()` for `Selection<string>` (`toString(count(...))`), `.toMixed()` for `Selection<number | string>` (`toUInt64(count(...))`), or `.toUnsafe()` to revert to the default. Mirrors `db.count`. Decoders enforce non-negative integers and reject `NaN`, negatives, booleans, etc. — see [`fn.count` / `fn.uniqExact` modes](#fncount--fnuniqexact-modes) for examples.
 - `fn.sum()` / `fn.sumIf()` / `fn.min()` / `fn.max()` — auto-cast to `Decimal(P, S)` for Decimal columns; see [Decimal precision in expressions](#decimal-precision-in-expressions)
 - `fn.avg()` — `Selection<number>` (Float64), matching ClickHouse's native `avg(Decimal)` behavior
-- `fn.uniqExact()`
+- `fn.uniqExact()` — same three chainable modes as `fn.count()`: default `Selection<number>` wrapped as `toFloat64(uniqExact(...))`, `.toSafe()` for `Selection<string>` (`toString(uniqExact(...))`), `.toMixed()` for `Selection<number | string>` (`toUInt64(uniqExact(...))`), `.toUnsafe()` to revert. Decoders are the same non-negative integer guard. See [`fn.count` / `fn.uniqExact` modes](#fncount--fnuniqexact-modes).
 - `fn.coalesce()`
 - `fn.jsonExtract()`
 - `fn.tuple()`
@@ -1266,7 +1270,7 @@ const riskScore = fn.jsonExtract(
 
 const filtered = db
   .select({
-    orderId: orderRewardLog.order_id,
+    orderId: orderRewardLog.orderId,
     regulatoryRegions: regulatory.as("regulatory_regions"),
     riskScore: riskScore.as("risk_score"),
   })
@@ -1288,7 +1292,7 @@ const firstTicket = fn.jsonExtract(
 );
 ```
 
-Higher-order array functions follow ClickHouse's parameter order. Use `csql` for the lambda, interpolate outer schema fields, and leave lambda-local variables as bare SQL names:
+Higher-order array functions follow ClickHouse's parameter order. Use `csql` for the lambda, interpolate outer schema fields, and leave lambda-local variables as bare SQL names. Functions whose lambda controls the element shape, such as `fn.arrayMap(...)`, `fn.arrayFilter(...)`, and `fn.range(...)`, return `Selection<unknown[]>` by default; chain `.mapWith(...)` when your query needs a narrower decoded element type.
 
 ```ts
 import { ck, csql, fn, type Predicate, type Selection } from "ck-orm";
@@ -1351,12 +1355,12 @@ const scopedPairs = db
 const query = db
   .with(targetPairs, targetOrders)
   .select({
-    orderId: orderRewardLog.order_id,
-    userId: orderRewardLog.user_id,
+    orderId: orderRewardLog.orderId,
+    userId: orderRewardLog.userId,
   })
   .from(orderRewardLog)
   .where(
-    ck.inArray(fn.tuple(orderRewardLog.order_id, orderRewardLog.user_id), scopedPairs),
+    ck.inArray(fn.tuple(orderRewardLog.orderId, orderRewardLog.userId), scopedPairs),
   );
 ```
 
@@ -1367,8 +1371,8 @@ Use tuple membership for compound keys. Two independent `IN` predicates produce 
 ```ts
 // Avoid this when orderId and userId must stay paired.
 const wrong = ck.and(
-  ck.inArray(orderRewardLog.order_id, orderIds),
-  ck.inArray(orderRewardLog.user_id, userIds),
+  ck.inArray(orderRewardLog.orderId, orderIds),
+  ck.inArray(orderRewardLog.userId, userIds),
 );
 ```
 
@@ -1376,7 +1380,7 @@ For pair semantics, compare one tuple against a tuple-producing subquery:
 
 ```ts
 const right = ck.inArray(
-  fn.tuple(orderRewardLog.order_id, orderRewardLog.user_id),
+  fn.tuple(orderRewardLog.orderId, orderRewardLog.userId),
   scopedPairs,
 );
 ```
@@ -1400,32 +1404,41 @@ const query = db
   .where(ck.hasAny(orderRewardLog.tags, ["vip", "reward"]));
 ```
 
-### `fn.count` modes
+### `fn.count` / `fn.uniqExact` modes
 
-`fn.count()` and `fn.countIf(predicate)` are aggregate counterparts to `db.count(...)` and follow the same three modes — useful when the count appears mid-query (in `select`, `having`, group-bys, sub-queries) rather than as a top-level scalar. They share the same SQL wrappers and decoders, so the choice maps to the same trade-offs:
+`fn.count()`, `fn.countIf(predicate)` and `fn.uniqExact(expression)` are aggregate counterparts to `db.count(...)` and follow the same three modes — useful when the count appears mid-query (in `select`, `having`, group-bys, sub-queries) rather than as a top-level scalar. They share the same SQL wrappers and decoders, so the choice maps to the same trade-offs:
 
 ```ts
 import { ck, fn } from "ck-orm";
 
 const summary = db
   .select({
-    userId: orderRewardLog.user_id,
+    userId: orderRewardLog.userId,
     // default — Selection<number>, renders toFloat64(count(...))
-    orderCount: fn.count(orderRewardLog.order_id).as("order_count"),
+    orderCount: fn.count(orderRewardLog.orderId).as("order_count"),
     // exact — Selection<string>, renders toString(count(...))
-    auditedOrderCount: fn.count(orderRewardLog.order_id).toSafe().as("audited_order_count"),
+    auditedOrderCount: fn.count(orderRewardLog.orderId).toSafe().as("audited_order_count"),
     // wire-shape — Selection<number | string>, renders toUInt64(count(...))
-    rawOrderCount: fn.count(orderRewardLog.order_id).toMixed().as("raw_order_count"),
+    rawOrderCount: fn.count(orderRewardLog.orderId).toMixed().as("raw_order_count"),
     // countIf shares the same chainable modes
     paidOrderCount: fn.countIf(ck.eq(orderRewardLog.status, 1)).as("paid_order_count"),
+    // uniqExact is symmetric with count — same modes, same decoders
+    distinctCampaigns: fn.uniqExact(orderRewardLog.campaignId).as("distinct_campaigns"),
+    distinctCampaignsExact: fn.uniqExact(orderRewardLog.campaignId).toSafe().as("distinct_campaigns_exact"),
   })
   .from(orderRewardLog)
-  .groupBy(orderRewardLog.user_id)
+  .groupBy(orderRewardLog.userId)
   // mode chooses the SQL semantics used in HAVING, ORDER BY, and other comparisons
-  .having(ck.gt(fn.count(orderRewardLog.order_id), 0));
+  .having(ck.gt(fn.count(orderRewardLog.orderId), 0));
 ```
 
 The decoders reject anything that is not a non-negative integer — booleans, `NaN`, decimals, and negative numbers throw `Failed to decode count() result: ...` — so corrupt server output fails fast instead of silently producing `0`.
+
+Other aggregates intentionally diverge from this modes API — their precision considerations are not the same as `count` / `uniqExact`:
+
+- `fn.sum()` / `fn.sumIf()` already pick a safe decoder per input column (string for integer/Decimal columns, number for floating-point columns) and auto-widen Decimal precision; chain `.mapWith(Number)` if you specifically want a `number`.
+- `fn.avg()` always returns `Selection<number>` because ClickHouse runs `avg(Decimal)` through Float64 internally — wrapping it as a string would lie about the runtime path.
+- `fn.min()` / `fn.max()` preserve the input column's TS type (so `min(int64Col)` is `Selection<string>`, matching the column's read shape).
 
 ### `fn.table`
 
@@ -1504,7 +1517,6 @@ await db.runInSession(async (session) => {
   await session.createTemporaryTableRaw(
     "tmp_raw_scope",
     `
-      CREATE TEMPORARY TABLE tmp_raw_scope
       (
         user_id String,
         created_at DateTime64(3, 'UTC')
@@ -1514,6 +1526,8 @@ await db.runInSession(async (session) => {
   );
 });
 ```
+
+The `definition` argument starts after the table name. Do not include `CREATE TEMPORARY TABLE` or the table name; ck-orm renders those and validates the identifier separately.
 
 ### Session behavior
 
@@ -1740,7 +1754,7 @@ const db = clickhouseClient({
 });
 ```
 
-`includeStatement: false` is the safer default for shared tracing backends. Keep it off when table names, column names, or query shape should not leave the service boundary. Bound values are not embedded in the compacted statement, but SQL shape can still be operationally sensitive.
+`includeStatement: false` is the safer setting for shared tracing backends. The library default is `true`; turn it off when table names, column names, or query shape should not leave the service boundary. Bound values are not embedded in the compacted statement, but SQL shape can still be operationally sensitive.
 
 ### Custom instrumentation
 

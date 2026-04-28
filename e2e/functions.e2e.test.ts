@@ -68,7 +68,7 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
     expect(presentAggregateRow.avgRevenue).toBeGreaterThan(50_000);
     expect(presentAggregateRow.minEventId).toBe("1");
     expect(presentAggregateRow.maxEventId).toBe("100000");
-    expect(presentAggregateRow.uniqueUsers).toBe("5000");
+    expect(presentAggregateRow.uniqueUsers).toBe(5000);
 
     const monthBucket = fn.toStartOfMonth(webEvents.viewed_at).as("month");
 
@@ -90,7 +90,7 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
     expect(presentMonthRow.firstViewedAt.getTime()).toBeLessThan(presentMonthRow.lastViewedAt.getTime());
   });
 
-  it("supports fn.count and fn.countIf chainable modes (toUnsafe/toSafe/toMixed)", async function testCountSelectionModes() {
+  it("supports fn.count, fn.countIf and fn.uniqExact chainable modes (toUnsafe/toSafe/toMixed)", async function testCountSelectionModes() {
     const db = createE2EDb();
 
     const [row] = await db
@@ -102,6 +102,9 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
         defaultUsCount: fn.countIf(ck.eq(webEvents.country, "US")).as("default_us_count"),
         safeUsCount: fn.countIf(ck.eq(webEvents.country, "US")).toSafe().as("safe_us_count"),
         mixedUsCount: fn.countIf(ck.eq(webEvents.country, "US")).toMixed().as("mixed_us_count"),
+        defaultUniqUsers: fn.uniqExact(webEvents.user_id).as("default_uniq_users"),
+        safeUniqUsers: fn.uniqExact(webEvents.user_id).toSafe().as("safe_uniq_users"),
+        mixedUniqUsers: fn.uniqExact(webEvents.user_id).toMixed().as("mixed_uniq_users"),
       })
       .from(webEvents);
 
@@ -110,12 +113,15 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
     expect(presentRow.defaultEventCount).toBe(100000);
     expect(presentRow.unsafeEventCount).toBe(100000);
     expect(presentRow.defaultUsCount).toBe(25000);
+    expect(presentRow.defaultUniqUsers).toBe(5000);
     // safe → string
     expect(presentRow.safeEventCount).toBe("100000");
     expect(presentRow.safeUsCount).toBe("25000");
+    expect(presentRow.safeUniqUsers).toBe("5000");
     // mixed → string under default lossless 64-bit JSON settings
     expect(presentRow.mixedEventCount).toBe("100000");
     expect(presentRow.mixedUsCount).toBe("25000");
+    expect(presentRow.mixedUniqUsers).toBe("5000");
 
     // The chosen mode controls the SQL semantics: count(...) used in HAVING with a numeric literal
     // requires a numeric (default/unsafe) or string-castable variant. Default mode here pairs with
@@ -152,6 +158,28 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
     expect(presentSafeRow.safeEventCount).toBe("25000");
     expect(presentSafeRow.mixedEventCount).toBe("25000");
     expect(Number(presentSafeRow.safeEventCount)).toBe(25000);
+
+    // fn.uniqExact embedded as a HAVING / ORDER BY operand exercises the wrapped SQL
+    // (toFloat64(uniqExact(...))) end-to-end against ClickHouse.
+    const groupedUniqRows = await db
+      .select({
+        country: webEvents.country,
+        uniqUsers: fn.uniqExact(webEvents.user_id).as("uniq_users"),
+        uniqUsersExact: fn.uniqExact(webEvents.user_id).toSafe().as("uniq_users_exact"),
+      })
+      .from(webEvents)
+      .groupBy(webEvents.country)
+      .having(ck.gt(fn.uniqExact(webEvents.user_id), 1))
+      .orderBy(ck.desc(fn.uniqExact(webEvents.user_id)))
+      .limit(3);
+
+    expect(groupedUniqRows.length).toBeGreaterThan(0);
+    for (const groupedRow of groupedUniqRows) {
+      expect(typeof groupedRow.uniqUsers).toBe("number");
+      expect(groupedRow.uniqUsers).toBeGreaterThan(1);
+      expect(typeof groupedRow.uniqUsersExact).toBe("string");
+      expect(Number(groupedRow.uniqUsersExact)).toBe(groupedRow.uniqUsers);
+    }
   });
 
   it("supports fn.coalesce, fn.tuple, fn.arrayZip and fn.not", async function testCompositeFunctions() {

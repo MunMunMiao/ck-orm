@@ -82,11 +82,7 @@ describe("ck-orm sql", function describeClickHouseORMSql() {
     expect(aliasedFragment.outputAlias).toBe("value_alias");
     expect(fragment.mapWith((value) => Number(value)).decoder("7")).toBe(7);
 
-    const source = {
-      compileSource() {
-        return sql.raw("numbers(3)");
-      },
-    };
+    const source = fn.table.call("numbers", 3);
 
     const built = compileSql(
       sql`select ${sql.identifier({ as: "only_alias" })} from ${source} where bigint_value = ${1n} and bool_flag = ${true} and score = ${1.5} and created_at = ${new Date("2026-04-21T00:00:00.000Z")} and empty_array = ${[]} and mixed_array = ${[1, "two"]} and empty_map = ${new Map()} and uniform_map = ${new Map(
@@ -100,34 +96,35 @@ describe("ck-orm sql", function describeClickHouseORMSql() {
       ])} and object_map = ${{ a: 1, b: "two" }}`,
     );
 
-    expect(built.query).toContain("select `only_alias` from numbers(3)");
-    expect(built.query).toContain("{orm_param1:Int64}");
-    expect(built.query).toContain("{orm_param2:Bool}");
-    expect(built.query).toContain("{orm_param3:Float64}");
-    expect(built.query).toContain("{orm_param4:DateTime64(3)}");
-    expect(built.query).toContain("{orm_param5:Array(String)}");
+    expect(built.query).toContain("select `only_alias` from numbers({orm_param1:Int64})");
+    expect(built.query).toContain("{orm_param2:Int64}");
+    expect(built.query).toContain("{orm_param3:Bool}");
+    expect(built.query).toContain("{orm_param4:Float64}");
+    expect(built.query).toContain("{orm_param5:DateTime64(3)}");
     expect(built.query).toContain("{orm_param6:Array(String)}");
-    expect(built.query).toContain("{orm_param7:Map(String, String)}");
-    expect(built.query).toContain("{orm_param8:Map(String, Int64)}");
-    expect(built.query).toContain("{orm_param9:Map(String, String)}");
+    expect(built.query).toContain("{orm_param7:Array(String)}");
+    expect(built.query).toContain("{orm_param8:Map(String, String)}");
+    expect(built.query).toContain("{orm_param9:Map(String, Int64)}");
     expect(built.query).toContain("{orm_param10:Map(String, String)}");
+    expect(built.query).toContain("{orm_param11:Map(String, String)}");
     expect(built.params).toEqual({
-      orm_param1: 1n,
-      orm_param2: true,
-      orm_param3: 1.5,
-      orm_param4: new Date("2026-04-21T00:00:00.000Z"),
-      orm_param5: [],
-      orm_param6: [1, "two"],
-      orm_param7: new Map(),
-      orm_param8: new Map([
+      orm_param1: 3,
+      orm_param2: 1n,
+      orm_param3: true,
+      orm_param4: 1.5,
+      orm_param5: new Date("2026-04-21T00:00:00.000Z"),
+      orm_param6: [],
+      orm_param7: [1, "two"],
+      orm_param8: new Map(),
+      orm_param9: new Map([
         ["a", 1],
         ["b", 2],
       ]),
-      orm_param9: new Map([
+      orm_param10: new Map([
         ["a", 1],
         ["b", "two"],
       ]),
-      orm_param10: { a: 1, b: "two" },
+      orm_param11: { a: 1, b: "two" },
     });
 
     expect(() => compileSql(sql`select ${Symbol("bad") as unknown as string}`)).toThrow(

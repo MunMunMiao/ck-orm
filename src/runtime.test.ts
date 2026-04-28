@@ -245,7 +245,7 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
     expect(rows).toEqual([
       {
         totalRewardPoints: "12.50000",
-        activeUsers: "3",
+        activeUsers: 3,
       },
     ]);
     expect(calls).toHaveLength(1);
@@ -264,6 +264,31 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
     expect((form as FormData).get("query")).toBeTruthy();
     expect(String((form as FormData).get("query"))).toContain("FORMAT JSON");
     expect((form as FormData).get("param_orm_param1")).toBe("u_1");
+  });
+
+  it("uses one generated query_id for instrumentation and transport", async function testGeneratedQueryIdConsistency() {
+    const { calls } = setFetchMock(() => {
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    });
+    const startedQueryIds: Array<string | undefined> = [];
+
+    const db = clickhouseClient({
+      host: "http://localhost:8123",
+      schema: { orderRewardLog },
+      instrumentation: [
+        {
+          onQueryStart(event) {
+            startedQueryIds.push(event.queryId);
+          },
+        },
+      ],
+    });
+
+    await db.execute(sql`select 1`);
+
+    const transportQueryId = calls[0]?.url.searchParams.get("query_id");
+    expect(transportQueryId).toMatch(/^[a-f0-9-]{36}$/);
+    expect(startedQueryIds).toEqual([transportQueryId]);
   });
 
   it("reuses one session id and cleans temp tables after runInSession failure", async function testRunInSessionCleanup() {
@@ -564,6 +589,15 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
     expect(calls[0]?.url.password).toBe("");
     expect(calls[0]?.url.pathname).toBe("/");
     expect(calls[0]?.url.searchParams.get("database")).toBe("demo_store");
+
+    await expect(
+      db.execute(sql`select 2`, {
+        auth: {
+          username: "request-user",
+          password: "request-pass",
+        },
+      }),
+    ).rejects.toThrow("Per-request auth cannot override credentials embedded in databaseUrl");
   });
 
   it("uses structured credentials and rejects legacy or mixed connection fields", async function testStructuredAuthAndLegacyGuards() {
@@ -692,6 +726,16 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
         session_max_concurrent_requests: 1.5,
       }),
     ).toThrow("clickhouseClient() session_max_concurrent_requests must be a positive integer");
+
+    for (const request_timeout of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() =>
+        clickhouseClient({
+          host: "http://localhost:8123",
+          schema: { orderRewardLog },
+          request_timeout,
+        }),
+      ).toThrow("clickhouseClient() request_timeout must be a finite positive number");
+    }
   });
 
   it("supports ping and replicasStatus through GET endpoint helpers", async function testSystemEndpointHelpers() {

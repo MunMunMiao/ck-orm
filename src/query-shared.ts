@@ -1,5 +1,14 @@
 import { createDecodeError } from "./errors";
-import { allocParam, type BuildContext, inferPrimitiveType, isSqlFragment, type SQLFragment, sql } from "./sql";
+import {
+  allocParam,
+  type BuildContext,
+  inferPrimitiveType,
+  isSqlFragment,
+  isTrustedSqlExpressionObject,
+  type SQLFragment,
+  sql,
+  trustSqlExpressionObject,
+} from "./sql";
 
 export type { DecodeError } from "./errors";
 export type { BuildContext, QueryParams } from "./sql";
@@ -88,7 +97,7 @@ export const createExpression = <TData, TSourceKey extends string | undefined = 
     },
   };
 
-  return expression;
+  return trustSqlExpressionObject(expression);
 };
 
 const isObject = (value: unknown): value is Record<string, unknown> => {
@@ -97,7 +106,10 @@ const isObject = (value: unknown): value is Record<string, unknown> => {
 
 export const isExpression = (value: unknown): value is SqlExpression<unknown> => {
   return (
-    isObject(value) && (value.kind === "expression" || value.kind === "column") && typeof value.compile === "function"
+    isObject(value) &&
+    isTrustedSqlExpressionObject(value) &&
+    (value.kind === "expression" || value.kind === "column") &&
+    typeof value.compile === "function"
   );
 };
 

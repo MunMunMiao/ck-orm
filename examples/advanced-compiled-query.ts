@@ -67,14 +67,14 @@ export const runDecimalPrecisionAggregate = async () => {
 
   const summary = await commerceDb
     .select({
-      userId: customerInvoice.user_id,
-      grossTotal: fn.sum(customerInvoice.total_amount).as("gross_total"),
+      userId: customerInvoice.userId,
+      grossTotal: fn.sum(customerInvoice.totalAmount).as("gross_total"),
       netTotal: csql
-        .decimal(csql`sum(${customerInvoice.total_amount}) - sum(${customerInvoice.fee_amount})`, 20, 5)
+        .decimal(csql`sum(${customerInvoice.totalAmount}) - sum(${customerInvoice.feeAmount})`, 20, 5)
         .as("net_total"),
     })
     .from(customerInvoice)
-    .groupBy(customerInvoice.user_id)
+    .groupBy(customerInvoice.userId)
     .execute();
 
   return summary;

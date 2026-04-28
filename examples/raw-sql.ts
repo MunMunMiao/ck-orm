@@ -19,9 +19,9 @@ export const buildRawExpressionExample = () => {
 
   const query = commerceDb
     .select({
-      userId: orderRewardLog.user_id,
-      month: fn.toStartOfMonth(orderRewardLog.created_at).as("month"),
-      createdAtText: fn.toString(orderRewardLog.created_at).as("created_at_text"),
+      userId: orderRewardLog.userId,
+      month: fn.toStartOfMonth(orderRewardLog.createdAt).as("month"),
+      createdAtText: fn.toString(orderRewardLog.createdAt).as("created_at_text"),
     })
     .from(orderRewardLog);
 
@@ -36,15 +36,15 @@ export const runRawQueryExample = async () => {
 
   return commerceDb.execute(csql`
     select
-      ${orderRewardLog.user_id},
-      ${fn.sum(orderRewardLog.reward_points)} as total_reward_points
+      ${orderRewardLog.userId},
+      ${fn.sum(orderRewardLog.rewardPoints)} as total_reward_points
     from ${orderRewardLog}
     where ${orderRewardLog.id} > ${threshold}
-    group by ${orderRewardLog.user_id}
+    group by ${orderRewardLog.userId}
   `);
 };
 
-export const runPlainStringRawQueryExample = async () => {
+export const runTaggedTemplateRawQueryExample = async () => {
   const commerceDb = createCommerceDb();
   return commerceDb.execute(csql`SELECT 1 AS one`);
 };

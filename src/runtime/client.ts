@@ -11,6 +11,7 @@ import {
   emitQuerySuccess,
   resolveSqlOperation,
 } from "../observability";
+import { createUuid } from "../platform";
 import type { CompiledQuery, QueryClient } from "../query";
 import { createQueryClient, createSessionId, decodeRow } from "../query";
 import type { QueryParams } from "../query-shared";
@@ -128,6 +129,7 @@ export const createClickHouseORMClient = <TSchema, TJoinUseNulls extends 0 | 1 =
         ...(options?.http_headers ?? {}),
       },
       query_params: queryParams,
+      query_id: options?.query_id ?? defaultOptions.query_id ?? createUuid(),
     } as ClickHouseBaseQueryOptions & TOptions;
   };
 
@@ -138,7 +140,7 @@ export const createClickHouseORMClient = <TSchema, TJoinUseNulls extends 0 | 1 =
     if (!sessionConcurrencyController) {
       return await operation();
     }
-    return await sessionConcurrencyController.run(options.session_id, operation);
+    return await sessionConcurrencyController.run(options.session_id, operation, options.abort_signal);
   };
 
   const buildQueryEvent = (input: {
@@ -236,7 +238,7 @@ export const createClickHouseORMClient = <TSchema, TJoinUseNulls extends 0 | 1 =
       yield* operation();
       return;
     }
-    yield* sessionConcurrencyController.runStream(options.session_id, operation);
+    yield* sessionConcurrencyController.runStream(options.session_id, operation, options.abort_signal);
   };
 
   const executeCompiled = async <TResult extends Record<string, unknown>>(
@@ -663,6 +665,7 @@ export const createClickHouseORMClient = <TSchema, TJoinUseNulls extends 0 | 1 =
         try {
           const identifier = renderTempTableIdentifier(tableName);
           await sessionClient.command(sql(`DROP TABLE IF EXISTS ${identifier}`), {
+            abort_signal: undefined,
             ignore_error_response: true,
           });
         } catch (error) {

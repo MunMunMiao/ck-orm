@@ -214,6 +214,29 @@ describe("ck-orm sql security", function describeSqlSecurity() {
     expect(compiled.params.orm_param1).toBe(evil);
   });
 
+  it("does not trust user-shaped compile objects inside csql templates", function testFakeCompileObjects() {
+    const fakeExpression = {
+      compile() {
+        return sql.raw("1 OR 1=1");
+      },
+    };
+    const fakeSource = {
+      compileSource() {
+        return sql.raw("numbers(1)");
+      },
+    };
+
+    expect(() => compileSql(sql`SELECT ${fakeExpression}`)).toThrow("Unsupported SQL parameter value");
+    expect(() => compileSql(sql`SELECT * FROM ${fakeSource}`)).toThrow("Unsupported SQL parameter value");
+  });
+
+  it("rejects empty structured identifiers", function testEmptyStructuredIdentifiers() {
+    expect(() => compileSql(sql.identifier({}))).toThrow("Invalid SQL identifier object");
+    expect(() => compileSql(sql.identifier({ table: "" }))).toThrow("table must be a non-empty identifier");
+    expect(() => compileSql(sql.identifier({ column: "" }))).toThrow("column must be a non-empty identifier");
+    expect(() => compileSql(sql.identifier({ as: "" }))).toThrow("as must be a non-empty identifier");
+  });
+
   it("allows semicolons inside comments and string literals", function testSemicolonInComments() {
     const commentResult = normalizeSingleStatementSql("SELECT 1 /* this; is; ok */", "x");
     expect(commentResult).toContain("SELECT 1");
@@ -226,6 +249,14 @@ describe("ck-orm sql security", function describeSqlSecurity() {
     expect(() => normalizeSingleStatementSql("SELECT 1; DROP TABLE users", "multiple statements not allowed")).toThrow(
       "multiple statements not allowed",
     );
+  });
+
+  it("rejects raw AggregateFunction type arguments with unsafe tokens", function testAggregateFunctionArgTypes() {
+    expect(() => aggregateFunction("sum", "UInt64; DROP TABLE users")).toThrow(
+      "Invalid AggregateFunction argument type",
+    );
+    expect(() => aggregateFunction("sum", "String -- comment")).toThrow("Invalid AggregateFunction argument type");
+    expect(aggregateFunction("sum", "UInt64").sqlType).toBe("AggregateFunction(sum, UInt64)");
   });
 
   it("rejects identifiers with Unicode symbols", function testUnicodeIdentifierRejection() {

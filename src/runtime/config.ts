@@ -63,7 +63,10 @@ export interface ClickHouseStreamOptions extends ClickHouseBaseQueryOptions {
   readonly format?: "JSONEachRow";
 }
 
-export type ClickHouseEndpointOptions = Pick<ClickHouseBaseQueryOptions, "abort_signal" | "auth" | "http_headers">;
+export type ClickHouseEndpointOptions = Pick<
+  ClickHouseBaseQueryOptions,
+  "abort_signal" | "auth" | "http_headers" | "query_id"
+>;
 
 export type CreateTemporaryTableOptions = {
   readonly mode?: "create" | "if_not_exists" | "or_replace";
@@ -214,6 +217,7 @@ export type NormalizedClientConfig = {
     readonly response: boolean;
   };
   readonly auth?: ClickHouseAuth;
+  readonly authSource: "databaseUrl" | "config";
   readonly application?: string;
   readonly database: string;
   readonly clickhouse_settings: ClickHouseSettings;
@@ -322,6 +326,28 @@ const formatQuerySetting = (value: ClickHouseSettingValue) => {
     return value ? "1" : "0";
   }
   return String(value);
+};
+
+const RESERVED_CLICKHOUSE_SETTING_PARAM_NAMES = new Set([
+  "query",
+  "query_id",
+  "database",
+  "session_id",
+  "session_timeout",
+  "session_check",
+  "role",
+  "default_format",
+  "user",
+  "username",
+  "password",
+]);
+
+export const assertValidClickHouseSettingKey = (key: string): void => {
+  if (RESERVED_CLICKHOUSE_SETTING_PARAM_NAMES.has(key) || key.startsWith("param_")) {
+    throw createClientValidationError(
+      `clickhouse_settings key "${key}" conflicts with a reserved ClickHouse HTTP parameter`,
+    );
+  }
 };
 
 const VALID_QUERY_PARAM_KEY = /^[a-zA-Z_][a-zA-Z0-9_]{0,99}$/;
@@ -464,6 +490,7 @@ export const buildSearchParams = (input: {
 
   if (input.clickhouse_settings) {
     for (const [key, value] of Object.entries(input.clickhouse_settings)) {
+      assertValidClickHouseSettingKey(key);
       entries.push([key, formatQuerySetting(value)]);
     }
   }
@@ -525,6 +552,7 @@ const resolveDatabaseUrlConfig = (databaseUrl: string | URL) => {
       username: "default",
       password: "",
     },
+    authSource: authFromUrl ? ("databaseUrl" as const) : ("config" as const),
   };
 };
 
@@ -551,6 +579,7 @@ const resolveStructuredConfig = (config: StructuredConnectionConfig) => {
       username: config.username ?? "default",
       password: config.password ?? "",
     } satisfies ClickHouseAuth,
+    authSource: "config" as const,
   };
 };
 
@@ -641,14 +670,19 @@ export const normalizeClientConfig = (config: ClickHouseFetchConfigOptions): Nor
   if (!Number.isInteger(sessionMaxConcurrentRequests) || sessionMaxConcurrentRequests < 1) {
     throw createClientValidationError("clickhouseClient() session_max_concurrent_requests must be a positive integer");
   }
+  const requestTimeout = config.request_timeout ?? 30_000;
+  if (!Number.isFinite(requestTimeout) || requestTimeout <= 0) {
+    throw createClientValidationError("clickhouseClient() request_timeout must be a finite positive number");
+  }
 
   return {
     url: resolvedConnection.url,
-    request_timeout: config.request_timeout ?? 30_000,
+    request_timeout: requestTimeout,
     compression: {
       response: config.compression?.response ?? false,
     },
     auth: resolvedConnection.auth,
+    authSource: resolvedConnection.authSource,
     application: config.application,
     database: resolvedConnection.database,
     clickhouse_settings: config.clickhouse_settings ?? {},

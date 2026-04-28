@@ -465,7 +465,7 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     const aggregateDate = new Date("2026-04-21T12:34:56.000Z");
     expect(fn.min(dateTime()).decoder(aggregateDate)).toBe(aggregateDate);
     expect(fn.max(dateTime()).decoder("2026-04-21T00:00:00.000Z")).toEqual(new Date("2026-04-21T00:00:00.000Z"));
-    expect(fn.uniqExact(int32()).decoder(5)).toBe("5");
+    expect(fn.uniqExact(int32()).decoder(5)).toBe(5);
     expect(() => fn.count().decoder(true)).toThrow("Failed to decode count() result");
     expect(fn.count().decoder(1n)).toBe(1);
     expect(fn.toString(int32()).decoder(1n)).toBe("1");
@@ -613,6 +613,11 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     expect(fn.sum(int32()).sqlType).toBeUndefined();
     expect(fn.avg(int32()).decoder("4.5")).toBe(4.5);
 
+    const nullableFloat = nullable(float64()).bind({ name: "score", tableName: "ledger" });
+    const lowCardFloat = lowCardinality(float64()).bind({ name: "fee_ratio", tableName: "ledger" });
+    expect(fn.sum(nullableFloat).decoder("4.5")).toBe(4.5);
+    expect(fn.sum(lowCardFloat).decoder("2.25")).toBe(2.25);
+
     // Wrapped Decimal columns must still trigger auto-cast.
     const nullableAmount = nullable(decimal({ precision: 18, scale: 5 })).bind({
       name: "amount",
@@ -701,6 +706,54 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     const aliasedBuilt = compileExpression(aliased);
     expect(aliasedBuilt.query).toContain("toUInt64(count())");
     expect(aliased.decoder("4")).toBe("4");
+
+    // fn.uniqExact mirrors fn.count's three modes.
+    const uniqArg = int32().bind({ name: "user_id", tableName: "events" });
+    const defaultUniq = fn.uniqExact(uniqArg);
+    expect(defaultUniq.sqlType).toBe("Float64");
+    expect(compileExpression(defaultUniq).query).toContain("toFloat64(uniqExact(`events`.`user_id`))");
+    expect(defaultUniq.decoder(7)).toBe(7);
+    expect(defaultUniq.decoder("7")).toBe(7);
+    expect(defaultUniq.decoder(7n)).toBe(7);
+    expect(() => defaultUniq.decoder(-1)).toThrow("Failed to decode count() result");
+    expect(() => defaultUniq.decoder(true)).toThrow("Failed to decode count() result");
+
+    const safeUniq = fn.uniqExact(uniqArg).toSafe();
+    expect(safeUniq.sqlType).toBe("String");
+    expect(compileExpression(safeUniq).query).toContain("toString(uniqExact(`events`.`user_id`))");
+    expect(safeUniq.decoder("99")).toBe("99");
+    expect(safeUniq.decoder(99n)).toBe("99");
+
+    const mixedUniq = fn.uniqExact(uniqArg).toMixed();
+    expect(mixedUniq.sqlType).toBe("UInt64");
+    expect(compileExpression(mixedUniq).query).toContain("toUInt64(uniqExact(`events`.`user_id`))");
+    expect(mixedUniq.decoder("100")).toBe("100");
+    expect(mixedUniq.decoder(100)).toBe(100);
+
+    const unsafeUniq = fn.uniqExact(uniqArg).toMixed().toUnsafe();
+    expect(unsafeUniq.sqlType).toBe("Float64");
+    expect(compileExpression(unsafeUniq).query).toContain("toFloat64(uniqExact(`events`.`user_id`))");
+
+    // .as() preserves chosen mode and decoder for uniqExact.
+    const aliasedUniq = fn.uniqExact(uniqArg).toMixed().as("distinct_users");
+    const aliasedUniqBuilt = compileExpression(aliasedUniq);
+    expect(aliasedUniqBuilt.query).toContain("toUInt64(uniqExact(`events`.`user_id`))");
+    expect(aliasedUniq.decoder("8")).toBe("8");
+
+    // Embedded as a SQL operand (e.g. inside HAVING / ORDER BY) — exercises compile() reuse.
+    const havingExpr = compileExpression({
+      compile: (ctx) => sql`${defaultUniq.compile(ctx)} > {orm_paramN:Int64}`,
+    }).query;
+    expect(havingExpr).toContain("toFloat64(uniqExact(`events`.`user_id`)) > {orm_paramN:Int64}");
+
+    // Boundary decoder coverage for uniqExact mirrors count.
+    expect(fn.uniqExact(uniqArg).decoder(0)).toBe(0);
+    expect(fn.uniqExact(uniqArg).decoder("9007199254740991")).toBe(9007199254740991);
+    expect(() => fn.uniqExact(uniqArg).decoder(Number.NaN)).toThrow("Failed to decode count() result");
+    expect(() => fn.uniqExact(uniqArg).decoder(1.5)).toThrow("Failed to decode count() result");
+    expect(() => fn.uniqExact(uniqArg).toSafe().decoder(-1n)).toThrow("Failed to decode count() result");
+    expect(() => fn.uniqExact(uniqArg).toSafe().decoder("1.0")).toThrow("Failed to decode count() result");
+    expect(() => fn.uniqExact(uniqArg).toMixed().decoder(true)).toThrow("Failed to decode count() result");
   });
 
   it("compiles table functions with and without alias", function testTableFunctions() {

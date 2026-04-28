@@ -373,7 +373,7 @@ describe("ck-orm query compile", function describeClickHouseORMQueryCompile() {
     const built = buildCompiled(query[compileQuerySymbol]());
 
     expect(normalizeSql(built.query)).toContain(
-      "select `orl`.`user_id` as `userId`, CAST(sum(`orl`.`reward_points`) AS Decimal(38, 5)) as `total_reward_points`, uniqExact(`orl`.`user_id`) as `activeUsers`",
+      "select `orl`.`user_id` as `userId`, CAST(sum(`orl`.`reward_points`) AS Decimal(38, 5)) as `total_reward_points`, toFloat64(uniqExact(`orl`.`user_id`)) as `activeUsers`",
     );
     expect(normalizeSql(built.query)).toContain("from `order_reward_log` as `orl` final");
     expect(normalizeSql(built.query)).toContain(

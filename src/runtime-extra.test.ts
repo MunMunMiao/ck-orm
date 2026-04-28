@@ -422,9 +422,8 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
     expect(insertReturnCount).toBe(1);
   });
 
-  it("cleans up async iterable inserts and buffers bodies when stream uploads are unsupported", async function testInsertCleanupAndBufferedFallback() {
+  it("rejects async iterable inserts when stream uploads are unsupported", async function testInsertUnsupportedStreamFallback() {
     let returnCount = 0;
-    const bodies: string[] = [];
 
     class NoStreamUploadRequest {
       readonly headers: Headers;
@@ -439,34 +438,33 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
 
     globalThis.Request = NoStreamUploadRequest as unknown as typeof Request;
 
-    globalThis.fetch = mock(async (_input: string | URL | Request, init?: RequestInit) => {
-      const bodyText = await readBodyText(init?.body);
-      if (typeof bodyText === "string") {
-        bodies.push(bodyText);
-      }
+    const fetchSpy = mock(async () => {
       return new Response("", { status: 200 });
     }) as unknown as typeof fetch;
+    globalThis.fetch = fetchSpy;
 
     const db = clickhouseClient({
       host: "http://localhost:8123",
       schema: { users },
     });
 
-    await db.insertJsonEachRow(
-      users,
-      (async function* rows() {
-        try {
-          yield { id: 1, name: "alice" };
-          yield { id: 2, name: "bob" };
-        } finally {
-          returnCount += 1;
-        }
-      })(),
-      { query_id: "buffered_insert" },
-    );
+    await expect(
+      db.insertJsonEachRow(
+        users,
+        (async function* rows() {
+          try {
+            yield { id: 1, name: "alice" };
+            yield { id: 2, name: "bob" };
+          } finally {
+            returnCount += 1;
+          }
+        })(),
+        { query_id: "buffered_insert" },
+      ),
+    ).rejects.toThrow("AsyncIterable rows require a runtime with streaming request body support");
 
-    expect(bodies).toContain('{"id":1,"name":"alice"}\n{"id":2,"name":"bob"}\n');
-    expect(returnCount).toBe(1);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(returnCount).toBe(0);
   });
 
   it("treats empty JSONEachRow array inserts as instrumented no-ops", async function testEmptyJsonEachRowArrayInsert() {
@@ -1514,6 +1512,41 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
     expect(cleanupReports).toHaveLength(1);
     expect(cleanupReports[0]?.count).toBe(1);
     expect(cleanupReports[0]?.sessionId).toMatch(/.+/);
+  });
+
+  it("cleans temporary tables even after the user abort signal fires", async function testRunInSessionCleanupIgnoresUserAbort() {
+    const bodies: string[] = [];
+    const abortController = new AbortController();
+    const userError = new Error("user aborted later");
+
+    globalThis.fetch = mock(async (_input: string | URL | Request, init?: RequestInit) => {
+      const bodyText = await readBodyText(init?.body);
+      if (typeof bodyText === "string") {
+        bodies.push(bodyText);
+      }
+      return new Response("", { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const db = clickhouseClient({
+      databaseUrl: "http://localhost:8123/demo_store",
+      schema: { users },
+    });
+
+    await expect(
+      db.runInSession(
+        async (session) => {
+          await session.createTemporaryTableRaw("tmp_abort_cleanup", "(id Int32)");
+          abortController.abort("stop cleanup inheritance");
+          throw userError;
+        },
+        {
+          abort_signal: abortController.signal,
+        },
+      ),
+    ).rejects.toBe(userError);
+
+    expect(bodies).toContain("CREATE TEMPORARY TABLE `tmp_abort_cleanup` (id Int32)");
+    expect(bodies).toContain("DROP TABLE IF EXISTS `tmp_abort_cleanup`");
   });
 
   it("does not leak abort listeners on the user-owned signal across success and timeout paths", async function testAbortListenerCleanup() {

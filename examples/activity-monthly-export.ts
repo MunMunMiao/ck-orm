@@ -21,14 +21,14 @@ export const createMonthlyRewardSummaryQuery = () => {
   const recentRewardEvents = commerceDb.$with("recent_reward_events").as(
     commerceDb
       .select({
-        userId: rewardLog.user_id,
-        campaignId: rewardLog.campaign_id,
-        month: fn.toStartOfMonth(fn.toDateTime(rewardLog.created_at)).as("month"),
-        orderId: rewardLog.order_id,
-        rewardPoints: rewardLog.reward_points,
+        userId: rewardLog.userId,
+        campaignId: rewardLog.campaignId,
+        month: fn.toStartOfMonth(fn.toDateTime(rewardLog.createdAt)).as("month"),
+        orderId: rewardLog.orderId,
+        rewardPoints: rewardLog.rewardPoints,
       })
       .from(rewardLog)
-      .where(ck.and(ck.eq(rewardLog._peerdb_is_deleted, 0), ck.eq(rewardLog.channel, 1)))
+      .where(ck.and(ck.eq(rewardLog.peerdbIsDeleted, 0), ck.eq(rewardLog.channel, 1)))
       .final(),
   );
 

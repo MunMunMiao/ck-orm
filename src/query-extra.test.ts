@@ -40,7 +40,7 @@ import {
   startsWith,
 } from "./query";
 import type { Predicate } from "./query-shared";
-import { ckTable } from "./schema";
+import { alias, ckTable } from "./schema";
 import { sql } from "./sql";
 
 const normalizeSql = (value: string) => value.replace(/\s+/g, " ").trim();
@@ -882,6 +882,66 @@ describe("ck-orm query extras", function describeClickHouseORMQueryExtras() {
         [compileQuerySymbol](),
     );
     expect(normalizeSql(rawArrayPredicate.query)).toContain("hasAny(`tagged_orders`.`tags`, ['vip','pro'])");
+  });
+
+  it("rejects duplicate SQL aliases in explicit selections", function testDuplicateSelectionAliases() {
+    const db = createQueryClient({
+      schema: { orders },
+    });
+
+    expect(() =>
+      db
+        .select({
+          id: orders.id,
+          renamed: orders.name.as("id"),
+        })
+        .from(orders)
+        [compileQuerySymbol](),
+    ).toThrow('Duplicate SQL selection alias "id"');
+  });
+
+  it("skips generated insert columns and rejects invalid insert targets", function testGeneratedInsertColumns() {
+    const generatedOrders = ckTable(
+      "generated_orders",
+      {
+        id: int32(),
+        name: string(),
+        shardDay: int32("shard_day").materialized(sql`toYYYYMM(id)`),
+        nameAlias: string("name_alias").aliasExpr(sql`name`),
+      },
+      (table) => ({
+        engine: "MergeTree",
+        orderBy: [table.id],
+      }),
+    );
+
+    const compiled = buildCompiled(
+      createInsertBuilder(generatedOrders)
+        .values({
+          id: 1,
+          name: "alice",
+        })
+        [compileQuerySymbol](),
+    );
+
+    expect(normalizeSql(compiled.query)).toContain("insert into `generated_orders` (`id`, `name`) values");
+    expect(compiled.query).not.toContain("shard_day");
+    expect(compiled.query).not.toContain("name_alias");
+
+    expect(() =>
+      createInsertBuilder(generatedOrders).values({
+        id: 1,
+        name: "alice",
+        shardDay: 202604,
+      } as never),
+    ).toThrow("cannot provide generated columns: shardDay");
+
+    expect(() => createInsertBuilder(generatedOrders)[compileQuerySymbol]()).toThrow(
+      "insert().values() must be called with at least one row before execute()",
+    );
+    expect(() => createInsertBuilder(alias(generatedOrders, "g"))).toThrow(
+      "insert() requires a base table and does not accept aliased table targets",
+    );
   });
 
   it("keeps decodeRow resilient to unsupported nested selection paths", function testDecodeRowUnsupportedNestedPath() {

@@ -24,7 +24,7 @@ import type { ClickHouseBaseQueryOptions } from "./runtime";
 import type { ClickHouseSettings, ClickHouseSettingValue } from "./runtime/settings";
 import type { AnyTable, Table } from "./schema";
 import { renderTableIdentifier } from "./schema";
-import { compileSql, type SQLFragment, sql } from "./sql";
+import { compileSql, type SQLFragment, sql, trustSqlSourceObject } from "./sql";
 
 type QuerySource = AnyTable | AnySubquery | AnyCte | TableFunctionSource;
 type KnownQuerySource = AnyTable | AnySubquery | AnyCte;
@@ -338,6 +338,9 @@ const normalizeInsertRows = <TTable extends AnyTable>(
   }
 
   const knownColumns = new Set(Object.keys(table.columns));
+  const generatedColumns = Object.entries(table.columns)
+    .filter(([, column]) => column.ddl?.materialized !== undefined || column.ddl?.aliasExpr !== undefined)
+    .map(([schemaKey, column]) => column.key ?? schemaKey);
   for (const [index, row] of rows.entries()) {
     if (!isInsertRowRecord(row)) {
       throw createClientValidationError(`insert().values() row ${index + 1} must be an object`);
@@ -347,6 +350,14 @@ const normalizeInsertRows = <TTable extends AnyTable>(
     if (unknownColumns.length > 0) {
       throw createClientValidationError(
         `insert().values() row ${index + 1} contains unknown columns: ${unknownColumns.join(", ")}`,
+      );
+    }
+    const explicitGeneratedColumns = generatedColumns.filter((columnName) =>
+      Object.hasOwn(row as Record<string, unknown>, columnName),
+    );
+    if (explicitGeneratedColumns.length > 0) {
+      throw createClientValidationError(
+        `insert().values() row ${index + 1} cannot provide generated columns: ${explicitGeneratedColumns.join(", ")}`,
       );
     }
   }
@@ -440,13 +451,19 @@ const normalizeSelectionRecord = (
   nullableSources: ReadonlySet<string>,
 ): SelectionItem[] => {
   const selectionItems: SelectionItem[] = [];
+  const usedSqlAliases = new Set<string>();
 
   for (const [key, rawValue] of Object.entries(selection)) {
     const expression = ensureExpression(rawValue);
     const sourceKey = getExpressionSourceKey(expression);
+    const sqlAlias = expression.outputAlias ?? key;
+    if (usedSqlAliases.has(sqlAlias)) {
+      throw createClientValidationError(`Duplicate SQL selection alias "${sqlAlias}"`);
+    }
+    usedSqlAliases.add(sqlAlias);
     selectionItems.push({
       key,
-      sqlAlias: expression.outputAlias ?? key,
+      sqlAlias,
       expression,
       path: [key],
       nullable: sourceKey ? nullableSources.has(sourceKey) : false,
@@ -1263,6 +1280,10 @@ export const createInsertBuilder = <TTable extends AnyTable>(
   runner?: PreparedRunner,
   rows: InsertRowInput<TTable>[] = [],
 ): InsertBuilder<TTable> => {
+  if (table.alias) {
+    throw createClientValidationError("insert() requires a base table and does not accept aliased table targets");
+  }
+
   const builder = {
     values(values: InsertRowInput<TTable> | readonly InsertRowInput<TTable>[]): InsertBuilder<TTable> {
       return createInsertBuilder(table, runner, normalizeInsertRows(table, values));
@@ -1292,11 +1313,16 @@ export const createInsertBuilder = <TTable extends AnyTable>(
     },
 
     [compileQuerySymbol](): CompiledQuery<never> {
-      const columnEntries = Object.entries(table.columns).map(([schemaKey, column]) => ({
-        key: column.key ?? schemaKey,
-        name: column.name ?? schemaKey,
-        column,
-      }));
+      if (rows.length === 0) {
+        throw createClientValidationError("insert().values() must be called with at least one row before execute()");
+      }
+      const columnEntries = Object.entries(table.columns)
+        .filter(([, column]) => column.ddl?.materialized === undefined && column.ddl?.aliasExpr === undefined)
+        .map(([schemaKey, column]) => ({
+          key: column.key ?? schemaKey,
+          name: column.name ?? schemaKey,
+          column,
+        }));
       const columnTypes = columnEntries.map(({ column }) => column.sqlType);
       const ctx: BuildContext = {
         params: {},
@@ -1734,20 +1760,21 @@ export const createTableFunctionSource = (
   compileSource: (ctx: BuildContext) => SQLFragment,
   aliasName?: string,
 ): TableFunctionSource => {
-  return {
+  const source: TableFunctionSource = {
     kind: "table-function",
     alias: aliasName,
-    compileSource(ctx) {
-      const source = compileSource(ctx);
+    compileSource(ctx: BuildContext) {
+      const compiledSource = compileSource(ctx);
       if (!aliasName) {
-        return source;
+        return compiledSource;
       }
-      return sql`${source}${sql.raw(" as ")}${sql.identifier(aliasName)}`;
+      return sql`${compiledSource}${sql.raw(" as ")}${sql.identifier(aliasName)}`;
     },
     as<TAlias extends string>(nextAlias: TAlias) {
       return createTableFunctionSource(compileSource, nextAlias);
     },
   };
+  return trustSqlSourceObject(source);
 };
 
 type NestedGroupAccumulator = {

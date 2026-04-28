@@ -1,9 +1,9 @@
-import { toBoolean, toDate, toIntegerString, toNumber, toStringValue } from "./coercion";
+import { toBoolean, toDate, toIntegerNumber, toIntegerString, toNumber, toStringValue, toTimeDate } from "./coercion";
 import { createClientValidationError, createDecodeError, type DecodeError, isDecodeError } from "./errors";
 import { assertDecimalParams, type DecimalParams, formatDecimalSqlType } from "./internal/decimal";
 import { assertValidSqlIdentifier } from "./internal/identifier";
 import { createExpression, type Decoder, type Encoder, type InferData, type SqlExpression } from "./query-shared";
-import { type SQLFragment, sql } from "./sql";
+import { type SQLFragment, sql, trustSqlExpressionObject } from "./sql";
 
 export interface ColumnBinding<
   TTableName extends string = string,
@@ -216,6 +216,17 @@ const assertPrecision = (label: string, value: number): void => {
   }
 };
 
+const assertSafeAggregateTypeArg = (value: string): void => {
+  const trimmed = value.trim();
+  const hasUnsafeToken = /;|--|\/\*|\*\/|`|"|\n|\r/.test(trimmed);
+  const hasValidShape = /^[A-Za-z][A-Za-z0-9_]*(?:\([A-Za-z0-9_,\s'()+\-./:]*\))?$/.test(trimmed);
+  if (trimmed === "" || hasUnsafeToken || !hasValidShape) {
+    throw createClientValidationError(
+      `Invalid AggregateFunction argument type: ${value}. Use ckType column helpers for complex types.`,
+    );
+  }
+};
+
 const rethrowDecodeWithPath = (error: unknown, segment: string, originalValue: unknown): DecodeError => {
   if (isDecodeError(error)) {
     const innerPath = error.path ?? "";
@@ -297,7 +308,7 @@ const createColumnFactory = <
     sourceKey: (binding?.tableAlias ?? binding?.tableName) as ResolveSourceKey<TTableName, TTableAlias>,
   });
 
-  return {
+  const column = {
     ...expression,
     kind: "column",
     key: binding?.key ?? binding?.name,
@@ -384,6 +395,7 @@ const createColumnFactory = <
       );
     },
   } as unknown as Column<TData, TSqlType, TTableName, TTableAlias>;
+  return trustSqlExpressionObject(column);
 };
 
 export type Int8<TData extends number = number> = Column<TData, "Int8">;
@@ -453,15 +465,21 @@ export type MultiPolygon<TData extends readonly [number, number][][][] = readonl
 >;
 
 const numericColumn = <TData, TSqlType extends string>(sqlType: TSqlType, decoder: Decoder<TData>, name?: string) =>
-  createColumnFactory<TData, TSqlType>(withConfiguredName({ sqlType, mapFromDriverValue: decoder }, name));
+  createColumnFactory<TData, TSqlType>(
+    withConfiguredName({ sqlType, mapFromDriverValue: decoder, mapToDriverValue: decoder }, name),
+  );
 
-const integerStringColumn = <TSqlType extends "Int64" | "UInt64">(sqlType: TSqlType, name?: string) =>
+const integerStringColumn = <TSqlType extends "Int64" | "UInt64">(
+  sqlType: TSqlType,
+  name?: string,
+  unsigned?: boolean,
+) =>
   createColumnFactory<string, TSqlType>(
     withConfiguredName(
       {
         sqlType,
-        mapFromDriverValue: toIntegerString,
-        mapToDriverValue: toIntegerString,
+        mapFromDriverValue: (value) => toIntegerString(value, { unsigned }),
+        mapToDriverValue: (value) => toIntegerString(value, { unsigned }),
       },
       name,
     ),
@@ -478,14 +496,20 @@ const geometryColumn = <TData, TSqlType extends string>(sqlType: TSqlType, name?
     ),
   );
 
-export const int8 = (name?: string): Int8<number> => numericColumn("Int8", toNumber, name);
-export const int16 = (name?: string): Int16<number> => numericColumn("Int16", toNumber, name);
-export const int32 = (name?: string): Int32<number> => numericColumn("Int32", toNumber, name);
+export const int8 = (name?: string): Int8<number> =>
+  numericColumn("Int8", (value) => toIntegerNumber(value, { min: -128, max: 127 }), name);
+export const int16 = (name?: string): Int16<number> =>
+  numericColumn("Int16", (value) => toIntegerNumber(value, { min: -32768, max: 32767 }), name);
+export const int32 = (name?: string): Int32<number> =>
+  numericColumn("Int32", (value) => toIntegerNumber(value, { min: -2147483648, max: 2147483647 }), name);
 export const int64 = (name?: string): Int64<string> => integerStringColumn("Int64", name);
-export const uint8 = (name?: string): UInt8<number> => numericColumn("UInt8", toNumber, name);
-export const uint16 = (name?: string): UInt16<number> => numericColumn("UInt16", toNumber, name);
-export const uint32 = (name?: string): UInt32<number> => numericColumn("UInt32", toNumber, name);
-export const uint64 = (name?: string): UInt64<string> => integerStringColumn("UInt64", name);
+export const uint8 = (name?: string): UInt8<number> =>
+  numericColumn("UInt8", (value) => toIntegerNumber(value, { min: 0, max: 255 }), name);
+export const uint16 = (name?: string): UInt16<number> =>
+  numericColumn("UInt16", (value) => toIntegerNumber(value, { min: 0, max: 65535 }), name);
+export const uint32 = (name?: string): UInt32<number> =>
+  numericColumn("UInt32", (value) => toIntegerNumber(value, { min: 0, max: 4294967295 }), name);
+export const uint64 = (name?: string): UInt64<string> => integerStringColumn("UInt64", name, true);
 export const float32 = (name?: string): Float32<number> => numericColumn("Float32", toNumber, name);
 export const float64 = (name?: string): Float64<number> => numericColumn("Float64", toNumber, name);
 export const bfloat16 = (name?: string): BFloat16<number> => numericColumn("BFloat16", toNumber, name);
@@ -525,7 +549,7 @@ export const date = (name?: string): DateColumn<Date> =>
 export const date32 = (name?: string): Date32<Date> =>
   createColumnFactory(withConfiguredName({ sqlType: "Date32", mapFromDriverValue: toDate }, name));
 export const time = (name?: string): Time<Date> =>
-  createColumnFactory(withConfiguredName({ sqlType: "Time", mapFromDriverValue: toDate }, name));
+  createColumnFactory(withConfiguredName({ sqlType: "Time", mapFromDriverValue: toTimeDate }, name));
 export function time64(config: PrecisionConfig): Time64<Date>;
 export function time64(name: string, config: PrecisionConfig): Time64<Date>;
 export function time64(first: string | PrecisionConfig, second?: PrecisionConfig): Time64<Date> {
@@ -535,7 +559,7 @@ export function time64(first: string | PrecisionConfig, second?: PrecisionConfig
   return createColumnFactory({
     configuredName: name,
     sqlType: `Time64(${precision})`,
-    mapFromDriverValue: toDate,
+    mapFromDriverValue: toTimeDate,
   });
 }
 export const dateTime = (name?: string): DateTime<Date> =>
@@ -709,6 +733,12 @@ export function tuple<const TItems extends readonly AnyColumn[]>(
       if (!Array.isArray(value)) {
         throw createDecodeError(`Cannot convert value to tuple: ${String(value)}`, value);
       }
+      if (value.length !== items.length) {
+        throw createDecodeError(
+          `Cannot convert value to tuple: expected ${items.length} items, got ${value.length}`,
+          value,
+        );
+      }
       return value.map((item, index) => {
         try {
           return items[index]?.mapFromDriverValue(item);
@@ -719,7 +749,17 @@ export function tuple<const TItems extends readonly AnyColumn[]>(
         [K in keyof TItems]: InferData<TItems[K]>;
       };
     },
-    mapToDriverValue: (value) => value.map((item, index) => items[index]?.mapToDriverValue(item)) as unknown[],
+    mapToDriverValue: (value) => {
+      if (!Array.isArray(value)) {
+        throw createClientValidationError(`Cannot convert value to tuple: ${String(value)}`);
+      }
+      if (value.length !== items.length) {
+        throw createClientValidationError(
+          `Cannot convert value to tuple: expected ${items.length} items, got ${value.length}`,
+        );
+      }
+      return value.map((item, index) => items[index]?.mapToDriverValue(item)) as unknown[];
+    },
   });
 }
 export function map<TKey extends AnyColumn, TValue extends AnyColumn>(
@@ -737,6 +777,11 @@ export function map<TKey extends AnyColumn, TValue extends AnyColumn>(
   third?: TValue,
 ): MapColumn<TKey, TValue> {
   const { name, left: key, right: value } = parseNamedPair<TKey, TValue>("map", first, second, third);
+  if (key.sqlType !== "String") {
+    throw createClientValidationError(
+      `ckType.map() currently supports only String keys because JavaScript records cannot represent ClickHouse duplicate map keys; got ${key.sqlType}`,
+    );
+  }
   return createColumnFactory<Record<string, InferData<TValue>>, string>({
     configuredName: name,
     sqlType: `Map(${key.sqlType}, ${value.sqlType})`,
@@ -861,6 +906,11 @@ export function aggregateFunction<TData = string>(
   const name = namedConfig ? String(namedConfig.name) : first;
   const args = namedConfig ? (namedConfig.args ?? []) : (rest as (AnyColumn | string)[]);
   assertValidSqlIdentifier(name, "aggregate function");
+  for (const arg of args) {
+    if (typeof arg === "string") {
+      assertSafeAggregateTypeArg(arg);
+    }
+  }
   return createColumnFactory({
     configuredName,
     sqlType: `AggregateFunction(${name}${args.length > 0 ? `, ${args.map((arg) => (typeof arg === "string" ? arg : arg.sqlType)).join(", ")}` : ""})`,

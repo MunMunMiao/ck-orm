@@ -28,16 +28,16 @@ export const loadRewardOrdersWithShipmentSnapshot = async () => {
 
   const rewardRows = await commerceDb
     .select({
-      orderId: orderRewardLog.order_id,
-      userId: orderRewardLog.user_id,
-      membershipId: orderRewardLog.membership_id,
-      rewardPoints: orderRewardLog.reward_points,
-      productSku: orderRewardLog.product_sku,
-      createdAt: orderRewardLog.created_at,
+      orderId: orderRewardLog.orderId,
+      userId: orderRewardLog.userId,
+      membershipId: orderRewardLog.membershipId,
+      rewardPoints: orderRewardLog.rewardPoints,
+      productSku: orderRewardLog.productSku,
+      createdAt: orderRewardLog.createdAt,
     })
     .from(orderRewardLog)
-    .where(ck.eq(orderRewardLog._peerdb_is_deleted, 0))
-    .orderBy(ck.desc(orderRewardLog.created_at))
+    .where(ck.eq(orderRewardLog.peerdbIsDeleted, 0))
+    .orderBy(ck.desc(orderRewardLog.createdAt))
     .limit(100)
     .final();
 

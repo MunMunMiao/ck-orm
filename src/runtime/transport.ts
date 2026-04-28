@@ -1,4 +1,4 @@
-import { normalizeTransportError } from "../errors";
+import { createClientValidationError, normalizeTransportError } from "../errors";
 import { createUuid } from "../platform";
 import { compileSql, sql } from "../sql";
 import { createAbortController } from "./abort";
@@ -82,7 +82,10 @@ export const createFetchClickHouseTransport = (config: NormalizedClientConfig): 
     if (mergedOptions.session_id) {
       assertValidSessionId(mergedOptions.session_id);
     }
-    const auth = mergedOptions.auth ?? config.auth;
+    if (config.authSource === "databaseUrl" && mergedOptions.auth) {
+      throw createClientValidationError("Per-request auth cannot override credentials embedded in databaseUrl");
+    }
+    const auth = config.authSource === "databaseUrl" ? config.auth : (mergedOptions.auth ?? config.auth);
     const clickhouseSettings = normalizeTransportSettings({
       settings: mergeClickHouseSettings(
         mergedOptions.clickhouse_settings,
@@ -274,8 +277,12 @@ export const createFetchClickHouseTransport = (config: NormalizedClientConfig): 
 
     async endpoint(path: string, options?: ClickHouseEndpointOptions, method: "GET" | "POST" = "GET") {
       const mergedOptions = mergeOptions(options);
-      const auth = mergedOptions.auth ?? config.auth;
-      const queryId = createUuid();
+      if (config.authSource === "databaseUrl" && mergedOptions.auth) {
+        throw createClientValidationError("Per-request auth cannot override credentials embedded in databaseUrl");
+      }
+      const auth = config.authSource === "databaseUrl" ? config.auth : (mergedOptions.auth ?? config.auth);
+      const queryId = mergedOptions.query_id ?? createUuid();
+      assertValidQueryId(queryId);
       const headers = createHeaders({
         config,
         options: mergedOptions,

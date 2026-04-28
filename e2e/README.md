@@ -80,7 +80,7 @@ The current E2E suite covers:
   - all column factories
   - `ckTable`
   - `alias`
-  - aliased table interpolation in `` sql`...` ``
+  - aliased table interpolation in `` csql`...` ``
 - basic API
   - `` csql`...` ``
   - `csql.join`

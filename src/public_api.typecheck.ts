@@ -77,7 +77,7 @@ const arraySliceSelection: Selection<string[]> = fn.arraySlice<string>(arraySele
 const arrayFlattenSelection: Selection<string[]> = fn.arrayFlatten<string>([["vip"], ["pro"]]);
 const arrayIntersectSelection: Selection<string[]> = fn.arrayIntersect<string>(["vip"], ["pro", "vip"]);
 const arrayExistsSelection: Selection<boolean> = fn.arrayExists(csql`x -> x = 'vip'`, arraySelection);
-const arrayFilterSelection: Selection<string[]> = fn.arrayFilter<string>(csql`x -> x != ''`, arraySelection);
+const arrayFilterSelection: Selection<unknown[]> = fn.arrayFilter<string>(csql`x -> x != ''`, arraySelection);
 const arrayFirstSelection: Selection<string> = fn.arrayFirst<string>(csql`x -> x != ''`, arraySelection);
 const arrayFirstOrNullSelection: Selection<string | null> = fn.arrayFirstOrNull<string>(
   csql`x -> x = 'missing'`,

@@ -1,13 +1,24 @@
+import { createAbortedError } from "../errors";
+
 type SessionQueueEntry = {
   activeCount: number;
-  waiters: Array<() => void>;
+  waiters: SessionWaiter[];
+};
+
+type SessionWaiter = {
+  resume(): void;
 };
 
 export type SessionConcurrencyController = {
-  run<TValue>(sessionId: string | undefined, operation: () => Promise<TValue>): Promise<TValue>;
+  run<TValue>(
+    sessionId: string | undefined,
+    operation: () => Promise<TValue>,
+    abortSignal?: AbortSignal,
+  ): Promise<TValue>;
   runStream<TValue>(
     sessionId: string | undefined,
     operation: () => AsyncGenerator<TValue, void, unknown>,
+    abortSignal?: AbortSignal,
   ): AsyncGenerator<TValue, void, unknown>;
 };
 
@@ -35,7 +46,7 @@ export const createSessionConcurrencyController = (maxConcurrentRequests: number
     entry.activeCount -= 1;
 
     while (entry.activeCount < maxConcurrentRequests && entry.waiters.length > 0) {
-      entry.waiters.shift()?.();
+      entry.waiters.shift()?.resume();
     }
 
     if (entry.activeCount === 0 && entry.waiters.length === 0) {
@@ -43,7 +54,17 @@ export const createSessionConcurrencyController = (maxConcurrentRequests: number
     }
   };
 
-  const acquireSlot = async (sessionId: string): Promise<() => void> => {
+  const createQueuedAbortError = (signal: AbortSignal) => {
+    if (signal.reason instanceof Error) {
+      return createAbortedError(signal.reason.message, { cause: signal.reason });
+    }
+    if (signal.reason !== undefined) {
+      return createAbortedError(String(signal.reason), { cause: signal.reason });
+    }
+    return createAbortedError();
+  };
+
+  const acquireSlot = async (sessionId: string, abortSignal?: AbortSignal): Promise<() => void> => {
     const entry = sessions.get(sessionId) ?? createSessionQueueEntry();
     sessions.set(sessionId, entry);
 
@@ -54,21 +75,64 @@ export const createSessionConcurrencyController = (maxConcurrentRequests: number
       return buildRelease();
     }
 
-    return await new Promise<() => void>((resolve) => {
-      entry.waiters.push(() => {
-        entry.activeCount += 1;
-        resolve(buildRelease());
-      });
+    if (abortSignal?.aborted) {
+      if (entry.activeCount === 0 && entry.waiters.length === 0) {
+        sessions.delete(sessionId);
+      }
+      throw createQueuedAbortError(abortSignal);
+    }
+
+    const signal = abortSignal;
+    return await new Promise<() => void>((resolve, reject) => {
+      let settled = false;
+      const cleanup = () => {
+        signal?.removeEventListener("abort", onAbort);
+      };
+      const removeWaiter = () => {
+        const index = entry.waiters.indexOf(waiter);
+        if (index >= 0) {
+          entry.waiters.splice(index, 1);
+        }
+        if (entry.activeCount === 0 && entry.waiters.length === 0) {
+          sessions.delete(sessionId);
+        }
+      };
+      const onAbort = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        removeWaiter();
+        reject(signal ? createQueuedAbortError(signal) : createAbortedError());
+      };
+      const waiter: SessionWaiter = {
+        resume() {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          cleanup();
+          entry.activeCount += 1;
+          resolve(buildRelease());
+        },
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+      entry.waiters.push(waiter);
     });
   };
 
   return {
-    async run<TValue>(sessionId: string | undefined, operation: () => Promise<TValue>): Promise<TValue> {
+    async run<TValue>(
+      sessionId: string | undefined,
+      operation: () => Promise<TValue>,
+      abortSignal?: AbortSignal,
+    ): Promise<TValue> {
       if (!sessionId) {
         return await operation();
       }
 
-      const release = await acquireSlot(sessionId);
+      const release = await acquireSlot(sessionId, abortSignal);
       try {
         return await operation();
       } finally {
@@ -79,13 +143,14 @@ export const createSessionConcurrencyController = (maxConcurrentRequests: number
     async *runStream<TValue>(
       sessionId: string | undefined,
       operation: () => AsyncGenerator<TValue, void, unknown>,
+      abortSignal?: AbortSignal,
     ): AsyncGenerator<TValue, void, unknown> {
       if (!sessionId) {
         yield* operation();
         return;
       }
 
-      const release = await acquireSlot(sessionId);
+      const release = await acquireSlot(sessionId, abortSignal);
       try {
         yield* operation();
       } finally {

@@ -72,7 +72,7 @@ const summaryQuery = db
   })
   .from(monthlyMetrics)
   .groupBy(monthlyMetrics.month, monthlyMetrics.userId, monthlyMetrics.groupId)
-  .having(ck.gt(fn.count(monthlyMetrics.itemId).toSafe(), "0"))
+  .having(ck.gt(fn.count(monthlyMetrics.itemId), 0))
   .orderBy(ck.desc(monthlyMetrics.month), ck.asc(monthlyMetrics.userId))
   .limit(100)
   .offset(20);
@@ -85,7 +85,7 @@ type _AnalyticsSummaryType = Expect<
       userId: string;
       groupId: number;
       itemCount: string;
-      uniqueItems: string;
+      uniqueItems: number;
       totalMetricValue: number | string;
       averageMetricValue: number;
       latestMetricValue: string;

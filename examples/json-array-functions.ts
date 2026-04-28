@@ -21,17 +21,13 @@ export const buildJsonRegulatoryFilterExample = () => {
 
   const query = commerceDb
     .select({
-      userId: orderRewardLog.user_id,
-      orderId: orderRewardLog.order_id,
+      userId: orderRewardLog.userId,
+      orderId: orderRewardLog.orderId,
       regulatoryRegions: regulatoryRegions.as("regulatory_regions"),
       riskScore: riskScore.as("risk_score"),
     })
     .from(orderRewardLog)
-    .where(
-      ck.eq(orderRewardLog._peerdb_is_deleted, 0),
-      ck.hasAny(regulatoryRegions, ["AU", "EU"]),
-      ck.gte(riskScore, 80),
-    )
+    .where(ck.eq(orderRewardLog.peerdbIsDeleted, 0), ck.hasAny(regulatoryRegions, ["AU", "EU"]), ck.gte(riskScore, 80))
     .limit(100);
 
   return {
@@ -46,7 +42,7 @@ export const buildArrayHelperProjectionExample = () => {
 
   const query = commerceDb
     .select({
-      userId: orderRewardLog.user_id,
+      userId: orderRewardLog.userId,
       firstTag: fn.arrayElement<string>(orderRewardLog.tags, 1).as("first_tag"),
       maybeSecondTag: fn.arrayElementOrNull<string>(orderRewardLog.tags, 2).as("maybe_second_tag"),
       topTwoRegions: fn.arraySlice<string>(regulatoryRegions, 1, 2).as("top_two_regions"),
@@ -95,15 +91,13 @@ export const buildArrayZipTupleElementScopeExample = () => {
   const query = commerceDb
     .with(targetPairs, targetOrders)
     .select({
-      orderId: orderRewardLog.order_id,
-      userId: orderRewardLog.user_id,
-      rewardPoints: orderRewardLog.reward_points,
+      orderId: orderRewardLog.orderId,
+      userId: orderRewardLog.userId,
+      rewardPoints: orderRewardLog.rewardPoints,
     })
     .from(orderRewardLog)
-    .where(
-      ck.inArray(fn.tuple(orderRewardLog.order_id, orderRewardLog.user_id), scopedOrderPair.as("scoped_order_pair")),
-    )
-    .orderBy(ck.desc(orderRewardLog.created_at));
+    .where(ck.inArray(fn.tuple(orderRewardLog.orderId, orderRewardLog.userId), scopedOrderPair.as("scoped_order_pair")))
+    .orderBy(ck.desc(orderRewardLog.createdAt));
 
   return {
     query,

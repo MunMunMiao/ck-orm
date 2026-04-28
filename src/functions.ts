@@ -76,8 +76,27 @@ const createParameterizedFunctionExpression = <TData>(
   });
 };
 
+const unwrapNullableOrLowCardinalitySqlType = (sqlType?: string): string | undefined => {
+  let current = sqlType?.trim();
+  while (current) {
+    const nullableMatch = current.match(/^Nullable\((.*)\)$/);
+    if (nullableMatch) {
+      current = nullableMatch[1].trim();
+      continue;
+    }
+    const lowCardinalityMatch = current.match(/^LowCardinality\((.*)\)$/);
+    if (lowCardinalityMatch) {
+      current = lowCardinalityMatch[1].trim();
+      continue;
+    }
+    return current;
+  }
+  return current;
+};
+
 const isFloatingSqlType = (sqlType?: string) => {
-  return sqlType?.startsWith("Float") || sqlType?.startsWith("BFloat");
+  const unwrapped = unwrapNullableOrLowCardinalitySqlType(sqlType);
+  return unwrapped?.startsWith("Float") || unwrapped?.startsWith("BFloat");
 };
 
 const numberDecoder: Decoder<number> = toNumberCoercion;
@@ -433,12 +452,12 @@ const scalarFns = {
   arrayFill<TData = unknown>(lambda: unknown, sourceArray: unknown, ...conditionArrays: unknown[]): Selection<TData[]> {
     return createArrayExpression<TData>("arrayFill", [lambda, sourceArray, ...conditionArrays]);
   },
-  arrayFilter<TData = unknown>(
+  arrayFilter<_TData = unknown>(
     lambda: unknown,
     sourceArray: unknown,
     ...conditionArrays: unknown[]
-  ): Selection<TData[]> {
-    return createArrayExpression<TData>("arrayFilter", [lambda, sourceArray, ...conditionArrays]);
+  ): Selection<unknown[]> {
+    return createArrayExpression<unknown>("arrayFilter", [lambda, sourceArray, ...conditionArrays]);
   },
   arrayFirst<TData = unknown>(lambda: unknown, sourceArray: unknown, ...conditionArrays: unknown[]): Selection<TData> {
     return createFunctionExpression<TData>("arrayFirst", [lambda, sourceArray, ...conditionArrays]);
@@ -497,8 +516,12 @@ const scalarFns = {
   ): Selection<number> {
     return createNumberExpression("arrayLevenshteinDistanceWeighted", [from, to, fromWeights, toWeights]);
   },
-  arrayMap<TData = unknown>(lambda: unknown, sourceArray: unknown, ...conditionArrays: unknown[]): Selection<TData[]> {
-    return createArrayExpression<TData>("arrayMap", [lambda, sourceArray, ...conditionArrays]);
+  arrayMap<_TData = unknown>(
+    lambda: unknown,
+    sourceArray: unknown,
+    ...conditionArrays: unknown[]
+  ): Selection<unknown[]> {
+    return createArrayExpression<unknown>("arrayMap", [lambda, sourceArray, ...conditionArrays]);
   },
   arrayMax<TData = unknown>(lambdaOrArray: unknown, array?: unknown, ...conditionArrays: unknown[]): Selection<TData> {
     const args = array === undefined ? [lambdaOrArray] : [lambdaOrArray, array, ...conditionArrays];
@@ -719,9 +742,9 @@ const scalarFns = {
   notEmpty(value: unknown): Selection<boolean> {
     return createBooleanExpression("notEmpty", [value]);
   },
-  range<TData = number>(first: unknown, second?: unknown, step?: unknown): Selection<TData[]> {
+  range<_TData = number>(first: unknown, second?: unknown, step?: unknown): Selection<unknown[]> {
     const args = second === undefined ? [first] : withOptional([first, second], step);
-    return createArrayExpression<TData>("range", args);
+    return createArrayExpression<unknown>("range", args);
   },
   replicate<TData = unknown>(value: unknown, array: unknown): Selection<TData[]> {
     return createArrayExpression<TData>("replicate", [value, array]);
@@ -828,11 +851,8 @@ const aggregateFns = {
       sqlType: wrapped.sqlType,
     });
   },
-  uniqExact(expression: unknown): Selection<string> {
-    return createFunctionExpression("uniqExact", [expression], {
-      decoder: stringDecoder,
-      sqlType: "UInt64",
-    });
+  uniqExact(expression: unknown): CountSelection {
+    return createCountSelection((ctx) => compileFunctionCall("uniqExact", [expression], ctx), "unsafe");
   },
 };
 

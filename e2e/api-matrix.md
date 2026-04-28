@@ -130,7 +130,7 @@ This matrix records the public API coverage contract. Runtime behavior rows poin
 | `fn.avg` | `functions.e2e.test.ts` |
 | `fn.min` | `functions.e2e.test.ts` |
 | `fn.max` | `functions.e2e.test.ts` |
-| `fn.uniqExact` | `functions.e2e.test.ts` |
+| `fn.uniqExact`, `fn.uniqExact().toUnsafe`, `fn.uniqExact().toSafe`, `fn.uniqExact().toMixed` | `functions.e2e.test.ts` |
 | `fn.coalesce` | `functions.e2e.test.ts` |
 | `fn.jsonExtract` | `functions.e2e.test.ts` |
 | `fn.tuple` | `functions.e2e.test.ts` |

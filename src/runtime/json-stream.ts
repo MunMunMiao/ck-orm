@@ -1,4 +1,9 @@
-import { createRequestFailedError, extractClickHouseException, normalizeTransportError } from "../errors";
+import {
+  createClientValidationError,
+  createRequestFailedError,
+  extractClickHouseException,
+  normalizeTransportError,
+} from "../errors";
 import { resolveStreamRequestBodyMode } from "../platform";
 
 export type JsonHandling = {
@@ -165,15 +170,9 @@ export const createJsonEachRowBody = (
 
   const bodyMode = resolveStreamRequestBodyMode();
   if (bodyMode === "buffered") {
-    return (async () => {
-      const chunks: string[] = [];
-      for await (const row of rows) {
-        chunks.push(json.stringify(row));
-      }
-      return {
-        body: `${chunks.join("\n")}${chunks.length > 0 ? "\n" : ""}`,
-      };
-    })();
+    throw createClientValidationError(
+      "insertJsonEachRow() AsyncIterable rows require a runtime with streaming request body support; pass a bounded array when stream uploads are unavailable",
+    );
   }
 
   const encoder = new TextEncoder();

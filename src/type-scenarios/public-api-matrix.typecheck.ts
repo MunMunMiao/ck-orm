@@ -371,6 +371,13 @@ const functionTypeMatrix = {
   withParams: fn.withParams<number>("quantile", [0.95], activityLedger.actor_id),
 } satisfies Omit<{ readonly [K in keyof typeof fn]: unknown }, "table">;
 
+const uniqExactModeMatrix = {
+  unsafe: fn.uniqExact(activityLedger.actor_id),
+  safe: fn.uniqExact(activityLedger.actor_id).toSafe(),
+  mixed: fn.uniqExact(activityLedger.actor_id).toMixed(),
+  unsafeAfterSafe: fn.uniqExact(activityLedger.actor_id).toSafe().toUnsafe(),
+};
+
 const tableFunctionTypeMatrix = {
   call: fn.table.call("numbers", 10),
 } satisfies { readonly [K in keyof typeof fn.table]: unknown };
@@ -444,7 +451,7 @@ type _FunctionDataMatrix = Expect<
       readonly arrayEnumerateDense: number[];
       readonly arrayExists: boolean;
       readonly arrayFill: number[];
-      readonly arrayFilter: number[];
+      readonly arrayFilter: unknown[];
       readonly arrayFirst: number;
       readonly arrayFirstIndex: number;
       readonly arrayFirstOrNull: number | null;
@@ -454,7 +461,7 @@ type _FunctionDataMatrix = Expect<
       readonly arrayLastIndex: number;
       readonly arrayLastOrNull: number | null;
       readonly arrayLevenshteinDistance: number;
-      readonly arrayMap: number[];
+      readonly arrayMap: unknown[];
       readonly arrayMax: number;
       readonly arrayMin: number;
       readonly arrayPartialSort: number[];
@@ -478,9 +485,25 @@ type _FunctionDataMatrix = Expect<
       readonly kql_array_sort_asc: readonly [string[]];
       readonly length: string;
       readonly notEmpty: boolean;
-      readonly range: number[];
+      readonly range: unknown[];
       readonly toDate: Date;
       readonly tupleElement: number;
+    }
+  >
+>;
+
+type _UniqExactModeDataMatrix = Expect<
+  Equal<
+    {
+      readonly [K in keyof typeof uniqExactModeMatrix]: (typeof uniqExactModeMatrix)[K] extends Selection<infer TData>
+        ? TData
+        : never;
+    },
+    {
+      readonly unsafe: number;
+      readonly safe: string;
+      readonly mixed: number | string;
+      readonly unsafeAfterSafe: number;
     }
   >
 >;

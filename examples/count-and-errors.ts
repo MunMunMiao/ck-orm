@@ -70,7 +70,7 @@ const toPublicQueryError = (error: unknown): PublicQueryError => {
 
 export const runCountModesExample = async () => {
   const commerceDb = createCommerceDb();
-  const activeRewardEvents = ck.eq(orderRewardLog._peerdb_is_deleted, 0);
+  const activeRewardEvents = ck.eq(orderRewardLog.peerdbIsDeleted, 0);
 
   const approximateNumber = await commerceDb.count(orderRewardLog, activeRewardEvents);
   const exactString = await commerceDb.count(orderRewardLog, activeRewardEvents).toSafe();
@@ -89,11 +89,11 @@ export const runErrorHandlingExample = async () => {
   try {
     return await commerceDb
       .select({
-        userId: orderRewardLog.user_id,
-        rewardPoints: orderRewardLog.reward_points,
+        userId: orderRewardLog.userId,
+        rewardPoints: orderRewardLog.rewardPoints,
       })
       .from(orderRewardLog)
-      .where(ck.eq(orderRewardLog._peerdb_is_deleted, 0))
+      .where(ck.eq(orderRewardLog.peerdbIsDeleted, 0))
       .limit(20)
       .execute({
         query_id: "reward_error_handling_example",

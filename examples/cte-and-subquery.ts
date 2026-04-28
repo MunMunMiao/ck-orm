@@ -20,20 +20,20 @@ export const buildRewardSummaryWithLatestEventExample = () => {
   const rankedUsers = commerceDb.$with("ranked_users").as(
     commerceDb
       .select({
-        userId: orderRewardLog.user_id,
-        totalRewardPoints: fn.sum(orderRewardLog.reward_points).as("total_reward_points"),
+        userId: orderRewardLog.userId,
+        totalRewardPoints: fn.sum(orderRewardLog.rewardPoints).as("total_reward_points"),
       })
       .from(orderRewardLog)
-      .groupBy(orderRewardLog.user_id),
+      .groupBy(orderRewardLog.userId),
   );
 
   const latestRewardEvent = commerceDb
     .select({
-      userId: orderRewardLog.user_id,
-      createdAt: orderRewardLog.created_at,
+      userId: orderRewardLog.userId,
+      createdAt: orderRewardLog.createdAt,
     })
     .from(orderRewardLog)
-    .orderBy(ck.desc(orderRewardLog.created_at))
+    .orderBy(ck.desc(orderRewardLog.createdAt))
     .limit(10)
     .as("latest_reward_event");
 
