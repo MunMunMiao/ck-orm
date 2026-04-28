@@ -796,11 +796,15 @@ const query = db
 
 ### `final()`
 
-Append `FINAL` to a table query:
+Append table-level `FINAL` to a table query:
 
 ```ts
 const query = db.select().from(orderRewardLog).final();
 ```
+
+For simple unaliased table reads, `ck-orm` emits `FROM table FINAL`. When the root table is aliased or the query joins additional sources, `ck-orm` wraps the finalized table in a subquery and keeps the alias on the outer source. This avoids ClickHouse analyzer edge cases around `FINAL`, table aliases, joins, and lambda expressions while preserving the same builder API.
+
+`final()` only applies to a table root source. If you need `FINAL` inside a CTE, subquery, or table-function flow, place `.final()` on the table-backed query before calling `.as(...)`.
 
 ### `limitBy()`
 

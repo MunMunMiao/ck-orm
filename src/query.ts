@@ -414,6 +414,46 @@ const renderSource = (source: QuerySource, ctx: BuildContext): SQLFragment => {
   }
 };
 
+const renderTableFinalSubquery = (table: AnyTable): SQLFragment => {
+  const sourceAlias = table.alias ?? table.originalName;
+  const selectionParts = Object.entries(table.columns).map(([schemaKey, column]) => {
+    const physicalName = column.name ?? schemaKey;
+    return sql`${sql.identifier({
+      table: table.originalName,
+      column: physicalName,
+    })}${sql.raw(" as ")}${sql.identifier(physicalName)}`;
+  });
+
+  return sql`${sql.raw("(")}${sql.raw("select ")}${joinSqlParts(selectionParts, ", ")}${sql.raw(" from ")}${sql.identifier(
+    {
+      table: table.originalName,
+    },
+  )}${sql.raw(" final) as ")}${sql.identifier(sourceAlias)}`;
+};
+
+const renderRootSource = (
+  source: QuerySource,
+  ctx: BuildContext,
+  useFinal: boolean,
+  hasJoins: boolean,
+): SQLFragment => {
+  if (!useFinal) {
+    return renderSource(source, ctx);
+  }
+
+  if (source.kind !== "table") {
+    throw createClientValidationError(
+      "final() only supports table sources. Move final() into the table-backed subquery before using it as a source.",
+    );
+  }
+
+  if (!source.alias && !hasJoins) {
+    return sql`${renderTableIdentifier(source)}${sql.raw(" final")}`;
+  }
+
+  return renderTableFinalSubquery(source);
+};
+
 const getSourceColumns = (source: QuerySource): SourceColumns | undefined => {
   switch (source.kind) {
     case "table":
@@ -1140,9 +1180,8 @@ export const createSelectBuilder = <
         queryParts.push(sql`${sql.raw("select ")}${renderSelection(selectionItems, ctx)}`);
 
         if (state.fromSource) {
-          const fromSource = renderSource(state.fromSource, ctx);
-          const finalSuffix = state.useFinal ? sql.raw(" final") : sql.raw("");
-          queryParts.push(sql`${sql.raw("from ")}${fromSource}${finalSuffix}`);
+          const fromSource = renderRootSource(state.fromSource, ctx, state.useFinal, state.joins.length > 0);
+          queryParts.push(sql`${sql.raw("from ")}${fromSource}`);
         }
 
         if (state.joins.length > 0) {

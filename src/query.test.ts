@@ -375,7 +375,11 @@ describe("ck-orm query compile", function describeClickHouseORMQueryCompile() {
     expect(normalizeSql(built.query)).toContain(
       "select `orl`.`user_id` as `userId`, CAST(sum(`orl`.`reward_points`) AS Decimal(38, 5)) as `total_reward_points`, toFloat64(uniqExact(`orl`.`user_id`)) as `activeUsers`",
     );
-    expect(normalizeSql(built.query)).toContain("from `order_reward_log` as `orl` final");
+    expect(normalizeSql(built.query)).toContain(
+      "from (select `order_reward_log`.`id` as `id`, `order_reward_log`.`user_id` as `user_id`",
+    );
+    expect(normalizeSql(built.query)).toContain("from `order_reward_log` final) as `orl`");
+    expect(normalizeSql(built.query)).not.toContain("as `orl` final");
     expect(normalizeSql(built.query)).toContain(
       "where (`orl`.`user_id` = {orm_param1:String} and `orl`.`channel` in ({orm_param2:Int32}, {orm_param3:Int32}))",
     );
@@ -389,6 +393,65 @@ describe("ck-orm query compile", function describeClickHouseORMQueryCompile() {
       orm_param4: 20,
       orm_param5: 40,
     });
+  });
+
+  it("wraps complex FINAL table sources as stable table-level subqueries", function testComplexFinalTableSource() {
+    const db = createQueryClient({
+      schema: {
+        users,
+        pets,
+        camelRewardLog,
+      },
+    });
+
+    const joinedFinal = buildCompiled(
+      db
+        .select({
+          userId: users.id,
+          petName: pets.pet_name,
+        })
+        .from(users)
+        .innerJoin(pets, eq(users.id, pets.owner_id))
+        .final()
+        [compileQuerySymbol](),
+    );
+
+    expect(normalizeSql(joinedFinal.query)).toContain(
+      "from (select `users`.`id` as `id`, `users`.`name` as `name` from `users` final) as `users` inner join `pets`",
+    );
+    expect(normalizeSql(joinedFinal.query)).not.toContain("`users` final inner join");
+
+    const aliasedCamelRewardLog = ckAlias(camelRewardLog, "reward_log");
+    const aliasedFinal = buildCompiled(
+      db
+        .select({
+          userId: aliasedCamelRewardLog.userId,
+          rewardPoints: aliasedCamelRewardLog.rewardPoints,
+        })
+        .from(aliasedCamelRewardLog)
+        .final()
+        [compileQuerySymbol](),
+    );
+
+    expect(normalizeSql(aliasedFinal.query)).toContain(
+      "from (select `order_reward_log`.`user_id` as `user_id`, `order_reward_log`.`reward_points` as `reward_points`, `order_reward_log`.`created_at` as `created_at` from `order_reward_log` final) as `reward_log`",
+    );
+    expect(normalizeSql(aliasedFinal.query)).toContain("select `reward_log`.`user_id` as `userId`");
+    expect(normalizeSql(aliasedFinal.query)).not.toContain("`order_reward_log`.`userId`");
+
+    const simpleFinal = buildCompiled(db.select({ id: users.id }).from(users).final()[compileQuerySymbol]());
+    expect(normalizeSql(simpleFinal.query)).toContain("from `users` final");
+
+    const scopedUsers = db.select({ id: users.id }).from(users).as("scoped_users");
+    expect(() =>
+      db
+        .select({
+          id: scopedUsers.id,
+        })
+        .from(scopedUsers)
+        .final()
+        [compileQuerySymbol](),
+    ).toThrow("final() only supports table sources");
   });
 
   it("compiles cte, subquery, tuple, arrayZip and limit by", function testCompileCteAndFunctions() {

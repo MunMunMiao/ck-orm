@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { ck, ckTable, ckType, type Predicate } from "./ck-orm";
+import { ck, ckAlias, ckTable, ckType, csql, fn, type Predicate } from "./ck-orm";
 import { createE2EDb, createTempTableName, pets, rewardEvents, users, webEvents } from "./shared";
 import { describeE2E } from "./test-helpers";
 
@@ -160,5 +160,119 @@ describeE2E("ck-orm e2e count and dynamic filters", function describeCountAndDyn
       scopedTotal: 2,
       rewardTotal: 10,
     });
+  });
+
+  it("supports aliased FINAL sources with session temp-table joins and array lambdas", async function testFinalAliasTempJoinArrayLambda() {
+    const db = createE2EDb();
+    const tempTableName = createTempTableName("final_scope");
+    const tempScope = ckTable(tempTableName, {
+      user_id: ckType.string(),
+      start_id_list: ckType.array(ckType.int64()),
+      end_id_list: ckType.array(ckType.int64()),
+    });
+
+    const rows = await db.runInSession(async (session) => {
+      await session.createTemporaryTable(tempScope);
+      await session.insertJsonEachRow(tempScope, [
+        {
+          user_id: "user_1",
+          start_id_list: [1],
+          end_id_list: [5000],
+        },
+      ]);
+
+      const rewardLog = ckAlias(rewardEvents, "reward_events_final");
+      return await session
+        .select({
+          rewardId: rewardLog.id,
+          userId: rewardLog.user_id,
+        })
+        .from(rewardLog)
+        .innerJoin(tempScope, ck.eq(rewardLog.user_id, tempScope.user_id))
+        .where(
+          ck.eq(rewardLog._peerdb_is_deleted, 0),
+          fn.arrayExists(
+            csql`(start_id, end_id) -> ${rewardLog.id} >= start_id AND ${rewardLog.id} <= end_id`,
+            tempScope.start_id_list,
+            tempScope.end_id_list,
+          ),
+        )
+        .final()
+        .orderBy(rewardLog.id)
+        .limit(1);
+    });
+
+    expect(rows).toEqual([
+      {
+        rewardId: 1,
+        userId: "user_1",
+      },
+    ]);
+  });
+
+  it("supports aliased FINAL sources with temp joins, array lambdas, aggregation and iterators", async function testFinalAliasTempJoinAggregateIterator() {
+    const db = createE2EDb();
+    const tempTableName = createTempTableName("final_aggregate_scope");
+    const tempScope = ckTable(tempTableName, {
+      user_id: ckType.string(),
+      start_id_list: ckType.array(ckType.int64()),
+      end_id_list: ckType.array(ckType.int64()),
+    });
+
+    const rows = await db.runInSession(async (session) => {
+      await session.createTemporaryTable(tempScope);
+      await session.insertJsonEachRow(tempScope, [
+        {
+          user_id: "user_1",
+          start_id_list: [1],
+          end_id_list: [10_001],
+        },
+        {
+          user_id: "user_2",
+          start_id_list: [2],
+          end_id_list: [10_002],
+        },
+      ]);
+
+      const rewardLog = ckAlias(rewardEvents, "reward_events_aggregate_final");
+      const iterator = session
+        .select({
+          userId: rewardLog.user_id,
+          rewardCount: fn.count().as("reward_count"),
+          totalRewardPoints: fn.sum(rewardLog.reward_points).as("total_reward_points"),
+        })
+        .from(rewardLog)
+        .innerJoin(tempScope, ck.eq(rewardLog.user_id, tempScope.user_id))
+        .where(
+          ck.eq(rewardLog._peerdb_is_deleted, 0),
+          fn.arrayExists(
+            csql`(start_id, end_id) -> ${rewardLog.id} >= start_id AND ${rewardLog.id} <= end_id`,
+            tempScope.start_id_list,
+            tempScope.end_id_list,
+          ),
+        )
+        .final()
+        .groupBy(rewardLog.user_id)
+        .having(ck.gt(fn.count(), 0))
+        .orderBy(rewardLog.user_id)
+        .iterator();
+
+      const result: Array<{
+        userId: string;
+        rewardCount: number;
+        totalRewardPoints: string;
+      }> = [];
+      for await (const row of iterator) {
+        result.push(row);
+      }
+      return result;
+    });
+
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.userId)).toEqual(["user_1", "user_2"]);
+    for (const row of rows) {
+      expect(row.rewardCount).toBeGreaterThan(0);
+      expect(row.totalRewardPoints).toMatch(/^-?\d+(?:\.\d+)?$/);
+    }
   });
 });

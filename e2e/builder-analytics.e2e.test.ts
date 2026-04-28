@@ -156,6 +156,86 @@ describeE2E("ck-orm e2e builder analytics", function describeBuilderAnalytics() 
     });
   });
 
+  it("supports unaliased FINAL root tables with joins and left-join null semantics", async function testUnaliasedFinalRootJoinNulls() {
+    const db = createE2EDb();
+
+    const rows = await db
+      .select({
+        rewardUserId: rewardEvents.user_id,
+        rewardId: rewardEvents.id,
+        matchedUserName: users.name,
+      })
+      .from(rewardEvents)
+      .leftJoin(users, ck.eq(rewardEvents.user_id, users.name))
+      .where(ck.inArray(rewardEvents.user_id, ["user_1", "user_4001"]), ck.eq(rewardEvents._peerdb_is_deleted, 0))
+      .final()
+      .orderBy(rewardEvents.user_id, rewardEvents.id)
+      .limitBy([rewardEvents.user_id], 1)
+      .limit(2);
+
+    expect(rows).toEqual([
+      {
+        rewardUserId: "user_1",
+        rewardId: 1,
+        matchedUserName: null,
+      },
+      {
+        rewardUserId: "user_4001",
+        rewardId: 4001,
+        matchedUserName: "user_4001",
+      },
+    ]);
+  });
+
+  it("supports aliased FINAL root tables with CTE joins and predicate subqueries", async function testAliasedFinalRootCtePredicateSubquery() {
+    const db = createE2EDb();
+    const allowedUsers = db.$with("allowed_users").as(
+      db
+        .select({
+          userName: users.name,
+        })
+        .from(users)
+        .where(ck.inArray(users.id, [4001, 4002])),
+    );
+
+    const rewardLog = ckAlias(rewardEvents, "reward_events_cte_final");
+    const rows = await db
+      .with(allowedUsers)
+      .select({
+        rewardUserId: rewardLog.user_id,
+        rewardId: rewardLog.id,
+      })
+      .from(rewardLog)
+      .innerJoin(allowedUsers, ck.eq(rewardLog.user_id, allowedUsers.userName))
+      .where(
+        ck.eq(rewardLog._peerdb_is_deleted, 0),
+        ck.exists(
+          db
+            .select({
+              userName: allowedUsers.userName,
+            })
+            .from(allowedUsers)
+            .where(ck.eq(allowedUsers.userName, rewardLog.user_id))
+            .limit(1),
+        ),
+      )
+      .final()
+      .orderBy(rewardLog.user_id, rewardLog.id)
+      .limitBy([rewardLog.user_id], 1)
+      .limit(2);
+
+    expect(rows).toEqual([
+      {
+        rewardUserId: "user_4001",
+        rewardId: 4001,
+      },
+      {
+        rewardUserId: "user_4002",
+        rewardId: 4002,
+      },
+    ]);
+  });
+
   it("preserves Decimal precision via auto-cast aggregates, fn.toDecimal128 and csql.decimal", async function testDecimalPrecisionPaths() {
     const db = createE2EDb();
 
