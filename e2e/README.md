@@ -79,7 +79,7 @@ The current E2E suite covers:
 - schema round-trip
   - all column factories
   - `ckTable`
-  - `alias`
+  - `ckAlias`
   - aliased table interpolation in `` csql`...` ``
 - basic API
   - `` csql`...` ``
@@ -134,7 +134,7 @@ The current E2E suite covers:
   - identifier contexts
     - `csql.identifier('...')`
     - `csql.identifier({ table, column, as })`
-    - `alias(...)`
+    - `ckAlias(...)`
     - temporary table names
     - `fn.withParams(...)` function names
     - `fn.table.call(...)` function names

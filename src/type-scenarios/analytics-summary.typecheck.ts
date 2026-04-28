@@ -1,4 +1,4 @@
-import { alias, ck, clickhouseClient, csql, fn, type InferInsertModel, type InferSelectModel } from "../index";
+import { ck, ckAlias, clickhouseClient, csql, fn, type InferInsertModel, type InferSelectModel } from "../index";
 import { activityMetricLog, logicalMetrics, typeScenarioSchema } from "./fixtures";
 import type { Equal, Expect, InferBuilderResult } from "./helpers";
 
@@ -32,8 +32,8 @@ db.insert(logicalMetrics).values([{ userId: "user_2" }]);
 // @ts-expect-error insert values must use logical schema keys, not physical column names.
 db.insert(logicalMetrics).values({ user_id: "user_1", metric_value: "10.50000" });
 
-const metricLog = alias(activityMetricLog, "aml");
-const aliasedLogicalMetrics = alias(logicalMetrics, "lr");
+const metricLog = ckAlias(activityMetricLog, "aml");
+const aliasedLogicalMetrics = ckAlias(logicalMetrics, "lr");
 const aliasLogicalSelect = db.select({ userId: aliasedLogicalMetrics.userId }).from(aliasedLogicalMetrics);
 type _AliasLogicalSelectType = Expect<Equal<InferBuilderResult<typeof aliasLogicalSelect>, { userId: string }>>;
 

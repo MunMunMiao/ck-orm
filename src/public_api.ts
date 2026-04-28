@@ -223,7 +223,7 @@ export {
 } from "./runtime";
 export type { AnyTable, Table } from "./schema";
 export {
-  alias,
+  ckAlias,
   ckTable,
   type InferInsertModel,
   type InferInsertSchema,

@@ -3,7 +3,7 @@ import { int32, string } from "./columns";
 import { isClickHouseORMError } from "./errors";
 import { fn } from "./functions";
 import { assertDecimalParams, parseDecimalSqlType } from "./internal/decimal";
-import { alias, ckTable } from "./schema";
+import { ckAlias, ckTable } from "./schema";
 import { compileSql, sql } from "./sql";
 
 const users = ckTable(
@@ -35,7 +35,7 @@ describe("ck-orm sql", function describeClickHouseORMSql() {
   });
 
   it("supports aliased table identifiers and non-primitive structured params", function testIdentifiersAndStructuredParams() {
-    const aliasedUsers = alias(users, "u");
+    const aliasedUsers = ckAlias(users, "u");
     const built = compileSql(
       sql`select ${aliasedUsers.id} from ${aliasedUsers} where scores = ${[1, 2]} and props = ${{ a: 1 }} and tags = ${new Map([["k", 2]])}`,
     );

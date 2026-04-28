@@ -16,7 +16,7 @@ import {
 import type { Selection } from "./query-shared";
 import { clickhouseClient } from "./runtime";
 import type { ClickHouseTableEngine } from "./schema";
-import { alias, ckTable } from "./schema";
+import { ckAlias, ckTable } from "./schema";
 import { sql } from "./sql";
 import { orderRewardLog } from "./test-schema/commerce";
 import { shipmentOrder } from "./test-schema/fulfillment";
@@ -323,7 +323,7 @@ const buildCompiled = (compiled: { statement: string; params: Record<string, unk
 };
 
 describe("ck-orm query compile", function describeClickHouseORMQueryCompile() {
-  it("compiles a drizzle-like select with alias, final, filters, limit and offset", function testCompileSelect() {
+  it("compiles a drizzle-like select with ckAlias, final, filters, limit and offset", function testCompileSelect() {
     expect(typeAssertions).toEqual([
       true,
       true,
@@ -348,7 +348,7 @@ describe("ck-orm query compile", function describeClickHouseORMQueryCompile() {
     expect(orderRewardLog.options.orderBy?.map((column) => column.name)).toEqual(["user_id", "created_at", "id"]);
     expect(orderRewardLog.options.versionColumn?.name).toBe("_peerdb_version");
 
-    const aliasedLog = alias(orderRewardLog, "orl");
+    const aliasedLog = ckAlias(orderRewardLog, "orl");
     expect(aliasedLog.options.orderBy?.map((column) => column.tableAlias)).toEqual(["orl", "orl", "orl"]);
     expect(aliasedLog.options.versionColumn?.tableAlias).toBe("orl");
 

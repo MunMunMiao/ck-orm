@@ -40,7 +40,7 @@ import {
   startsWith,
 } from "./query";
 import type { Predicate } from "./query-shared";
-import { alias, ckTable } from "./schema";
+import { ckAlias, ckTable } from "./schema";
 import { sql } from "./sql";
 
 const normalizeSql = (value: string) => value.replace(/\s+/g, " ").trim();
@@ -939,7 +939,7 @@ describe("ck-orm query extras", function describeClickHouseORMQueryExtras() {
     expect(() => createInsertBuilder(generatedOrders)[compileQuerySymbol]()).toThrow(
       "insert().values() must be called with at least one row before execute()",
     );
-    expect(() => createInsertBuilder(alias(generatedOrders, "g"))).toThrow(
+    expect(() => createInsertBuilder(ckAlias(generatedOrders, "g"))).toThrow(
       "insert() requires a base table and does not accept aliased table targets",
     );
   });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { InferInsertModel, InferInsertSchema, InferSelectModel, InferSelectSchema } from "ck-orm";
 import { int32, string } from "./columns";
-import { alias, ckTable } from "./schema";
+import { ckAlias, ckTable } from "./schema";
 import type {
   commerceSchema,
   customerInvoice,
@@ -69,7 +69,7 @@ describe("ck-orm schema infer helpers", function describeClickHouseORMSchemaInfe
       },
     );
 
-    const aliased = alias(table, "e");
+    const aliased = ckAlias(table, "e");
     expect(aliased.options.orderBy).toEqual([unmanagedOrderBy]);
   });
 
@@ -80,7 +80,7 @@ describe("ck-orm schema infer helpers", function describeClickHouseORMSchemaInfe
       versionColumn: t.version,
     }));
 
-    const aliased = alias(events, "e");
+    const aliased = ckAlias(events, "e");
     expect(aliased.options.orderBy?.[0]).toBe(aliased.id as never);
     expect(aliased.options.versionColumn).toBe(aliased.version as never);
     expect((aliased.options.orderBy?.[0] as { tableAlias?: string } | undefined)?.tableAlias).toBe("e");
@@ -98,7 +98,7 @@ describe("ck-orm schema infer helpers", function describeClickHouseORMSchemaInfe
     expect(events.createdAt.key).toBe("createdAt");
     expect(events.createdAt.name).toBe("created_at");
 
-    const aliased = alias(events, "e");
+    const aliased = ckAlias(events, "e");
     expect(aliased.userId.key).toBe("userId");
     expect(aliased.userId.name).toBe("user_id");
     expect(aliased.userId.tableAlias).toBe("e");
@@ -120,7 +120,7 @@ describe("ck-orm schema infer helpers", function describeClickHouseORMSchemaInfe
       primaryKey: [t.id, t.tenant_id],
     }));
 
-    const aliased = alias(events, "e");
+    const aliased = ckAlias(events, "e");
     expect(aliased.options.partitionBy).toEqual([aliased.tenant_id, aliased.bucket_id]);
     expect(aliased.options.primaryKey).toEqual([aliased.id, aliased.tenant_id]);
   });
@@ -132,7 +132,7 @@ describe("ck-orm schema infer helpers", function describeClickHouseORMSchemaInfe
       primaryKey: t.id,
     }));
 
-    const aliased = alias(events, "e");
+    const aliased = ckAlias(events, "e");
     expect(aliased.options.partitionBy).toBe(aliased.tenant_id);
     expect(aliased.options.primaryKey).toBe(aliased.id);
   });

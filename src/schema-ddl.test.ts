@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { dateTime, decimal, int32, string } from "./columns";
-import { alias, ckTable } from "./schema";
+import { ckAlias, ckTable } from "./schema";
 import { buildCreateTableStatement, buildCreateTemporaryTableStatement, buildDropTableStatement } from "./schema-ddl";
 import { sql } from "./sql";
 
@@ -155,7 +155,7 @@ describe("ck-orm schema ddl", function describeSchemaDdl() {
 
   it("rejects aliased tables, invalid bound columns, custom versionColumn engines and parameterized ddl fragments", function testDdlValidationEdges() {
     const events = ckTable("events", { id: int32() });
-    expect(() => buildCreateTableStatement(alias(events, "e"))).toThrow(
+    expect(() => buildCreateTableStatement(ckAlias(events, "e"))).toThrow(
       "Schema DDL requires a base table, not an aliased table",
     );
 

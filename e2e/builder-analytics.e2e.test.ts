@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { alias, ck, csql, fn } from "./ck-orm";
+import { ck, ckAlias, csql, fn } from "./ck-orm";
 import { createE2EDb, rewardEvents, users, webEvents } from "./shared";
 import { describeE2E } from "./test-helpers";
 
@@ -98,7 +98,7 @@ describeE2E("ck-orm e2e builder analytics", function describeBuilderAnalytics() 
       .limit(10)
       .as("reward_scope");
 
-    const owner = alias(users, "owner");
+    const owner = ckAlias(users, "owner");
     const innerRows = await db
       .select({
         ownerId: owner.id,

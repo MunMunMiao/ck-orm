@@ -1,12 +1,12 @@
 import { it } from "bun:test";
-import { alias, csql, fn, type SQLFragment } from "./ck-orm";
+import { ckAlias, csql, fn, type SQLFragment } from "./ck-orm";
 import { createE2EDb, users } from "./shared";
 import { describeE2E, expectClientValidationNotSent, expectNoMutationAfterRejectedInjection } from "./test-helpers";
 
 describeE2E("ck-orm e2e injection identifiers", function describeInjectionIdentifiers() {
   it("rejects malicious string and object identifiers before a request is sent", async function testSqlIdentifierValidation() {
     const db = createE2EDb();
-    const evilAlias = alias(users, "owner`; DROP");
+    const evilAlias = ckAlias(users, "owner`; DROP");
 
     const cases: Array<{
       readonly run: () => Promise<unknown> | unknown;

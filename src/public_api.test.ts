@@ -4,7 +4,7 @@ import * as publicApi from "./index";
 import { compileSql } from "./sql";
 
 const expectedRootRuntimeKeys = [
-  "alias",
+  "ckAlias",
   "ckTable",
   "ckType",
   "ck",

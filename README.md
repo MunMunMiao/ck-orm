@@ -166,7 +166,7 @@ Public API coverage by guide:
 
 | API family | README section | Example files |
 | --- | --- | --- |
-| `ckType`, `ckTable`, `alias`, model inference | [Schema DSL](#schema-dsl) | [`schema-and-types.ts`](./examples/schema-and-types.ts), [`schema/commerce.ts`](./examples/schema/commerce.ts), [`schema/fulfillment.ts`](./examples/schema/fulfillment.ts) |
+| `ckType`, `ckTable`, `ckAlias`, model inference | [Schema DSL](#schema-dsl) | [`schema-and-types.ts`](./examples/schema-and-types.ts), [`schema/commerce.ts`](./examples/schema/commerce.ts), [`schema/fulfillment.ts`](./examples/schema/fulfillment.ts) |
 | `clickhouseClient`, connection config, settings | [Client configuration](#client-configuration) | [`basic-select.ts`](./examples/basic-select.ts), [`runtime-observability.ts`](./examples/runtime-observability.ts) |
 | `select`, joins, filters, grouping, ordering, `limitBy`, CTEs | [Query builder](#query-builder) | [`basic-select.ts`](./examples/basic-select.ts), [`cte-and-subquery.ts`](./examples/cte-and-subquery.ts), [`fulfillment-order-lifecycle.ts`](./examples/fulfillment-order-lifecycle.ts) |
 | `count`, `count().toSafe()`, `count().toMixed()` | [`db.count()`](#dbcount) | [`count-and-errors.ts`](./examples/count-and-errors.ts) |
@@ -324,17 +324,17 @@ type RewardLogInsert = InferInsertModel<typeof orderRewardLog>;
 type CommerceRows = InferSelectSchema<typeof commerceSchema>;
 ```
 
-### `alias()`
+### `ckAlias()`
 
-Use `alias()` when the same table needs to appear more than once in a query.
+Use `ckAlias()` when the same table needs to appear more than once in a query.
 
 ```ts
-import { fn, ck, alias } from "ck-orm";
+import { fn, ck, ckAlias } from "ck-orm";
 
-const rewardLog = alias(orderRewardLog, "reward_log");
+const rewardLog = ckAlias(orderRewardLog, "reward_log");
 ```
 
-Aliased columns are rebound automatically to the alias.
+Columns returned by `ckAlias()` are rebound automatically to the alias.
 
 ### Column names
 
@@ -613,10 +613,10 @@ With joins, implicit selection groups fields by source and returns nested object
 ### `from()`, `innerJoin()`, `leftJoin()`
 
 ```ts
-import { alias, ck } from "ck-orm";
+import { ckAlias, ck } from "ck-orm";
 
-const rewardLog = alias(orderRewardLog, "reward_log");
-const matchedRewardLog = alias(orderRewardLog, "matched_reward_log");
+const rewardLog = ckAlias(orderRewardLog, "reward_log");
+const matchedRewardLog = ckAlias(orderRewardLog, "matched_reward_log");
 
 const rows = await db
   .select({

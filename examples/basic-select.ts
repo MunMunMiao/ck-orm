@@ -1,4 +1,4 @@
-import { alias, ck, clickhouseClient, fn } from "./ck-orm";
+import { ck, ckAlias, clickhouseClient, fn } from "./ck-orm";
 import { commerceSchema, orderRewardLog } from "./schema/commerce";
 
 const createCommerceDb = () => {
@@ -16,7 +16,7 @@ const createCommerceDb = () => {
 
 export const buildRewardLeaderboardExample = () => {
   const commerceDb = createCommerceDb();
-  const rewardLog = alias(orderRewardLog, "orl");
+  const rewardLog = ckAlias(orderRewardLog, "orl");
   const totalRewardPoints = fn.sum(rewardLog.rewardPoints).as("total_reward_points");
 
   const query = commerceDb

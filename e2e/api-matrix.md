@@ -6,7 +6,7 @@ This matrix records the public API coverage contract. Runtime behavior rows poin
 
 | API | Coverage location |
 | --- | --- |
-| root runtime exports: `ck`, `fn`, `csql`, `ckType`, `ckTable`, `alias`, `clickhouseClient`, `isClickHouseORMError`, `isDecodeError` | `src/public_api.test.ts` |
+| root runtime exports: `ck`, `fn`, `csql`, `ckType`, `ckTable`, `ckAlias`, `clickhouseClient`, `isClickHouseORMError`, `isDecodeError` | `src/public_api.test.ts` |
 | root type exports: columns, tables, query selections, compiled query metadata, runtime config/options/settings/session, observability events, error contracts, schema inference helpers, `SQLFragment`, `JsonPathSegment` | `src/public_api.test.ts`, `src/public_api.typecheck.ts`, `src/type-scenarios/public-api-matrix.typecheck.ts` |
 | namespace key guards for `ck`, `fn`, `fn.table`, `csql`, `ckType` | `src/public_api.test.ts`, `src/type-scenarios/public-api-matrix.typecheck.ts` |
 
@@ -170,7 +170,7 @@ All `fn` keys are guarded by `src/public_api.test.ts` and `src/type-scenarios/pu
 | API | Coverage location |
 | --- | --- |
 | `ckTable` | `schema-roundtrip.e2e.test.ts` |
-| `alias` | `schema-roundtrip.e2e.test.ts`, `builder-analytics.e2e.test.ts` |
+| `ckAlias` | `schema-roundtrip.e2e.test.ts`, `builder-analytics.e2e.test.ts` |
 | `int8/int16/int32/int64` | `schema-roundtrip.e2e.test.ts`, `write-paths.e2e.test.ts` |
 | `uint8/uint16/uint32/uint64` | `schema-roundtrip.e2e.test.ts`, `write-paths.e2e.test.ts` |
 | `float32/float64/bfloat16` | `schema-roundtrip.e2e.test.ts` |
@@ -231,7 +231,7 @@ All `fn` keys are guarded by `src/public_api.test.ts` and `src/type-scenarios/pu
 | LIKE / ILIKE payloads | `injection-values.e2e.test.ts` |
 | literal-text pattern matching via semantic helpers | `injection-values.e2e.test.ts` |
 | string and object identifier rejection | `injection-identifiers.e2e.test.ts` |
-| alias, temporary-table, and function-name rejection | `injection-identifiers.e2e.test.ts` |
+| ckAlias, temporary-table, and function-name rejection | `injection-identifiers.e2e.test.ts` |
 | stacked raw SQL rejection and no-mutation checks | `injection-raw-sql.e2e.test.ts` |
 | semicolons inside string literals and comments | `injection-raw-sql.e2e.test.ts` |
 | `query_params`, `query_id`, and `session_id` validation | `injection-transport-and-boundaries.e2e.test.ts` |

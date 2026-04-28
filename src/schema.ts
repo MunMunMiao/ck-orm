@@ -248,7 +248,7 @@ export const ckTable = <TName extends string, TColumns extends Record<string, An
   return Object.assign(table, boundColumns);
 };
 
-export const alias = <TTable extends AnyTable, TAlias extends string>(
+export const ckAlias = <TTable extends AnyTable, TAlias extends string>(
   table: TTable,
   aliasName: TAlias,
 ): TableWithColumns<

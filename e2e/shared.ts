@@ -1,6 +1,6 @@
 export { buildCreateTableStatement, buildDropTableStatement } from "../src/schema-ddl";
 
-import { alias, type ClickHouseClientConfig, ckTable, ckType, clickhouseClient } from "./ck-orm";
+import { type ClickHouseClientConfig, ckAlias, ckTable, ckType, clickhouseClient } from "./ck-orm";
 
 const requiredEnv = (name: string) => {
   const value = process.env[name];
@@ -345,4 +345,4 @@ export const createTempTableName = (prefix: string) => {
   return `${prefix}_${Date.now()}_${suffix}`;
 };
 
-export const aliasedUsers = alias(users, "u");
+export const aliasedUsers = ckAlias(users, "u");

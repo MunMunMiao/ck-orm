@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { alias, csql } from "./ck-orm";
+import { ckAlias, csql } from "./ck-orm";
 import { createE2EDb, schemaAggregates, schemaCompound, schemaGeo, schemaPrimitives, users } from "./shared";
 import { describeE2E, expectDate, expectPresent } from "./test-helpers";
 
@@ -124,9 +124,9 @@ describeE2E("ck-orm e2e schema roundtrip", function describeSchemaRoundtrip() {
     });
   });
 
-  it("supports alias interpolation for schema sources", async function testAliasRoundtrip() {
+  it("supports ckAlias interpolation for schema sources", async function testAliasRoundtrip() {
     const db = createE2EDb();
-    const aliasedUsers = alias(users, "u");
+    const aliasedUsers = ckAlias(users, "u");
     const rows = await db.execute(csql`
       select ${aliasedUsers.id} as id, ${aliasedUsers.name} as name
       from ${aliasedUsers}
