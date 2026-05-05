@@ -1,8 +1,11 @@
 import {
   toBoolean as toBooleanCoercion,
   toDate as toDateCoercion,
+  toIntegerNumber as toIntegerNumberCoercion,
+  toIntegerString as toIntegerStringCoercion,
   toNumber as toNumberCoercion,
   toStringValue as toStringCoercion,
+  toTimeDate as toTimeDateCoercion,
 } from "./coercion";
 import type { AnyColumn } from "./columns";
 import { createClientValidationError, createDecodeError } from "./errors";
@@ -143,13 +146,45 @@ const resolveCoalesceFallbackSqlType = (firstSqlType: string | undefined, fallba
 const numberDecoder: Decoder<number> = toNumberCoercion;
 const stringDecoder: Decoder<string> = toStringCoercion;
 const dateDecoder: Decoder<Date> = toDateCoercion;
+const timeDecoder: Decoder<Date> = toTimeDateCoercion;
 const booleanDecoder: Decoder<boolean> = toBooleanCoercion;
+
+const nullableDecoder =
+  <TData>(decoder: Decoder<TData>): Decoder<TData | null> =>
+  (value) =>
+    value === null ? null : decoder(value);
+
+const createIntegerNumberDecoder =
+  (min: number, max: number): Decoder<number> =>
+  (value) =>
+    toIntegerNumberCoercion(value, { min, max });
+
+const int8Decoder = createIntegerNumberDecoder(-128, 127);
+const int16Decoder = createIntegerNumberDecoder(-32768, 32767);
+const int32Decoder = createIntegerNumberDecoder(-2147483648, 2147483647);
+const uint8Decoder = createIntegerNumberDecoder(0, 255);
+const uint16Decoder = createIntegerNumberDecoder(0, 65535);
+const uint32Decoder = createIntegerNumberDecoder(0, 4294967295);
+const intStringDecoder: Decoder<string> = (value) => toIntegerStringCoercion(value);
+const uintStringDecoder: Decoder<string> = (value) => toIntegerStringCoercion(value, { unsigned: true });
 
 const FIXED_WIDTH_DECIMAL_PRECISION = {
   toDecimal32: 9,
   toDecimal64: 18,
   toDecimal128: 38,
   toDecimal256: 76,
+  toDecimal32OrZero: 9,
+  toDecimal64OrZero: 18,
+  toDecimal128OrZero: 38,
+  toDecimal256OrZero: 76,
+  toDecimal32OrNull: 9,
+  toDecimal64OrNull: 18,
+  toDecimal128OrNull: 38,
+  toDecimal256OrNull: 76,
+  toDecimal32OrDefault: 9,
+  toDecimal64OrDefault: 18,
+  toDecimal128OrDefault: 38,
+  toDecimal256OrDefault: 76,
 } as const;
 
 type FixedWidthDecimalName = keyof typeof FIXED_WIDTH_DECIMAL_PRECISION;
@@ -158,6 +193,62 @@ const assertDateTime64Scale: (scale: unknown) => asserts scale is number = (scal
   if (typeof scale !== "number" || !Number.isInteger(scale) || scale < 0 || scale > 9) {
     throw createClientValidationError(`toDateTime64 scale must be an integer between 0 and 9, got ${String(scale)}`);
   }
+};
+
+const assertNonNegativeInteger: (label: string, value: unknown) => asserts value is number = (label, value) => {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw createClientValidationError(`${label} must be a non-negative integer, got ${String(value)}`);
+  }
+};
+
+const assertPositiveInteger: (label: string, value: unknown) => asserts value is number = (label, value) => {
+  if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+    throw createClientValidationError(`${label} must be a positive integer, got ${String(value)}`);
+  }
+};
+
+const escapeSqlSingleQuoted = (value: string) => value.replaceAll("\\", "\\\\").replaceAll("'", "\\'");
+
+const createStringLiteral = (label: string, value: unknown): SQLFragment => {
+  if (typeof value !== "string" || value.length === 0) {
+    throw createClientValidationError(`${label} must be a non-empty string, got ${String(value)}`);
+  }
+  return sql.raw(`'${escapeSqlSingleQuoted(value)}'`);
+};
+
+const TYPE_LITERAL_PATTERN = /^[A-Za-z0-9_(),\s.'+\-=/]+$/;
+const TYPE_LITERAL_DENYLIST = /;|--|\/\*|\*\/|`|"/;
+
+const createTypeLiteral = (value: unknown): SQLFragment => {
+  if (typeof value !== "string" || value.length === 0) {
+    throw createClientValidationError(`ClickHouse type literal must be a non-empty string, got ${String(value)}`);
+  }
+  if (!TYPE_LITERAL_PATTERN.test(value) || TYPE_LITERAL_DENYLIST.test(value)) {
+    throw createClientValidationError(`Invalid ClickHouse type literal: ${value}`);
+  }
+  return sql.raw(value);
+};
+
+const INTERVAL_UNITS = new Set([
+  "nanosecond",
+  "microsecond",
+  "millisecond",
+  "second",
+  "minute",
+  "hour",
+  "day",
+  "week",
+  "month",
+  "quarter",
+  "year",
+]);
+
+const createIntervalUnitLiteral = (value: unknown): SQLFragment => {
+  const unitLiteral = createStringLiteral("toInterval unit", value);
+  if (typeof value !== "string" || !INTERVAL_UNITS.has(value.toLowerCase())) {
+    throw createClientValidationError(`toInterval unit must be a valid ClickHouse interval unit, got ${String(value)}`);
+  }
+  return unitLiteral;
 };
 
 const isDecimalColumnLike = (value: unknown): value is { decimalConfig: DecimalParams } => {
@@ -186,11 +277,15 @@ const widenForSum = (params: DecimalParams): DecimalParams => {
   };
 };
 
-const createFixedWidthDecimalCast = (
+const createFixedWidthDecimalCast = <TData = string>(
   fnName: FixedWidthDecimalName,
   expression: unknown,
   scale: unknown,
-): Selection<string> => {
+  config?: {
+    readonly decoder?: Decoder<TData>;
+    readonly extraArgs?: readonly unknown[];
+  },
+): Selection<TData> => {
   const precision = FIXED_WIDTH_DECIMAL_PRECISION[fnName];
   if (typeof scale !== "number" || !Number.isInteger(scale) || scale < 0 || scale > precision) {
     throw createClientValidationError(
@@ -201,13 +296,17 @@ const createFixedWidthDecimalCast = (
   // so we inline it instead of binding through the parameter channel (which
   // would produce `{orm_paramN:Int64}` and trigger ILLEGAL_TYPE_OF_ARGUMENT).
   const sqlType = `Decimal(${precision}, ${scale})`;
-  return createExpression<string>({
+  return createExpression<TData>({
     compile: (ctx) => {
       assertValidSqlIdentifier(fnName, "function");
-      const compiledExpr = compileValue(expression, ctx);
-      return sql`${sql.raw(fnName)}(${compiledExpr}, ${sql.raw(String(scale))})`;
+      const compiledArgs = [
+        compileValue(expression, ctx),
+        sql.raw(String(scale)),
+        ...(config?.extraArgs ?? []).map((argument) => compileValue(argument, ctx)),
+      ];
+      return sql`${sql.raw(fnName)}(${joinSqlParts(compiledArgs, ", ")})`;
     },
-    decoder: stringDecoder,
+    decoder: config?.decoder ?? (stringDecoder as Decoder<TData>),
     sqlType,
   });
 };
@@ -353,6 +452,176 @@ const createInt64Expression = (name: string, args: readonly unknown[]): Selectio
   });
 };
 
+const createTypedConversionExpression = <TData>(
+  name: string,
+  args: readonly unknown[],
+  decoder: Decoder<TData>,
+  sqlType?: string,
+): Selection<TData> => {
+  return createFunctionExpression(name, args, {
+    decoder,
+    sqlType,
+  });
+};
+
+const createNullableTypedConversionExpression = <TData>(
+  name: string,
+  args: readonly unknown[],
+  decoder: Decoder<TData>,
+  sqlType?: string,
+): Selection<TData | null> => {
+  return createTypedConversionExpression(
+    name,
+    args,
+    nullableDecoder(decoder),
+    sqlType ? `Nullable(${sqlType})` : undefined,
+  );
+};
+
+const createCastExpression = <TData>(
+  expression: unknown,
+  targetType: string,
+  decoder?: Decoder<TData>,
+): Selection<TData> => {
+  createTypeLiteral(targetType);
+  return createExpression<TData>({
+    compile: (ctx) => {
+      const compiledExpr = compileValue(expression, ctx);
+      return sql`CAST(${compiledExpr} AS ${createTypeLiteral(targetType)})`;
+    },
+    decoder: decoder ?? (passThroughDecoder as Decoder<TData>),
+    sqlType: targetType,
+  });
+};
+
+const createTypeStringFunctionExpression = <TData>(
+  name: string,
+  expression: unknown,
+  targetType: string,
+  config?: {
+    readonly decoder?: Decoder<TData>;
+    readonly nullable?: boolean;
+    readonly extraArgs?: readonly unknown[];
+  },
+): Selection<TData> => {
+  createTypeLiteral(targetType);
+  return createExpression<TData>({
+    compile: (ctx) => {
+      assertValidSqlIdentifier(name, "function");
+      const compiledArgs = [
+        compileValue(expression, ctx),
+        createStringLiteral(`${name} type`, targetType),
+        ...(config?.extraArgs ?? []).map((argument) => compileValue(argument, ctx)),
+      ];
+      return sql`${sql.raw(name)}(${joinSqlParts(compiledArgs, ", ")})`;
+    },
+    decoder: config?.decoder ?? (passThroughDecoder as Decoder<TData>),
+    sqlType: config?.nullable ? `Nullable(${targetType})` : targetType,
+  });
+};
+
+const createFixedStringExpression = (expression: unknown, length: unknown): Selection<string> => {
+  assertPositiveInteger("toFixedString length", length);
+  return createExpression<string>({
+    compile: (ctx) => {
+      const compiledExpr = compileValue(expression, ctx);
+      return sql`toFixedString(${compiledExpr}, ${sql.raw(String(length))})`;
+    },
+    decoder: stringDecoder,
+    sqlType: `FixedString(${length})`,
+  });
+};
+
+const createDateTime64ConversionExpression = <TData>(
+  name: string,
+  expression: unknown,
+  scale: unknown,
+  timezone: unknown | undefined,
+  defaultValue: unknown | undefined,
+  decoder: Decoder<TData>,
+): Selection<TData> => {
+  assertDateTime64Scale(scale);
+  return createExpression<TData>({
+    compile: (ctx) => {
+      const compiledArgs = [
+        compileValue(expression, ctx),
+        sql.raw(String(scale)),
+        ...(timezone === undefined ? [] : [compileValue(timezone, ctx)]),
+        ...(defaultValue === undefined ? [] : [compileValue(defaultValue, ctx)]),
+      ];
+      return sql`${sql.raw(name)}(${joinSqlParts(compiledArgs, ", ")})`;
+    },
+    decoder,
+    sqlType: `DateTime64(${scale})`,
+  });
+};
+
+const createTime64Expression = <TData>(
+  name: string,
+  expression: unknown,
+  precision: unknown,
+  decoder: Decoder<TData>,
+): Selection<TData> => {
+  assertDateTime64Scale(precision);
+  return createExpression<TData>({
+    compile: (ctx) => {
+      const compiledExpr = compileValue(expression, ctx);
+      return sql`${sql.raw(name)}(${compiledExpr}, ${sql.raw(String(precision))})`;
+    },
+    decoder,
+    sqlType: `Time64(${precision})`,
+  });
+};
+
+const createDateTime64ParseExpression = <TData>(
+  name: string,
+  leadingArgs: readonly unknown[],
+  precision: unknown | undefined,
+  timezone: unknown | undefined,
+  decoder: Decoder<TData>,
+): Selection<TData> => {
+  if (precision !== undefined) assertDateTime64Scale(precision);
+  return createExpression<TData>({
+    compile: (ctx) => {
+      const compiledArgs = [
+        ...leadingArgs.map((argument) => compileValue(argument, ctx)),
+        ...(precision === undefined ? [] : [sql.raw(String(precision))]),
+        ...(timezone === undefined ? [] : [compileValue(timezone, ctx)]),
+      ];
+      return sql`${sql.raw(name)}(${joinSqlParts(compiledArgs, ", ")})`;
+    },
+    decoder,
+    sqlType: precision === undefined ? "DateTime64" : `DateTime64(${precision})`,
+  });
+};
+
+const createDateTime64BestEffortExpression = <TData>(
+  name: string,
+  expression: unknown,
+  precisionOrTimezone: unknown | undefined,
+  timezone: unknown | undefined,
+  decoder: Decoder<TData>,
+): Selection<TData> => {
+  const precision = typeof precisionOrTimezone === "number" ? precisionOrTimezone : undefined;
+  const resolvedTimezone = precision === undefined ? precisionOrTimezone : timezone;
+  return createDateTime64ParseExpression(name, [expression], precision, resolvedTimezone, decoder);
+};
+
+const createIntervalExpression = (name: string, value: unknown, unit?: unknown): Selection<unknown> => {
+  if (unit !== undefined) {
+    createIntervalUnitLiteral(unit);
+  }
+  return createExpression<unknown>({
+    compile: (ctx) => {
+      const compiledArgs =
+        unit === undefined ? [compileValue(value, ctx)] : [compileValue(value, ctx), createIntervalUnitLiteral(unit)];
+      return sql`${sql.raw(name)}(${joinSqlParts(compiledArgs, ", ")})`;
+    },
+    decoder: passThroughDecoder,
+    sqlType: "Interval",
+  });
+};
+
 const withOptional = (args: readonly unknown[], optional: unknown | undefined): readonly unknown[] => {
   return optional === undefined ? args : [...args, optional];
 };
@@ -404,12 +673,593 @@ const scalarFns = {
   ): Selection<InferData<TColumn>> {
     return createJsonExtractExpression(json, returnType, path);
   },
+  cast<TData = unknown>(expression: unknown, targetType: string): Selection<TData> {
+    return createCastExpression<TData>(expression, targetType);
+  },
+  date(expression: unknown): Selection<Date> {
+    return createTypedConversionExpression("DATE", [expression], dateDecoder, "Date");
+  },
+  accurateCast<TData = unknown>(expression: unknown, targetType: string): Selection<TData> {
+    return createTypeStringFunctionExpression<TData>("accurateCast", expression, targetType);
+  },
+  accurateCastOrDefault<TData = unknown>(
+    expression: unknown,
+    targetType: string,
+    defaultValue?: unknown,
+  ): Selection<TData> {
+    return createTypeStringFunctionExpression<TData>("accurateCastOrDefault", expression, targetType, {
+      extraArgs: defaultValue === undefined ? [] : [defaultValue],
+    });
+  },
+  accurateCastOrNull<TData = unknown>(expression: unknown, targetType: string): Selection<TData | null> {
+    return createTypeStringFunctionExpression<TData | null>("accurateCastOrNull", expression, targetType, {
+      decoder: nullableDecoder(passThroughDecoder as Decoder<TData>),
+      nullable: true,
+    });
+  },
+  formatRow(format: unknown, ...args: unknown[]): Selection<string> {
+    return createTypedConversionExpression("formatRow", [format, ...args], stringDecoder, "String");
+  },
+  formatRowNoNewline(format: unknown, ...args: unknown[]): Selection<string> {
+    return createTypedConversionExpression("formatRowNoNewline", [format, ...args], stringDecoder, "String");
+  },
+  parseDateTime(expression: unknown, format: unknown, timezone?: unknown): Selection<Date> {
+    return createTypedConversionExpression(
+      "parseDateTime",
+      withOptional([expression, format], timezone),
+      dateDecoder,
+      "DateTime",
+    );
+  },
+  parseDateTimeOrNull(expression: unknown, format: unknown, timezone?: unknown): Selection<Date | null> {
+    return createNullableTypedConversionExpression(
+      "parseDateTimeOrNull",
+      withOptional([expression, format], timezone),
+      dateDecoder,
+      "DateTime",
+    );
+  },
+  parseDateTimeOrZero(expression: unknown, format: unknown, timezone?: unknown): Selection<Date> {
+    return createTypedConversionExpression(
+      "parseDateTimeOrZero",
+      withOptional([expression, format], timezone),
+      dateDecoder,
+      "DateTime",
+    );
+  },
+  parseDateTimeBestEffort(expression: unknown, timezone?: unknown): Selection<Date> {
+    return createTypedConversionExpression(
+      "parseDateTimeBestEffort",
+      withOptional([expression], timezone),
+      dateDecoder,
+      "DateTime",
+    );
+  },
+  parseDateTimeBestEffortOrNull(expression: unknown, timezone?: unknown): Selection<Date | null> {
+    return createNullableTypedConversionExpression(
+      "parseDateTimeBestEffortOrNull",
+      withOptional([expression], timezone),
+      dateDecoder,
+      "DateTime",
+    );
+  },
+  parseDateTimeBestEffortOrZero(expression: unknown, timezone?: unknown): Selection<Date> {
+    return createTypedConversionExpression(
+      "parseDateTimeBestEffortOrZero",
+      withOptional([expression], timezone),
+      dateDecoder,
+      "DateTime",
+    );
+  },
+  parseDateTimeBestEffortUS(expression: unknown, timezone?: unknown): Selection<Date> {
+    return createTypedConversionExpression(
+      "parseDateTimeBestEffortUS",
+      withOptional([expression], timezone),
+      dateDecoder,
+      "DateTime",
+    );
+  },
+  parseDateTimeBestEffortUSOrNull(expression: unknown, timezone?: unknown): Selection<Date | null> {
+    return createNullableTypedConversionExpression(
+      "parseDateTimeBestEffortUSOrNull",
+      withOptional([expression], timezone),
+      dateDecoder,
+      "DateTime",
+    );
+  },
+  parseDateTimeBestEffortUSOrZero(expression: unknown, timezone?: unknown): Selection<Date> {
+    return createTypedConversionExpression(
+      "parseDateTimeBestEffortUSOrZero",
+      withOptional([expression], timezone),
+      dateDecoder,
+      "DateTime",
+    );
+  },
+  parseDateTimeInJodaSyntax(expression: unknown, format: unknown, timezone?: unknown): Selection<Date> {
+    return createTypedConversionExpression(
+      "parseDateTimeInJodaSyntax",
+      withOptional([expression, format], timezone),
+      dateDecoder,
+      "DateTime",
+    );
+  },
+  parseDateTimeInJodaSyntaxOrNull(expression: unknown, format: unknown, timezone?: unknown): Selection<Date | null> {
+    return createNullableTypedConversionExpression(
+      "parseDateTimeInJodaSyntaxOrNull",
+      withOptional([expression, format], timezone),
+      dateDecoder,
+      "DateTime",
+    );
+  },
+  parseDateTimeInJodaSyntaxOrZero(expression: unknown, format: unknown, timezone?: unknown): Selection<Date> {
+    return createTypedConversionExpression(
+      "parseDateTimeInJodaSyntaxOrZero",
+      withOptional([expression, format], timezone),
+      dateDecoder,
+      "DateTime",
+    );
+  },
+  parseDateTime32BestEffort(expression: unknown, timezone?: unknown): Selection<Date> {
+    return createTypedConversionExpression(
+      "parseDateTime32BestEffort",
+      withOptional([expression], timezone),
+      dateDecoder,
+      "DateTime",
+    );
+  },
+  parseDateTime32BestEffortOrNull(expression: unknown, timezone?: unknown): Selection<Date | null> {
+    return createNullableTypedConversionExpression(
+      "parseDateTime32BestEffortOrNull",
+      withOptional([expression], timezone),
+      dateDecoder,
+      "DateTime",
+    );
+  },
+  parseDateTime32BestEffortOrZero(expression: unknown, timezone?: unknown): Selection<Date> {
+    return createTypedConversionExpression(
+      "parseDateTime32BestEffortOrZero",
+      withOptional([expression], timezone),
+      dateDecoder,
+      "DateTime",
+    );
+  },
+  parseDateTime64(expression: unknown, format: unknown, timezone?: unknown): Selection<Date> {
+    return createDateTime64ParseExpression("parseDateTime64", [expression, format], undefined, timezone, dateDecoder);
+  },
+  parseDateTime64OrNull(expression: unknown, format: unknown, timezone?: unknown): Selection<Date | null> {
+    return createDateTime64ParseExpression(
+      "parseDateTime64OrNull",
+      [expression, format],
+      undefined,
+      timezone,
+      nullableDecoder(dateDecoder),
+    );
+  },
+  parseDateTime64OrZero(expression: unknown, format: unknown, timezone?: unknown): Selection<Date> {
+    return createDateTime64ParseExpression(
+      "parseDateTime64OrZero",
+      [expression, format],
+      undefined,
+      timezone,
+      dateDecoder,
+    );
+  },
+  parseDateTime64BestEffort(expression: unknown, precisionOrTimezone?: unknown, timezone?: unknown): Selection<Date> {
+    return createDateTime64BestEffortExpression(
+      "parseDateTime64BestEffort",
+      expression,
+      precisionOrTimezone,
+      timezone,
+      dateDecoder,
+    );
+  },
+  parseDateTime64BestEffortOrNull(
+    expression: unknown,
+    precisionOrTimezone?: unknown,
+    timezone?: unknown,
+  ): Selection<Date | null> {
+    return createDateTime64BestEffortExpression(
+      "parseDateTime64BestEffortOrNull",
+      expression,
+      precisionOrTimezone,
+      timezone,
+      nullableDecoder(dateDecoder),
+    );
+  },
+  parseDateTime64BestEffortOrZero(
+    expression: unknown,
+    precisionOrTimezone?: unknown,
+    timezone?: unknown,
+  ): Selection<Date> {
+    return createDateTime64BestEffortExpression(
+      "parseDateTime64BestEffortOrZero",
+      expression,
+      precisionOrTimezone,
+      timezone,
+      dateDecoder,
+    );
+  },
+  parseDateTime64BestEffortUS(expression: unknown, precisionOrTimezone?: unknown, timezone?: unknown): Selection<Date> {
+    return createDateTime64BestEffortExpression(
+      "parseDateTime64BestEffortUS",
+      expression,
+      precisionOrTimezone,
+      timezone,
+      dateDecoder,
+    );
+  },
+  parseDateTime64BestEffortUSOrNull(
+    expression: unknown,
+    precisionOrTimezone?: unknown,
+    timezone?: unknown,
+  ): Selection<Date | null> {
+    return createDateTime64BestEffortExpression(
+      "parseDateTime64BestEffortUSOrNull",
+      expression,
+      precisionOrTimezone,
+      timezone,
+      nullableDecoder(dateDecoder),
+    );
+  },
+  parseDateTime64BestEffortUSOrZero(
+    expression: unknown,
+    precisionOrTimezone?: unknown,
+    timezone?: unknown,
+  ): Selection<Date> {
+    return createDateTime64BestEffortExpression(
+      "parseDateTime64BestEffortUSOrZero",
+      expression,
+      precisionOrTimezone,
+      timezone,
+      dateDecoder,
+    );
+  },
+  parseDateTime64InJodaSyntax(expression: unknown, format: unknown, timezone?: unknown): Selection<Date> {
+    return createDateTime64ParseExpression(
+      "parseDateTime64InJodaSyntax",
+      [expression, format],
+      undefined,
+      timezone,
+      dateDecoder,
+    );
+  },
+  parseDateTime64InJodaSyntaxOrNull(expression: unknown, format: unknown, timezone?: unknown): Selection<Date | null> {
+    return createDateTime64ParseExpression(
+      "parseDateTime64InJodaSyntaxOrNull",
+      [expression, format],
+      undefined,
+      timezone,
+      nullableDecoder(dateDecoder),
+    );
+  },
+  parseDateTime64InJodaSyntaxOrZero(expression: unknown, format: unknown, timezone?: unknown): Selection<Date> {
+    return createDateTime64ParseExpression(
+      "parseDateTime64InJodaSyntaxOrZero",
+      [expression, format],
+      undefined,
+      timezone,
+      dateDecoder,
+    );
+  },
+  reinterpret<TData = unknown>(expression: unknown, targetType: string): Selection<TData> {
+    return createTypeStringFunctionExpression<TData>("reinterpret", expression, targetType);
+  },
+  reinterpretAsDate(expression: unknown): Selection<Date> {
+    return createTypedConversionExpression("reinterpretAsDate", [expression], dateDecoder, "Date");
+  },
+  reinterpretAsDateTime(expression: unknown): Selection<Date> {
+    return createTypedConversionExpression("reinterpretAsDateTime", [expression], dateDecoder, "DateTime");
+  },
+  reinterpretAsFixedString(expression: unknown): Selection<string> {
+    return createTypedConversionExpression("reinterpretAsFixedString", [expression], stringDecoder, "FixedString");
+  },
+  reinterpretAsFloat32(expression: unknown): Selection<number> {
+    return createTypedConversionExpression("reinterpretAsFloat32", [expression], numberDecoder, "Float32");
+  },
+  reinterpretAsFloat64(expression: unknown): Selection<number> {
+    return createTypedConversionExpression("reinterpretAsFloat64", [expression], numberDecoder, "Float64");
+  },
+  reinterpretAsInt8(expression: unknown): Selection<number> {
+    return createTypedConversionExpression("reinterpretAsInt8", [expression], int8Decoder, "Int8");
+  },
+  reinterpretAsInt16(expression: unknown): Selection<number> {
+    return createTypedConversionExpression("reinterpretAsInt16", [expression], int16Decoder, "Int16");
+  },
+  reinterpretAsInt32(expression: unknown): Selection<number> {
+    return createTypedConversionExpression("reinterpretAsInt32", [expression], int32Decoder, "Int32");
+  },
+  reinterpretAsInt64(expression: unknown): Selection<string> {
+    return createTypedConversionExpression("reinterpretAsInt64", [expression], intStringDecoder, "Int64");
+  },
+  reinterpretAsInt128(expression: unknown): Selection<string> {
+    return createTypedConversionExpression("reinterpretAsInt128", [expression], intStringDecoder, "Int128");
+  },
+  reinterpretAsInt256(expression: unknown): Selection<string> {
+    return createTypedConversionExpression("reinterpretAsInt256", [expression], intStringDecoder, "Int256");
+  },
+  reinterpretAsString(expression: unknown): Selection<string> {
+    return createTypedConversionExpression("reinterpretAsString", [expression], stringDecoder, "String");
+  },
+  reinterpretAsUInt8(expression: unknown): Selection<number> {
+    return createTypedConversionExpression("reinterpretAsUInt8", [expression], uint8Decoder, "UInt8");
+  },
+  reinterpretAsUInt16(expression: unknown): Selection<number> {
+    return createTypedConversionExpression("reinterpretAsUInt16", [expression], uint16Decoder, "UInt16");
+  },
+  reinterpretAsUInt32(expression: unknown): Selection<number> {
+    return createTypedConversionExpression("reinterpretAsUInt32", [expression], uint32Decoder, "UInt32");
+  },
+  reinterpretAsUInt64(expression: unknown): Selection<string> {
+    return createTypedConversionExpression("reinterpretAsUInt64", [expression], uintStringDecoder, "UInt64");
+  },
+  reinterpretAsUInt128(expression: unknown): Selection<string> {
+    return createTypedConversionExpression("reinterpretAsUInt128", [expression], uintStringDecoder, "UInt128");
+  },
+  reinterpretAsUInt256(expression: unknown): Selection<string> {
+    return createTypedConversionExpression("reinterpretAsUInt256", [expression], uintStringDecoder, "UInt256");
+  },
+  reinterpretAsUUID(expression: unknown): Selection<string> {
+    return createTypedConversionExpression("reinterpretAsUUID", [expression], stringDecoder, "UUID");
+  },
   toString(expression: unknown, timezone?: unknown): Selection<string> {
     const args = timezone === undefined ? [expression] : [expression, timezone];
     return createFunctionExpression("toString", args, {
       decoder: stringDecoder,
       sqlType: "String",
     });
+  },
+  toStringCutToZero(expression: unknown): Selection<string> {
+    return createTypedConversionExpression("toStringCutToZero", [expression], stringDecoder, "String");
+  },
+  toBFloat16(expression: unknown): Selection<number> {
+    return createTypedConversionExpression("toBFloat16", [expression], numberDecoder, "BFloat16");
+  },
+  toBFloat16OrNull(expression: unknown): Selection<number | null> {
+    return createNullableTypedConversionExpression("toBFloat16OrNull", [expression], numberDecoder, "BFloat16");
+  },
+  toBFloat16OrZero(expression: unknown): Selection<number> {
+    return createTypedConversionExpression("toBFloat16OrZero", [expression], numberDecoder, "BFloat16");
+  },
+  toBool(expression: unknown): Selection<boolean> {
+    return createTypedConversionExpression("toBool", [expression], booleanDecoder, "Bool");
+  },
+  toInt8(expression: unknown): Selection<number> {
+    return createTypedConversionExpression("toInt8", [expression], int8Decoder, "Int8");
+  },
+  toInt8OrDefault(expression: unknown, defaultValue?: unknown): Selection<number> {
+    return createTypedConversionExpression(
+      "toInt8OrDefault",
+      withOptional([expression], defaultValue),
+      int8Decoder,
+      "Int8",
+    );
+  },
+  toInt8OrNull(expression: unknown): Selection<number | null> {
+    return createNullableTypedConversionExpression("toInt8OrNull", [expression], int8Decoder, "Int8");
+  },
+  toInt8OrZero(expression: unknown): Selection<number> {
+    return createTypedConversionExpression("toInt8OrZero", [expression], int8Decoder, "Int8");
+  },
+  toInt16(expression: unknown): Selection<number> {
+    return createTypedConversionExpression("toInt16", [expression], int16Decoder, "Int16");
+  },
+  toInt16OrDefault(expression: unknown, defaultValue?: unknown): Selection<number> {
+    return createTypedConversionExpression(
+      "toInt16OrDefault",
+      withOptional([expression], defaultValue),
+      int16Decoder,
+      "Int16",
+    );
+  },
+  toInt16OrNull(expression: unknown): Selection<number | null> {
+    return createNullableTypedConversionExpression("toInt16OrNull", [expression], int16Decoder, "Int16");
+  },
+  toInt16OrZero(expression: unknown): Selection<number> {
+    return createTypedConversionExpression("toInt16OrZero", [expression], int16Decoder, "Int16");
+  },
+  toInt32(expression: unknown): Selection<number> {
+    return createTypedConversionExpression("toInt32", [expression], int32Decoder, "Int32");
+  },
+  toInt32OrDefault(expression: unknown, defaultValue?: unknown): Selection<number> {
+    return createTypedConversionExpression(
+      "toInt32OrDefault",
+      withOptional([expression], defaultValue),
+      int32Decoder,
+      "Int32",
+    );
+  },
+  toInt32OrNull(expression: unknown): Selection<number | null> {
+    return createNullableTypedConversionExpression("toInt32OrNull", [expression], int32Decoder, "Int32");
+  },
+  toInt32OrZero(expression: unknown): Selection<number> {
+    return createTypedConversionExpression("toInt32OrZero", [expression], int32Decoder, "Int32");
+  },
+  toInt64(expression: unknown): Selection<string> {
+    return createTypedConversionExpression("toInt64", [expression], intStringDecoder, "Int64");
+  },
+  toInt64OrDefault(expression: unknown, defaultValue?: unknown): Selection<string> {
+    return createTypedConversionExpression(
+      "toInt64OrDefault",
+      withOptional([expression], defaultValue),
+      intStringDecoder,
+      "Int64",
+    );
+  },
+  toInt64OrNull(expression: unknown): Selection<string | null> {
+    return createNullableTypedConversionExpression("toInt64OrNull", [expression], intStringDecoder, "Int64");
+  },
+  toInt64OrZero(expression: unknown): Selection<string> {
+    return createTypedConversionExpression("toInt64OrZero", [expression], intStringDecoder, "Int64");
+  },
+  toInt128(expression: unknown): Selection<string> {
+    return createTypedConversionExpression("toInt128", [expression], intStringDecoder, "Int128");
+  },
+  toInt128OrDefault(expression: unknown, defaultValue?: unknown): Selection<string> {
+    return createTypedConversionExpression(
+      "toInt128OrDefault",
+      withOptional([expression], defaultValue),
+      intStringDecoder,
+      "Int128",
+    );
+  },
+  toInt128OrNull(expression: unknown): Selection<string | null> {
+    return createNullableTypedConversionExpression("toInt128OrNull", [expression], intStringDecoder, "Int128");
+  },
+  toInt128OrZero(expression: unknown): Selection<string> {
+    return createTypedConversionExpression("toInt128OrZero", [expression], intStringDecoder, "Int128");
+  },
+  toInt256(expression: unknown): Selection<string> {
+    return createTypedConversionExpression("toInt256", [expression], intStringDecoder, "Int256");
+  },
+  toInt256OrDefault(expression: unknown, defaultValue?: unknown): Selection<string> {
+    return createTypedConversionExpression(
+      "toInt256OrDefault",
+      withOptional([expression], defaultValue),
+      intStringDecoder,
+      "Int256",
+    );
+  },
+  toInt256OrNull(expression: unknown): Selection<string | null> {
+    return createNullableTypedConversionExpression("toInt256OrNull", [expression], intStringDecoder, "Int256");
+  },
+  toInt256OrZero(expression: unknown): Selection<string> {
+    return createTypedConversionExpression("toInt256OrZero", [expression], intStringDecoder, "Int256");
+  },
+  toUInt8(expression: unknown): Selection<number> {
+    return createTypedConversionExpression("toUInt8", [expression], uint8Decoder, "UInt8");
+  },
+  toUInt8OrDefault(expression: unknown, defaultValue?: unknown): Selection<number> {
+    return createTypedConversionExpression(
+      "toUInt8OrDefault",
+      withOptional([expression], defaultValue),
+      uint8Decoder,
+      "UInt8",
+    );
+  },
+  toUInt8OrNull(expression: unknown): Selection<number | null> {
+    return createNullableTypedConversionExpression("toUInt8OrNull", [expression], uint8Decoder, "UInt8");
+  },
+  toUInt8OrZero(expression: unknown): Selection<number> {
+    return createTypedConversionExpression("toUInt8OrZero", [expression], uint8Decoder, "UInt8");
+  },
+  toUInt16(expression: unknown): Selection<number> {
+    return createTypedConversionExpression("toUInt16", [expression], uint16Decoder, "UInt16");
+  },
+  toUInt16OrDefault(expression: unknown, defaultValue?: unknown): Selection<number> {
+    return createTypedConversionExpression(
+      "toUInt16OrDefault",
+      withOptional([expression], defaultValue),
+      uint16Decoder,
+      "UInt16",
+    );
+  },
+  toUInt16OrNull(expression: unknown): Selection<number | null> {
+    return createNullableTypedConversionExpression("toUInt16OrNull", [expression], uint16Decoder, "UInt16");
+  },
+  toUInt16OrZero(expression: unknown): Selection<number> {
+    return createTypedConversionExpression("toUInt16OrZero", [expression], uint16Decoder, "UInt16");
+  },
+  toUInt32(expression: unknown): Selection<number> {
+    return createTypedConversionExpression("toUInt32", [expression], uint32Decoder, "UInt32");
+  },
+  toUInt32OrDefault(expression: unknown, defaultValue?: unknown): Selection<number> {
+    return createTypedConversionExpression(
+      "toUInt32OrDefault",
+      withOptional([expression], defaultValue),
+      uint32Decoder,
+      "UInt32",
+    );
+  },
+  toUInt32OrNull(expression: unknown): Selection<number | null> {
+    return createNullableTypedConversionExpression("toUInt32OrNull", [expression], uint32Decoder, "UInt32");
+  },
+  toUInt32OrZero(expression: unknown): Selection<number> {
+    return createTypedConversionExpression("toUInt32OrZero", [expression], uint32Decoder, "UInt32");
+  },
+  toUInt64(expression: unknown): Selection<string> {
+    return createTypedConversionExpression("toUInt64", [expression], uintStringDecoder, "UInt64");
+  },
+  toUInt64OrDefault(expression: unknown, defaultValue?: unknown): Selection<string> {
+    return createTypedConversionExpression(
+      "toUInt64OrDefault",
+      withOptional([expression], defaultValue),
+      uintStringDecoder,
+      "UInt64",
+    );
+  },
+  toUInt64OrNull(expression: unknown): Selection<string | null> {
+    return createNullableTypedConversionExpression("toUInt64OrNull", [expression], uintStringDecoder, "UInt64");
+  },
+  toUInt64OrZero(expression: unknown): Selection<string> {
+    return createTypedConversionExpression("toUInt64OrZero", [expression], uintStringDecoder, "UInt64");
+  },
+  toUInt128(expression: unknown): Selection<string> {
+    return createTypedConversionExpression("toUInt128", [expression], uintStringDecoder, "UInt128");
+  },
+  toUInt128OrDefault(expression: unknown, defaultValue?: unknown): Selection<string> {
+    return createTypedConversionExpression(
+      "toUInt128OrDefault",
+      withOptional([expression], defaultValue),
+      uintStringDecoder,
+      "UInt128",
+    );
+  },
+  toUInt128OrNull(expression: unknown): Selection<string | null> {
+    return createNullableTypedConversionExpression("toUInt128OrNull", [expression], uintStringDecoder, "UInt128");
+  },
+  toUInt128OrZero(expression: unknown): Selection<string> {
+    return createTypedConversionExpression("toUInt128OrZero", [expression], uintStringDecoder, "UInt128");
+  },
+  toUInt256(expression: unknown): Selection<string> {
+    return createTypedConversionExpression("toUInt256", [expression], uintStringDecoder, "UInt256");
+  },
+  toUInt256OrDefault(expression: unknown, defaultValue?: unknown): Selection<string> {
+    return createTypedConversionExpression(
+      "toUInt256OrDefault",
+      withOptional([expression], defaultValue),
+      uintStringDecoder,
+      "UInt256",
+    );
+  },
+  toUInt256OrNull(expression: unknown): Selection<string | null> {
+    return createNullableTypedConversionExpression("toUInt256OrNull", [expression], uintStringDecoder, "UInt256");
+  },
+  toUInt256OrZero(expression: unknown): Selection<string> {
+    return createTypedConversionExpression("toUInt256OrZero", [expression], uintStringDecoder, "UInt256");
+  },
+  toFloat32(expression: unknown): Selection<number> {
+    return createTypedConversionExpression("toFloat32", [expression], numberDecoder, "Float32");
+  },
+  toFloat32OrDefault(expression: unknown, defaultValue?: unknown): Selection<number> {
+    return createTypedConversionExpression(
+      "toFloat32OrDefault",
+      withOptional([expression], defaultValue),
+      numberDecoder,
+      "Float32",
+    );
+  },
+  toFloat32OrNull(expression: unknown): Selection<number | null> {
+    return createNullableTypedConversionExpression("toFloat32OrNull", [expression], numberDecoder, "Float32");
+  },
+  toFloat32OrZero(expression: unknown): Selection<number> {
+    return createTypedConversionExpression("toFloat32OrZero", [expression], numberDecoder, "Float32");
+  },
+  toFloat64(expression: unknown): Selection<number> {
+    return createTypedConversionExpression("toFloat64", [expression], numberDecoder, "Float64");
+  },
+  toFloat64OrDefault(expression: unknown, defaultValue?: unknown): Selection<number> {
+    return createTypedConversionExpression(
+      "toFloat64OrDefault",
+      withOptional([expression], defaultValue),
+      numberDecoder,
+      "Float64",
+    );
+  },
+  toFloat64OrNull(expression: unknown): Selection<number | null> {
+    return createNullableTypedConversionExpression("toFloat64OrNull", [expression], numberDecoder, "Float64");
+  },
+  toFloat64OrZero(expression: unknown): Selection<number> {
+    return createTypedConversionExpression("toFloat64OrZero", [expression], numberDecoder, "Float64");
   },
   toDecimal32(expression: unknown, scale: number): Selection<string> {
     return createFixedWidthDecimalCast("toDecimal32", expression, scale);
@@ -423,11 +1273,91 @@ const scalarFns = {
   toDecimal256(expression: unknown, scale: number): Selection<string> {
     return createFixedWidthDecimalCast("toDecimal256", expression, scale);
   },
+  toDecimal32OrDefault(expression: unknown, scale: number, defaultValue?: unknown): Selection<string> {
+    return createFixedWidthDecimalCast("toDecimal32OrDefault", expression, scale, {
+      extraArgs: defaultValue === undefined ? [] : [defaultValue],
+    });
+  },
+  toDecimal64OrDefault(expression: unknown, scale: number, defaultValue?: unknown): Selection<string> {
+    return createFixedWidthDecimalCast("toDecimal64OrDefault", expression, scale, {
+      extraArgs: defaultValue === undefined ? [] : [defaultValue],
+    });
+  },
+  toDecimal128OrDefault(expression: unknown, scale: number, defaultValue?: unknown): Selection<string> {
+    return createFixedWidthDecimalCast("toDecimal128OrDefault", expression, scale, {
+      extraArgs: defaultValue === undefined ? [] : [defaultValue],
+    });
+  },
+  toDecimal256OrDefault(expression: unknown, scale: number, defaultValue?: unknown): Selection<string> {
+    return createFixedWidthDecimalCast("toDecimal256OrDefault", expression, scale, {
+      extraArgs: defaultValue === undefined ? [] : [defaultValue],
+    });
+  },
+  toDecimal32OrNull(expression: unknown, scale: number): Selection<string | null> {
+    return createFixedWidthDecimalCast("toDecimal32OrNull", expression, scale, {
+      decoder: nullableDecoder(stringDecoder),
+    });
+  },
+  toDecimal64OrNull(expression: unknown, scale: number): Selection<string | null> {
+    return createFixedWidthDecimalCast("toDecimal64OrNull", expression, scale, {
+      decoder: nullableDecoder(stringDecoder),
+    });
+  },
+  toDecimal128OrNull(expression: unknown, scale: number): Selection<string | null> {
+    return createFixedWidthDecimalCast("toDecimal128OrNull", expression, scale, {
+      decoder: nullableDecoder(stringDecoder),
+    });
+  },
+  toDecimal256OrNull(expression: unknown, scale: number): Selection<string | null> {
+    return createFixedWidthDecimalCast("toDecimal256OrNull", expression, scale, {
+      decoder: nullableDecoder(stringDecoder),
+    });
+  },
+  toDecimal32OrZero(expression: unknown, scale: number): Selection<string> {
+    return createFixedWidthDecimalCast("toDecimal32OrZero", expression, scale);
+  },
+  toDecimal64OrZero(expression: unknown, scale: number): Selection<string> {
+    return createFixedWidthDecimalCast("toDecimal64OrZero", expression, scale);
+  },
+  toDecimal128OrZero(expression: unknown, scale: number): Selection<string> {
+    return createFixedWidthDecimalCast("toDecimal128OrZero", expression, scale);
+  },
+  toDecimal256OrZero(expression: unknown, scale: number): Selection<string> {
+    return createFixedWidthDecimalCast("toDecimal256OrZero", expression, scale);
+  },
+  toDecimalString(expression: unknown, scale: number): Selection<string> {
+    assertNonNegativeInteger("toDecimalString scale", scale);
+    return createExpression<string>({
+      compile: (ctx) => {
+        const compiledExpr = compileValue(expression, ctx);
+        return sql`toDecimalString(${compiledExpr}, ${sql.raw(String(scale))})`;
+      },
+      decoder: stringDecoder,
+      sqlType: "String",
+    });
+  },
+  toFixedString(expression: unknown, length: number): Selection<string> {
+    return createFixedStringExpression(expression, length);
+  },
   toDate(expression: unknown): Selection<Date> {
     return createFunctionExpression("toDate", [expression], {
       decoder: dateDecoder,
       sqlType: "Date",
     });
+  },
+  toDateOrDefault(expression: unknown, defaultValue?: unknown): Selection<Date> {
+    return createTypedConversionExpression(
+      "toDateOrDefault",
+      withOptional([expression], defaultValue),
+      dateDecoder,
+      "Date",
+    );
+  },
+  toDateOrNull(expression: unknown): Selection<Date | null> {
+    return createNullableTypedConversionExpression("toDateOrNull", [expression], dateDecoder, "Date");
+  },
+  toDateOrZero(expression: unknown): Selection<Date> {
+    return createTypedConversionExpression("toDateOrZero", [expression], dateDecoder, "Date");
   },
   toDate32(expression: unknown): Selection<Date> {
     return createFunctionExpression("toDate32", [expression], {
@@ -435,12 +1365,54 @@ const scalarFns = {
       sqlType: "Date32",
     });
   },
+  toDate32OrDefault(expression: unknown, defaultValue?: unknown): Selection<Date> {
+    return createTypedConversionExpression(
+      "toDate32OrDefault",
+      withOptional([expression], defaultValue),
+      dateDecoder,
+      "Date32",
+    );
+  },
+  toDate32OrNull(expression: unknown): Selection<Date | null> {
+    return createNullableTypedConversionExpression("toDate32OrNull", [expression], dateDecoder, "Date32");
+  },
+  toDate32OrZero(expression: unknown): Selection<Date> {
+    return createTypedConversionExpression("toDate32OrZero", [expression], dateDecoder, "Date32");
+  },
   toDateTime(expression: unknown, timezone?: unknown): Selection<Date> {
     const args = timezone === undefined ? [expression] : [expression, timezone];
     return createFunctionExpression("toDateTime", args, {
       decoder: dateDecoder,
       sqlType: "DateTime",
     });
+  },
+  toDateTimeOrDefault(expression: unknown, timezone?: unknown, defaultValue?: unknown): Selection<Date> {
+    return createTypedConversionExpression(
+      "toDateTimeOrDefault",
+      [
+        expression,
+        ...(timezone === undefined ? [] : [timezone]),
+        ...(defaultValue === undefined ? [] : [defaultValue]),
+      ],
+      dateDecoder,
+      "DateTime",
+    );
+  },
+  toDateTimeOrNull(expression: unknown, timezone?: unknown): Selection<Date | null> {
+    return createNullableTypedConversionExpression(
+      "toDateTimeOrNull",
+      withOptional([expression], timezone),
+      dateDecoder,
+      "DateTime",
+    );
+  },
+  toDateTimeOrZero(expression: unknown, timezone?: unknown): Selection<Date> {
+    return createTypedConversionExpression(
+      "toDateTimeOrZero",
+      withOptional([expression], timezone),
+      dateDecoder,
+      "DateTime",
+    );
   },
   toDateTime32(expression: unknown, timezone?: unknown): Selection<Date> {
     return createFunctionExpression("toDateTime32", withOptional([expression], timezone), {
@@ -450,6 +1422,41 @@ const scalarFns = {
   },
   toDateTime64(expression: unknown, scale: number, timezone?: unknown): Selection<Date> {
     return createDateTime64Cast(expression, scale, timezone);
+  },
+  toDateTime64OrDefault(
+    expression: unknown,
+    scale: number,
+    timezone?: unknown,
+    defaultValue?: unknown,
+  ): Selection<Date> {
+    return createDateTime64ConversionExpression(
+      "toDateTime64OrDefault",
+      expression,
+      scale,
+      timezone,
+      defaultValue,
+      dateDecoder,
+    );
+  },
+  toDateTime64OrNull(expression: unknown, scale: number, timezone?: unknown): Selection<Date | null> {
+    return createDateTime64ConversionExpression(
+      "toDateTime64OrNull",
+      expression,
+      scale,
+      timezone,
+      undefined,
+      nullableDecoder(dateDecoder),
+    );
+  },
+  toDateTime64OrZero(expression: unknown, scale: number, timezone?: unknown): Selection<Date> {
+    return createDateTime64ConversionExpression(
+      "toDateTime64OrZero",
+      expression,
+      scale,
+      timezone,
+      undefined,
+      dateDecoder,
+    );
   },
   fromUnixTimestamp: createFromUnixTimestampExpression,
   fromUnixTimestamp64Second(expression: unknown, timezone?: unknown): Selection<Date> {
@@ -496,6 +1503,82 @@ const scalarFns = {
   },
   toUnixTimestamp64Nano(expression: unknown): Selection<string> {
     return createInt64Expression("toUnixTimestamp64Nano", [expression]);
+  },
+  toLowCardinality<TData = unknown>(expression: unknown): Selection<TData> {
+    return createTypedConversionExpression<TData>(
+      "toLowCardinality",
+      [expression],
+      passThroughDecoder as Decoder<TData>,
+      "LowCardinality",
+    );
+  },
+  toNullable<TData = unknown>(expression: unknown): Selection<TData | null> {
+    return createTypedConversionExpression<TData | null>(
+      "toNullable",
+      [expression],
+      nullableDecoder(passThroughDecoder as Decoder<TData>),
+      "Nullable",
+    );
+  },
+  toTime(expression: unknown): Selection<Date> {
+    return createTypedConversionExpression("toTime", [expression], timeDecoder, "Time");
+  },
+  toTimeOrNull(expression: unknown): Selection<Date | null> {
+    return createNullableTypedConversionExpression("toTimeOrNull", [expression], timeDecoder, "Time");
+  },
+  toTimeOrZero(expression: unknown): Selection<Date> {
+    return createTypedConversionExpression("toTimeOrZero", [expression], timeDecoder, "Time");
+  },
+  toTime64(expression: unknown, precision: number): Selection<Date> {
+    return createTime64Expression("toTime64", expression, precision, timeDecoder);
+  },
+  toTime64OrNull(expression: unknown, precision: number): Selection<Date | null> {
+    return createTime64Expression("toTime64OrNull", expression, precision, nullableDecoder(timeDecoder));
+  },
+  toTime64OrZero(expression: unknown, precision: number): Selection<Date> {
+    return createTime64Expression("toTime64OrZero", expression, precision, timeDecoder);
+  },
+  toInterval(value: unknown, unit: string): Selection<unknown> {
+    return createIntervalExpression("toInterval", value, unit);
+  },
+  toIntervalNanosecond(value: unknown): Selection<unknown> {
+    return createIntervalExpression("toIntervalNanosecond", value);
+  },
+  toIntervalMicrosecond(value: unknown): Selection<unknown> {
+    return createIntervalExpression("toIntervalMicrosecond", value);
+  },
+  toIntervalMillisecond(value: unknown): Selection<unknown> {
+    return createIntervalExpression("toIntervalMillisecond", value);
+  },
+  toIntervalSecond(value: unknown): Selection<unknown> {
+    return createIntervalExpression("toIntervalSecond", value);
+  },
+  toIntervalMinute(value: unknown): Selection<unknown> {
+    return createIntervalExpression("toIntervalMinute", value);
+  },
+  toIntervalHour(value: unknown): Selection<unknown> {
+    return createIntervalExpression("toIntervalHour", value);
+  },
+  toIntervalDay(value: unknown): Selection<unknown> {
+    return createIntervalExpression("toIntervalDay", value);
+  },
+  toIntervalWeek(value: unknown): Selection<unknown> {
+    return createIntervalExpression("toIntervalWeek", value);
+  },
+  toIntervalMonth(value: unknown): Selection<unknown> {
+    return createIntervalExpression("toIntervalMonth", value);
+  },
+  toIntervalQuarter(value: unknown): Selection<unknown> {
+    return createIntervalExpression("toIntervalQuarter", value);
+  },
+  toIntervalYear(value: unknown): Selection<unknown> {
+    return createIntervalExpression("toIntervalYear", value);
+  },
+  toUUID(expression: unknown): Selection<string> {
+    return createTypedConversionExpression("toUUID", [expression], stringDecoder, "UUID");
+  },
+  toUUIDOrZero(expression: unknown): Selection<string> {
+    return createTypedConversionExpression("toUUIDOrZero", [expression], stringDecoder, "UUID");
   },
   coalesce<TData = unknown>(...args: unknown[]): Selection<TData> {
     return createCoalesceExpression<TData>(args);

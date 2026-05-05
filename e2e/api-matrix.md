@@ -118,12 +118,13 @@ This matrix records the public API coverage contract. Runtime behavior rows poin
 | --- | --- |
 | `fn.call` | `query-basics.e2e.test.ts`, `functions.e2e.test.ts` |
 | `fn.withParams` | `functions.e2e.test.ts`, `injection-identifiers.e2e.test.ts` |
-| `fn.toString` | `functions.e2e.test.ts` |
-| `fn.toDate`, `fn.toDate32` | `functions.e2e.test.ts` |
-| `fn.toDateTime`, `fn.toDateTime32`, `fn.toDateTime64` | `functions.e2e.test.ts` |
+| `fn.cast`, `fn.date`, `fn.accurateCast`, `fn.accurateCastOrDefault`, `fn.accurateCastOrNull`, `fn.reinterpretAs*` | `functions.e2e.test.ts` |
+| `fn.toString`, `fn.toStringCutToZero`, `fn.toBool`, `fn.toInt*`, `fn.toUInt*`, `fn.toFloat*`, `fn.toBFloat16*` | `functions.e2e.test.ts` |
+| `fn.toDate*`, `fn.toDateTime*`, `fn.parseDateTime*`, `fn.toTime*`, `fn.toTime64*` | `functions.e2e.test.ts` |
+| `fn.toDecimal*`, `fn.toDecimalString`, `fn.toFixedString` | `functions.e2e.test.ts`, `builder-analytics.e2e.test.ts` |
+| `fn.formatRow`, `fn.formatRowNoNewline`, `fn.toInterval*`, `fn.toLowCardinality`, `fn.toNullable`, `fn.toUUID*` | `functions.e2e.test.ts` |
 | `fn.toUnixTimestamp`, `fn.toUnixTimestamp64Second`, `fn.toUnixTimestamp64Milli`, `fn.toUnixTimestamp64Micro`, `fn.toUnixTimestamp64Nano` | `functions.e2e.test.ts` |
 | `fn.fromUnixTimestamp`, `fn.fromUnixTimestamp64Second`, `fn.fromUnixTimestamp64Milli`, `fn.fromUnixTimestamp64Micro`, `fn.fromUnixTimestamp64Nano` | `functions.e2e.test.ts` |
-| `fn.toDecimal32`, `fn.toDecimal64`, `fn.toDecimal128`, `fn.toDecimal256` | `builder-analytics.e2e.test.ts` |
 | `fn.toStartOfMonth` | `functions.e2e.test.ts`, `builder-analytics.e2e.test.ts` |
 | `fn.count`, `fn.count().toUnsafe`, `fn.count().toSafe`, `fn.count().toMixed` | `dataset-smoke.e2e.test.ts`, `functions.e2e.test.ts` |
 | `fn.countIf`, `fn.countIf().toUnsafe`, `fn.countIf().toSafe`, `fn.countIf().toMixed` | `functions.e2e.test.ts` |

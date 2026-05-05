@@ -125,6 +125,186 @@ const officialArrayFunctionNames = [
   "reverse",
 ] as const;
 
+const typeConversionFunctionNames = [
+  "accurateCast",
+  "accurateCastOrDefault",
+  "accurateCastOrNull",
+  "cast",
+  "date",
+  "formatRow",
+  "formatRowNoNewline",
+  "parseDateTime",
+  "parseDateTime32BestEffort",
+  "parseDateTime32BestEffortOrNull",
+  "parseDateTime32BestEffortOrZero",
+  "parseDateTime64",
+  "parseDateTime64BestEffort",
+  "parseDateTime64BestEffortOrNull",
+  "parseDateTime64BestEffortOrZero",
+  "parseDateTime64BestEffortUS",
+  "parseDateTime64BestEffortUSOrNull",
+  "parseDateTime64BestEffortUSOrZero",
+  "parseDateTime64InJodaSyntax",
+  "parseDateTime64InJodaSyntaxOrNull",
+  "parseDateTime64InJodaSyntaxOrZero",
+  "parseDateTime64OrNull",
+  "parseDateTime64OrZero",
+  "parseDateTimeBestEffort",
+  "parseDateTimeBestEffortOrNull",
+  "parseDateTimeBestEffortOrZero",
+  "parseDateTimeBestEffortUS",
+  "parseDateTimeBestEffortUSOrNull",
+  "parseDateTimeBestEffortUSOrZero",
+  "parseDateTimeInJodaSyntax",
+  "parseDateTimeInJodaSyntaxOrNull",
+  "parseDateTimeInJodaSyntaxOrZero",
+  "parseDateTimeOrNull",
+  "parseDateTimeOrZero",
+  "reinterpret",
+  "reinterpretAsDate",
+  "reinterpretAsDateTime",
+  "reinterpretAsFixedString",
+  "reinterpretAsFloat32",
+  "reinterpretAsFloat64",
+  "reinterpretAsInt128",
+  "reinterpretAsInt16",
+  "reinterpretAsInt256",
+  "reinterpretAsInt32",
+  "reinterpretAsInt64",
+  "reinterpretAsInt8",
+  "reinterpretAsString",
+  "reinterpretAsUInt128",
+  "reinterpretAsUInt16",
+  "reinterpretAsUInt256",
+  "reinterpretAsUInt32",
+  "reinterpretAsUInt64",
+  "reinterpretAsUInt8",
+  "reinterpretAsUUID",
+  "toBFloat16",
+  "toBFloat16OrNull",
+  "toBFloat16OrZero",
+  "toBool",
+  "toDate",
+  "toDate32",
+  "toDate32OrDefault",
+  "toDate32OrNull",
+  "toDate32OrZero",
+  "toDateOrDefault",
+  "toDateOrNull",
+  "toDateOrZero",
+  "toDateTime",
+  "toDateTime32",
+  "toDateTime64",
+  "toDateTime64OrDefault",
+  "toDateTime64OrNull",
+  "toDateTime64OrZero",
+  "toDateTimeOrDefault",
+  "toDateTimeOrNull",
+  "toDateTimeOrZero",
+  "toDecimal128",
+  "toDecimal128OrDefault",
+  "toDecimal128OrNull",
+  "toDecimal128OrZero",
+  "toDecimal256",
+  "toDecimal256OrDefault",
+  "toDecimal256OrNull",
+  "toDecimal256OrZero",
+  "toDecimal32",
+  "toDecimal32OrDefault",
+  "toDecimal32OrNull",
+  "toDecimal32OrZero",
+  "toDecimal64",
+  "toDecimal64OrDefault",
+  "toDecimal64OrNull",
+  "toDecimal64OrZero",
+  "toDecimalString",
+  "toFixedString",
+  "toFloat32",
+  "toFloat32OrDefault",
+  "toFloat32OrNull",
+  "toFloat32OrZero",
+  "toFloat64",
+  "toFloat64OrDefault",
+  "toFloat64OrNull",
+  "toFloat64OrZero",
+  "toInt128",
+  "toInt128OrDefault",
+  "toInt128OrNull",
+  "toInt128OrZero",
+  "toInt16",
+  "toInt16OrDefault",
+  "toInt16OrNull",
+  "toInt16OrZero",
+  "toInt256",
+  "toInt256OrDefault",
+  "toInt256OrNull",
+  "toInt256OrZero",
+  "toInt32",
+  "toInt32OrDefault",
+  "toInt32OrNull",
+  "toInt32OrZero",
+  "toInt64",
+  "toInt64OrDefault",
+  "toInt64OrNull",
+  "toInt64OrZero",
+  "toInt8",
+  "toInt8OrDefault",
+  "toInt8OrNull",
+  "toInt8OrZero",
+  "toInterval",
+  "toIntervalDay",
+  "toIntervalHour",
+  "toIntervalMicrosecond",
+  "toIntervalMillisecond",
+  "toIntervalMinute",
+  "toIntervalMonth",
+  "toIntervalNanosecond",
+  "toIntervalQuarter",
+  "toIntervalSecond",
+  "toIntervalWeek",
+  "toIntervalYear",
+  "toLowCardinality",
+  "toNullable",
+  "toString",
+  "toStringCutToZero",
+  "toTime",
+  "toTime64",
+  "toTime64OrNull",
+  "toTime64OrZero",
+  "toTimeOrNull",
+  "toTimeOrZero",
+  "toUInt128",
+  "toUInt128OrDefault",
+  "toUInt128OrNull",
+  "toUInt128OrZero",
+  "toUInt16",
+  "toUInt16OrDefault",
+  "toUInt16OrNull",
+  "toUInt16OrZero",
+  "toUInt256",
+  "toUInt256OrDefault",
+  "toUInt256OrNull",
+  "toUInt256OrZero",
+  "toUInt32",
+  "toUInt32OrDefault",
+  "toUInt32OrNull",
+  "toUInt32OrZero",
+  "toUInt64",
+  "toUInt64OrDefault",
+  "toUInt64OrNull",
+  "toUInt64OrZero",
+  "toUInt8",
+  "toUInt8OrDefault",
+  "toUInt8OrNull",
+  "toUInt8OrZero",
+  "toUUID",
+  "toUUIDOrZero",
+  "toUnixTimestamp64Micro",
+  "toUnixTimestamp64Milli",
+  "toUnixTimestamp64Nano",
+  "toUnixTimestamp64Second",
+] as const;
+
 const createContext = () => ({
   params: {} as Record<string, unknown>,
   nextParamIndex: 0,
@@ -147,6 +327,330 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     for (const name of officialArrayFunctionNames) {
       expect(fn).toHaveProperty(name);
     }
+  });
+
+  it("exposes and compiles ClickHouse type conversion helper surface", function testTypeConversionFunctionSurface() {
+    for (const name of typeConversionFunctionNames) {
+      expect(fn).toHaveProperty(name);
+    }
+
+    const compiledNames: string[] = [];
+    const expectCompiled = (
+      name: (typeof typeConversionFunctionNames)[number],
+      expression: { compile(ctx: ReturnType<typeof createContext>): unknown },
+      expectedSql = `${name}(`,
+    ) => {
+      compiledNames.push(name);
+      expect(compileExpression(expression).query).toContain(expectedSql);
+    };
+
+    const source = string().bind({ name: "raw_value", tableName: "orders" });
+    const dateSource = string().bind({ name: "created_at", tableName: "orders" });
+
+    expectCompiled("cast", fn.cast(source, "UInt8"), "CAST(`orders`.`raw_value` AS UInt8)");
+    expectCompiled("date", fn.date(dateSource), "DATE(`orders`.`created_at`)");
+    expectCompiled("accurateCast", fn.accurateCast(source, "UInt8"));
+    expectCompiled("accurateCastOrDefault", fn.accurateCastOrDefault(source, "UInt8", 7));
+    expectCompiled("accurateCastOrNull", fn.accurateCastOrNull(source, "UInt8"));
+    expectCompiled("formatRow", fn.formatRow("JSONEachRow", source));
+    expectCompiled("formatRowNoNewline", fn.formatRowNoNewline("JSONEachRow", source));
+
+    for (const name of ["parseDateTime", "parseDateTimeOrNull", "parseDateTimeOrZero"] as const) {
+      expectCompiled(name, fn[name]("2026-01-01 00:00:00", "%F %T", "UTC"));
+    }
+    for (const name of [
+      "parseDateTimeBestEffort",
+      "parseDateTimeBestEffortOrNull",
+      "parseDateTimeBestEffortOrZero",
+      "parseDateTimeBestEffortUS",
+      "parseDateTimeBestEffortUSOrNull",
+      "parseDateTimeBestEffortUSOrZero",
+      "parseDateTime32BestEffort",
+      "parseDateTime32BestEffortOrNull",
+      "parseDateTime32BestEffortOrZero",
+    ] as const) {
+      expectCompiled(name, fn[name]("2026-01-01 00:00:00", "UTC"));
+    }
+    for (const name of [
+      "parseDateTimeInJodaSyntax",
+      "parseDateTimeInJodaSyntaxOrNull",
+      "parseDateTimeInJodaSyntaxOrZero",
+    ] as const) {
+      expectCompiled(name, fn[name]("2026-01-01 00:00:00", "yyyy-MM-dd HH:mm:ss", "UTC"));
+    }
+    for (const name of ["parseDateTime64", "parseDateTime64OrNull", "parseDateTime64OrZero"] as const) {
+      expectCompiled(name, fn[name]("2026-01-01 00:00:00.123", "%F %T.%f", "UTC"));
+    }
+    for (const name of [
+      "parseDateTime64BestEffort",
+      "parseDateTime64BestEffortOrNull",
+      "parseDateTime64BestEffortOrZero",
+      "parseDateTime64BestEffortUS",
+      "parseDateTime64BestEffortUSOrNull",
+      "parseDateTime64BestEffortUSOrZero",
+    ] as const) {
+      expectCompiled(name, fn[name]("2026-01-01 00:00:00.123", 3, "UTC"));
+    }
+    for (const name of [
+      "parseDateTime64InJodaSyntax",
+      "parseDateTime64InJodaSyntaxOrNull",
+      "parseDateTime64InJodaSyntaxOrZero",
+    ] as const) {
+      expectCompiled(name, fn[name]("2026-01-01 00:00:00.123", "yyyy-MM-dd HH:mm:ss.SSS", "UTC"));
+    }
+    expect(compileExpression(fn.parseDateTime64BestEffort("2026-01-01 00:00:00.123", "UTC")).query).toContain(
+      "parseDateTime64BestEffort({orm_param1:String}, {orm_param2:String})",
+    );
+
+    expectCompiled("reinterpret", fn.reinterpret(source, "UInt8"));
+    for (const name of [
+      "reinterpretAsDate",
+      "reinterpretAsDateTime",
+      "reinterpretAsFixedString",
+      "reinterpretAsFloat32",
+      "reinterpretAsFloat64",
+      "reinterpretAsInt128",
+      "reinterpretAsInt16",
+      "reinterpretAsInt256",
+      "reinterpretAsInt32",
+      "reinterpretAsInt64",
+      "reinterpretAsInt8",
+      "reinterpretAsString",
+      "reinterpretAsUInt128",
+      "reinterpretAsUInt16",
+      "reinterpretAsUInt256",
+      "reinterpretAsUInt32",
+      "reinterpretAsUInt64",
+      "reinterpretAsUInt8",
+      "reinterpretAsUUID",
+    ] as const) {
+      expectCompiled(name, fn[name](source));
+    }
+
+    for (const name of ["toBFloat16", "toBFloat16OrNull", "toBFloat16OrZero"] as const) {
+      expectCompiled(name, fn[name](source));
+    }
+    expectCompiled("toBool", fn.toBool(source));
+    expectCompiled("toString", fn.toString(dateSource, "UTC"));
+    expectCompiled("toStringCutToZero", fn.toStringCutToZero(source));
+    expectCompiled("toDate", fn.toDate(dateSource));
+    expectCompiled("toDate32", fn.toDate32(dateSource));
+    for (const name of ["toDateOrDefault", "toDate32OrDefault"] as const) {
+      expectCompiled(name, fn[name](source, "1970-01-01"));
+    }
+    for (const name of ["toDateOrNull", "toDateOrZero", "toDate32OrNull", "toDate32OrZero"] as const) {
+      expectCompiled(name, fn[name](source));
+    }
+    expectCompiled("toDateTime", fn.toDateTime(dateSource, "UTC"));
+    expectCompiled("toDateTime32", fn.toDateTime32(dateSource, "UTC"));
+    expectCompiled("toDateTime64", fn.toDateTime64(dateSource, 3, "UTC"));
+    expectCompiled("toDateTimeOrDefault", fn.toDateTimeOrDefault(source, "UTC", "1970-01-01 00:00:00"));
+    for (const name of ["toDateTimeOrNull", "toDateTimeOrZero"] as const) {
+      expectCompiled(name, fn[name](source, "UTC"));
+    }
+    expectCompiled("toDateTime64OrDefault", fn.toDateTime64OrDefault(source, 3, "UTC", "1970-01-01 00:00:00.000"));
+    for (const name of ["toDateTime64OrNull", "toDateTime64OrZero"] as const) {
+      expectCompiled(name, fn[name](source, 3, "UTC"));
+    }
+
+    for (const name of ["toDecimal32", "toDecimal64", "toDecimal128", "toDecimal256"] as const) {
+      expectCompiled(name, fn[name](source, 2));
+    }
+    for (const name of [
+      "toDecimal32OrDefault",
+      "toDecimal64OrDefault",
+      "toDecimal128OrDefault",
+      "toDecimal256OrDefault",
+    ] as const) {
+      expectCompiled(name, fn[name](source, 2, "1.00"));
+    }
+    for (const name of [
+      "toDecimal32OrNull",
+      "toDecimal32OrZero",
+      "toDecimal64OrNull",
+      "toDecimal64OrZero",
+      "toDecimal128OrNull",
+      "toDecimal128OrZero",
+      "toDecimal256OrNull",
+      "toDecimal256OrZero",
+    ] as const) {
+      expectCompiled(name, fn[name](source, 2));
+    }
+    expectCompiled("toDecimalString", fn.toDecimalString(source, 2));
+    expectCompiled("toFixedString", fn.toFixedString(source, 8));
+
+    for (const name of [
+      "toFloat32",
+      "toFloat32OrDefault",
+      "toFloat32OrNull",
+      "toFloat32OrZero",
+      "toFloat64",
+      "toFloat64OrDefault",
+      "toFloat64OrNull",
+      "toFloat64OrZero",
+    ] as const) {
+      const expression = name.endsWith("OrDefault") ? fn[name](source, 1.5) : fn[name](source);
+      expectCompiled(name, expression);
+    }
+
+    for (const name of [
+      "toInt8",
+      "toInt8OrDefault",
+      "toInt8OrNull",
+      "toInt8OrZero",
+      "toInt16",
+      "toInt16OrDefault",
+      "toInt16OrNull",
+      "toInt16OrZero",
+      "toInt32",
+      "toInt32OrDefault",
+      "toInt32OrNull",
+      "toInt32OrZero",
+      "toInt64",
+      "toInt64OrDefault",
+      "toInt64OrNull",
+      "toInt64OrZero",
+      "toInt128",
+      "toInt128OrDefault",
+      "toInt128OrNull",
+      "toInt128OrZero",
+      "toInt256",
+      "toInt256OrDefault",
+      "toInt256OrNull",
+      "toInt256OrZero",
+      "toUInt8",
+      "toUInt8OrDefault",
+      "toUInt8OrNull",
+      "toUInt8OrZero",
+      "toUInt16",
+      "toUInt16OrDefault",
+      "toUInt16OrNull",
+      "toUInt16OrZero",
+      "toUInt32",
+      "toUInt32OrDefault",
+      "toUInt32OrNull",
+      "toUInt32OrZero",
+      "toUInt64",
+      "toUInt64OrDefault",
+      "toUInt64OrNull",
+      "toUInt64OrZero",
+      "toUInt128",
+      "toUInt128OrDefault",
+      "toUInt128OrNull",
+      "toUInt128OrZero",
+      "toUInt256",
+      "toUInt256OrDefault",
+      "toUInt256OrNull",
+      "toUInt256OrZero",
+    ] as const) {
+      const expression = name.endsWith("OrDefault") ? fn[name](source, 1) : fn[name](source);
+      expectCompiled(name, expression);
+    }
+
+    expectCompiled("toInterval", fn.toInterval(1, "DAY"), "toInterval({orm_param1:Int64}, 'DAY')");
+    for (const name of [
+      "toIntervalNanosecond",
+      "toIntervalMicrosecond",
+      "toIntervalMillisecond",
+      "toIntervalSecond",
+      "toIntervalMinute",
+      "toIntervalHour",
+      "toIntervalDay",
+      "toIntervalWeek",
+      "toIntervalMonth",
+      "toIntervalQuarter",
+      "toIntervalYear",
+    ] as const) {
+      expectCompiled(name, fn[name](1));
+    }
+
+    expectCompiled("toLowCardinality", fn.toLowCardinality(source));
+    expectCompiled("toNullable", fn.toNullable(source));
+    expectCompiled("toTime", fn.toTime(source));
+    expectCompiled("toTimeOrNull", fn.toTimeOrNull(source));
+    expectCompiled("toTimeOrZero", fn.toTimeOrZero(source));
+    expectCompiled("toTime64", fn.toTime64(source, 6));
+    expectCompiled("toTime64OrNull", fn.toTime64OrNull(source, 6));
+    expectCompiled("toTime64OrZero", fn.toTime64OrZero(source, 6));
+    expectCompiled("toUUID", fn.toUUID(source));
+    expectCompiled("toUUIDOrZero", fn.toUUIDOrZero(source));
+    for (const name of [
+      "toUnixTimestamp64Second",
+      "toUnixTimestamp64Milli",
+      "toUnixTimestamp64Micro",
+      "toUnixTimestamp64Nano",
+    ] as const) {
+      expectCompiled(name, fn[name](dateSource));
+    }
+
+    const escapedType = compileExpression(fn.accurateCast(source, "DateTime64(3, 'Asia/Shanghai')"));
+    expect(escapedType.query).toContain("accurateCast(`orders`.`raw_value`, 'DateTime64(3, \\'Asia/Shanghai\\')')");
+    expect([...compiledNames].sort()).toEqual([...typeConversionFunctionNames].sort());
+  });
+
+  it("decodes conversion helper result types and rejects invalid literal-only arguments", function testConversionDecoders() {
+    expect(fn.toBool("1").decoder("true")).toBe(true);
+    expect(fn.toBFloat16("1.5").decoder("1.5")).toBe(1.5);
+    expect(fn.toBFloat16OrNull("bad").decoder(null)).toBeNull();
+    expect(fn.toFloat32("1.5").decoder("1.5")).toBe(1.5);
+    expect(fn.toFloat64OrNull("bad").decoder(null)).toBeNull();
+
+    expect(fn.toInt8("127").decoder("127")).toBe(127);
+    expect(fn.toInt16("32767").decoder(32767)).toBe(32767);
+    expect(fn.toInt32("-2147483648").decoder("-2147483648")).toBe(-2147483648);
+    expect(fn.toUInt8("255").decoder("255")).toBe(255);
+    expect(fn.toUInt16("65535").decoder(65535)).toBe(65535);
+    expect(fn.toUInt32("4294967295").decoder("4294967295")).toBe(4294967295);
+    expect(fn.toInt64("1").decoder(9007199254740993n)).toBe("9007199254740993");
+    expect(fn.toInt128("1").decoder("-170141183460469231731687303715884105728")).toBe(
+      "-170141183460469231731687303715884105728",
+    );
+    expect(fn.toInt256OrNull("bad").decoder(null)).toBeNull();
+    expect(fn.toUInt64("1").decoder(18446744073709551615n)).toBe("18446744073709551615");
+    expect(fn.toUInt128OrNull("bad").decoder(null)).toBeNull();
+    expect(
+      fn.toUInt256("1").decoder("115792089237316195423570985008687907853269984665640564039457584007913129639935"),
+    ).toBe("115792089237316195423570985008687907853269984665640564039457584007913129639935");
+    expect(() => fn.toInt8("128").decoder("128")).toThrow("Cannot convert value to integer in range -128..127");
+    expect(() => fn.toUInt64("-1").decoder(-1)).toThrow("Cannot convert value to integer string");
+
+    expect(fn.toDecimal32OrNull("bad", 2).decoder(null)).toBeNull();
+    expect(fn.toDecimal64OrDefault("bad", 2).decoder("1.23")).toBe("1.23");
+    expect(fn.toDecimalString("1.234", 2).decoder(1.23)).toBe("1.23");
+    expect(fn.toFixedString("abc", 3).decoder(1n)).toBe("1");
+
+    expect(fn.toDateOrNull("bad").decoder(null)).toBeNull();
+    expect(fn.toDateOrZero("bad").decoder("1970-01-01")).toEqual(new Date("1970-01-01"));
+    expect(fn.toDateTime64OrNull("bad", 3).decoder(null)).toBeNull();
+    expect(fn.parseDateTimeOrNull("bad", "%F").decoder(null)).toBeNull();
+    expect(fn.parseDateTime64BestEffortOrNull("bad").decoder(null)).toBeNull();
+    expect(fn.toTime("12:34:56").decoder("12:34:56").getTime()).toBe(45_296_000);
+    expect(fn.toTime64("12:34:56.123456", 6).decoder("12:34:56.123456").getTime()).toBe(45_296_123);
+    expect(fn.toTimeOrNull("bad").decoder(null)).toBeNull();
+    expect(fn.toTime64OrNull("bad", 6).decoder(null)).toBeNull();
+
+    expect(fn.toUUID("00000000-0000-0000-0000-000000000000").decoder(1n)).toBe("1");
+    expect(fn.toLowCardinality<string>("vip").decoder("vip")).toBe("vip");
+    expect(fn.toNullable<string>("vip").decoder(null)).toBeNull();
+    expect(fn.toNullable<string>("vip").decoder("vip")).toBe("vip");
+    expect(fn.accurateCastOrNull<number>("bad", "UInt8").decoder(null)).toBeNull();
+
+    expect(() => fn.cast("1", "UInt8; DROP TABLE t")).toThrow("Invalid ClickHouse type literal");
+    expect(() => fn.accurateCast("1", "")).toThrow("ClickHouse type literal must be a non-empty string");
+    expect(() => fn.toDecimal32OrDefault("1", 10)).toThrow(
+      /toDecimal32OrDefault scale must be an integer between 0 and 9 \(the toDecimal32OrDefault fixed width\)/,
+    );
+    expect(() => fn.toDecimalString("1", -1)).toThrow("toDecimalString scale must be a non-negative integer");
+    expect(() => fn.toFixedString("abc", 0)).toThrow("toFixedString length must be a positive integer");
+    expect(() => fn.toDateTime64("2026-01-01", 10)).toThrow(
+      "toDateTime64 scale must be an integer between 0 and 9, got 10",
+    );
+    expect(() => fn.parseDateTime64BestEffort("2026-01-01", 10)).toThrow(
+      "toDateTime64 scale must be an integer between 0 and 9, got 10",
+    );
+    expect(() => fn.toTime64("12:34:56", 10)).toThrow("toDateTime64 scale must be an integer between 0 and 9, got 10");
+    expect(() => fn.toInterval(1, "")).toThrow("toInterval unit must be a non-empty string");
+    expect(() => fn.toInterval(1, "fortnight")).toThrow("toInterval unit must be a valid ClickHouse interval unit");
   });
 
   it("compiles common function helpers and parameterized functions", function testCompileFunctions() {

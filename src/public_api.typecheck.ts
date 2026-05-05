@@ -46,11 +46,33 @@ const unixTimestamp64Selection: Selection<string> = fn.toUnixTimestamp64Milli(
 const fromUnixTimestampSelection: Selection<Date> = fn.fromUnixTimestamp(1735689600);
 const formattedUnixTimestampSelection: Selection<string> = fn.fromUnixTimestamp(1735689600, "%F %T", "UTC");
 const namespaceFromUnixTimestamp64Selection: Selection<Date> = ck.fn.fromUnixTimestamp64Milli(1735689600123n, "UTC");
+const castSelection: Selection<number> = fn.cast<number>("1", "UInt8");
+const accurateCastSelection: Selection<number | null> = fn.accurateCastOrNull<number>("bad", "UInt8");
+const uint32Selection: Selection<number> = fn.toUInt32("1");
+const uint64Selection: Selection<string> = fn.toUInt64("1");
+const nullableUInt64Selection: Selection<string | null> = fn.toUInt64OrNull("bad");
+const dateOrNullSelection: Selection<Date | null> = fn.toDateOrNull("bad");
+const parsedDateTimeSelection: Selection<Date> = fn.parseDateTime64BestEffort("2026-01-01 00:00:00.123", 3, "UTC");
+const parsedDateTimeOrNullSelection: Selection<Date | null> = fn.parseDateTime64OrNull("bad", "%F %T.%f", "UTC");
+const timeSelection: Selection<Date> = fn.toTime64("12:34:56.123456", 6);
+const intervalSelection: Selection<unknown> = fn.toInterval(1, "day");
+const uuidSelection: Selection<string> = ck.fn.toUUIDOrZero("bad");
 void unixTimestampSelection;
 void unixTimestamp64Selection;
 void fromUnixTimestampSelection;
 void formattedUnixTimestampSelection;
 void namespaceFromUnixTimestamp64Selection;
+void castSelection;
+void accurateCastSelection;
+void uint32Selection;
+void uint64Selection;
+void nullableUInt64Selection;
+void dateOrNullSelection;
+void parsedDateTimeSelection;
+void parsedDateTimeOrNullSelection;
+void timeSelection;
+void intervalSelection;
+void uuidSelection;
 const constantSelection: Selection<number> = ck.expr(ckSql`1`, {
   decoder: (value) => Number(value),
   sqlType: "UInt8",

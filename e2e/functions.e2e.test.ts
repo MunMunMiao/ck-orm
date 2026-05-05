@@ -100,6 +100,147 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
     expect(presentQuantileRow.medianUserId).toBeLessThan(3000);
   });
 
+  it("supports ClickHouse type conversion helper families against real clickhouse", async function testTypeConversionHelpers() {
+    const db = createE2EDb();
+
+    const [row] = await db.select({
+      castUInt32: fn
+        .cast<number>("32", "UInt32")
+        .mapWith((value) => Number(value))
+        .as("cast_uint32"),
+      dateAlias: fn.date("2026-01-10").as("date_alias"),
+      accurateUInt8: fn
+        .accurateCast<number>("8", "UInt8")
+        .mapWith((value) => Number(value))
+        .as("accurate_uint8"),
+      accurateDefault: fn
+        .accurateCastOrDefault<number>("bad", "UInt8", ckSql`toUInt8(7)`)
+        .mapWith((value) => Number(value))
+        .as("accurate_default"),
+      accurateNull: fn
+        .accurateCastOrNull<number>("bad", "UInt8")
+        .mapWith((value) => (value === null ? null : Number(value)))
+        .as("accurate_null"),
+      reinterpretedUInt8: fn.reinterpretAsUInt8(fn.toFixedString("A", 1)).as("reinterpreted_uint8"),
+      boolValue: fn.toBool(1).as("bool_value"),
+      int32Value: fn.toInt32("42").as("int32_value"),
+      int32Default: fn.toInt32OrDefault("bad", ckSql`toInt32(7)`).as("int32_default"),
+      int32Null: fn.toInt32OrNull("bad").as("int32_null"),
+      uint64Value: fn.toUInt64("18446744073709551615").as("uint64_value"),
+      float32Value: fn.toFloat32("1.5").as("float32_value"),
+      float32Default: fn.toFloat32OrDefault("bad", ckSql`toFloat32(2.5)`).as("float32_default"),
+      bfloatValue: fn.toBFloat16("1.75").as("bfloat_value"),
+      decimalValue: fn.toDecimal32("12.34", 2).as("decimal_value"),
+      decimalDefault: fn.toDecimal32OrDefault("bad", 2, ckSql`CAST('1.23', 'Decimal32(2)')`).as("decimal_default"),
+      decimalNull: fn.toDecimal32OrNull("bad", 2).as("decimal_null"),
+      decimalZero: fn.toDecimal32OrZero("bad", 2).as("decimal_zero"),
+      decimalString: fn.toDecimalString(ckSql`CAST(12.345 AS Decimal(9, 3))`, 2).as("decimal_string"),
+      fixedString: fn.toFixedString("ABCD", 4).as("fixed_string"),
+      dateNull: fn.toDateOrNull("bad").as("date_null"),
+      dateDefault: fn.toDateOrDefault("bad", ckSql`toDate('2026-01-10')`).as("date_default"),
+      dateTimeNull: fn.toDateTimeOrNull("bad", "UTC").as("date_time_null"),
+      dateTimeDefault: fn
+        .toDateTimeOrDefault("bad", "UTC", ckSql`toDateTime('2026-01-12 01:02:03', 'UTC')`)
+        .as("date_time_default"),
+      dateTime64Null: fn.toDateTime64OrNull("bad", 3, "UTC").as("date_time64_null"),
+      dateTime64Default: fn
+        .toDateTime64OrDefault("bad", 3, "UTC", ckSql`toDateTime64('2026-01-12 01:02:03.456', 3, 'UTC')`)
+        .as("date_time64_default"),
+      parsedDateTime: fn.parseDateTime("2026-01-12 01:02:03", ckSql`'%Y-%m-%d %H:%i:%s'`, "UTC").as("parsed_date_time"),
+      parsedDateTimeNull: fn.parseDateTimeOrNull("bad", ckSql`'%Y-%m-%d %H:%i:%s'`, "UTC").as("parsed_date_time_null"),
+      parsedDateTime64: fn
+        .parseDateTime64("2026-01-12 01:02:03.456000", ckSql`'%Y-%m-%d %H:%i:%s.%f'`, "UTC")
+        .as("parsed_date_time64"),
+      parsedDateTime64BestEffort: fn
+        .parseDateTime64BestEffort("2026-01-12 01:02:03.789", 3, "UTC")
+        .as("parsed_date_time64_best_effort"),
+      parsedDateTimeJoda: fn
+        .parseDateTimeInJodaSyntax("2026-01-12 01:02:03", ckSql`'yyyy-MM-dd HH:mm:ss'`, "UTC")
+        .as("parsed_date_time_joda"),
+      parsedDateTime64JodaNull: fn
+        .parseDateTime64InJodaSyntaxOrNull("bad", ckSql`'yyyy-MM-dd HH:mm:ss.SSS'`, "UTC")
+        .as("parsed_date_time64_joda_null"),
+      formattedRow: fn.formatRow(ckSql`'CSV'`, 7, "good").as("formatted_row"),
+      formattedRowNoNewline: fn.formatRowNoNewline(ckSql`'CSV'`, 7, "good").as("formatted_row_no_newline"),
+      lowCardinalityValue: fn.toLowCardinality<string>("vip").as("low_cardinality_value"),
+      nullableValue: fn.toNullable<string>("vip").as("nullable_value"),
+      timeValue: fn.toTime(ckSql`toDateTime('1970-01-01 12:34:56')`).as("time_value"),
+      timeNull: fn.toTimeOrNull("bad").as("time_null"),
+      time64Value: fn.toTime64("12:34:56.789123", 6).as("time64_value"),
+      time64Zero: fn.toTime64OrZero("bad", 6).as("time64_zero"),
+      intervalDay: fn.toDate(fn.call("plus", fn.toDate("2026-01-01"), fn.toIntervalDay(1))).as("interval_day"),
+      intervalGeneric: fn
+        .toDate(fn.call("plus", fn.toDate("2026-01-01"), fn.toInterval(1, "day")))
+        .as("interval_generic"),
+      uuidValue: fn.toUUID("123e4567-e89b-12d3-a456-426614174000").as("uuid_value"),
+      uuidZero: fn.toUUIDOrZero("bad").as("uuid_zero"),
+      cutToZero: fn.toStringCutToZero(ckSql`'abc\\0def'`).as("cut_to_zero"),
+    });
+
+    const presentRow = expectPresent(row, "type conversion row");
+    expect(presentRow.castUInt32).toBe(32);
+    expect(presentRow.accurateUInt8).toBe(8);
+    expect(presentRow.accurateDefault).toBe(7);
+    expect(presentRow.accurateNull).toBeNull();
+    expect(presentRow.reinterpretedUInt8).toBe(65);
+    expect(presentRow.boolValue).toBe(true);
+    expect(presentRow.int32Value).toBe(42);
+    expect(presentRow.int32Default).toBe(7);
+    expect(presentRow.int32Null).toBeNull();
+    expect(presentRow.uint64Value).toBe("18446744073709551615");
+    expect(presentRow.float32Value).toBeCloseTo(1.5);
+    expect(presentRow.float32Default).toBeCloseTo(2.5);
+    expect(presentRow.bfloatValue).toBeCloseTo(1.75, 1);
+    expect(presentRow.decimalValue).toBe("12.34");
+    expect(presentRow.decimalDefault).toBe("1.23");
+    expect(presentRow.decimalNull).toBeNull();
+    expect(presentRow.decimalZero).toBe("0");
+    expect(presentRow.decimalString).toBe("12.35");
+    expect(presentRow.fixedString).toBe("ABCD");
+    expect(presentRow.dateNull).toBeNull();
+    expect(presentRow.dateTimeNull).toBeNull();
+    expect(presentRow.dateTime64Null).toBeNull();
+    expect(presentRow.parsedDateTimeNull).toBeNull();
+    expect(presentRow.parsedDateTime64JodaNull).toBeNull();
+    expect(presentRow.formattedRow).toBe('7,"good"\n');
+    expect(presentRow.formattedRowNoNewline).toBe('7,"good"');
+    expect(presentRow.lowCardinalityValue).toBe("vip");
+    expect(presentRow.nullableValue).toBe("vip");
+    expect(presentRow.timeNull).toBeNull();
+    expect(presentRow.uuidValue).toBe("123e4567-e89b-12d3-a456-426614174000");
+    expect(presentRow.uuidZero).toBe("00000000-0000-0000-0000-000000000000");
+    expect(presentRow.cutToZero).toBe("abc");
+
+    for (const dateValue of [
+      presentRow.dateAlias,
+      presentRow.dateDefault,
+      presentRow.dateTimeDefault,
+      presentRow.dateTime64Default,
+      presentRow.parsedDateTime,
+      presentRow.parsedDateTime64,
+      presentRow.parsedDateTime64BestEffort,
+      presentRow.parsedDateTimeJoda,
+      presentRow.timeValue,
+      presentRow.time64Value,
+      presentRow.time64Zero,
+      presentRow.intervalDay,
+      presentRow.intervalGeneric,
+    ]) {
+      expectDate(dateValue);
+    }
+    expect(presentRow.dateAlias.toISOString().slice(0, 10)).toBe("2026-01-10");
+    expect(presentRow.dateDefault.toISOString().slice(0, 10)).toBe("2026-01-10");
+    expect(presentRow.dateTime64Default.getUTCMilliseconds()).toBe(456);
+    expect(presentRow.parsedDateTime64.getUTCMilliseconds()).toBe(456);
+    expect(presentRow.parsedDateTime64BestEffort.getUTCMilliseconds()).toBe(789);
+    const millisecondsWithinDay = (value: Date) => ((value.getTime() % 86_400_000) + 86_400_000) % 86_400_000;
+    expect(millisecondsWithinDay(presentRow.timeValue)).toBe(45_296_000);
+    expect(presentRow.time64Value.getTime()).toBe(45_296_789);
+    expect(presentRow.time64Zero.getTime()).toBe(0);
+    expect(presentRow.intervalDay.toISOString().slice(0, 10)).toBe("2026-01-02");
+    expect(presentRow.intervalGeneric.toISOString().slice(0, 10)).toBe("2026-01-02");
+  });
+
   it("supports aggregate helpers and month bucketing helpers", async function testAggregateHelpers() {
     const db = createE2EDb();
 

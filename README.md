@@ -1118,10 +1118,9 @@ Generic, conversion, aggregate, JSON, tuple, and table-related helpers include:
 
 - `fn.call()`
 - `fn.withParams()`
-- `fn.toString()`
-- `fn.toDate()` / `fn.toDate32()`
-- `fn.toDateTime()` / `fn.toDateTime32()` / `fn.toDateTime64()`
-- `fn.toDecimal32()` / `fn.toDecimal64()` / `fn.toDecimal128()` / `fn.toDecimal256()`
+- Type conversion helpers mirror the ClickHouse Type conversion page: `fn.cast()`, `fn.date()`, `fn.accurateCast*()`, `fn.reinterpret*()`, `fn.parseDateTime*()`, `fn.formatRow*()`, `fn.toString*()`, `fn.toBool()`, `fn.toInt*()`, `fn.toUInt*()`, `fn.toFloat*()`, `fn.toBFloat16*()`, `fn.toDecimal*()`, `fn.toDecimalString()`, `fn.toFixedString()`, `fn.toDate*()`, `fn.toDateTime*()`, `fn.toTime*()`, `fn.toTime64*()`, `fn.toInterval*()`, `fn.toLowCardinality()`, `fn.toNullable()`, and `fn.toUUID*()`.
+- 64-bit-and-wider integer conversions (`toInt64/128/256*`, `toUInt64/128/256*`, Unix timestamp 64 helpers) decode as `string`; narrower integer and floating conversions decode as `number`.
+- Literal-only ClickHouse arguments are validated and inlined where required: Decimal scale, DateTime64/Time64 precision, FixedString length, target type strings, and interval units.
 - `fn.toStartOfMonth()`
 - `fn.toUnixTimestamp()` / `fn.toUnixTimestamp64Second()` / `fn.toUnixTimestamp64Milli()` / `fn.toUnixTimestamp64Micro()` / `fn.toUnixTimestamp64Nano()`
 - `fn.fromUnixTimestamp()` / `fn.fromUnixTimestamp64Second()` / `fn.fromUnixTimestamp64Milli()` / `fn.fromUnixTimestamp64Micro()` / `fn.fromUnixTimestamp64Nano()`
