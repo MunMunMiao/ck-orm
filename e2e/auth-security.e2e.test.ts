@@ -9,7 +9,6 @@ describeE2E("ck-orm e2e auth security", function describeAuthSecurity() {
       database: process.env.CLICKHOUSE_E2E_DATABASE ?? "default",
       username: `invalid_user_${Date.now()}`,
       password: `invalid_password_${Date.now()}`,
-      schema: {},
     };
 
     const db = clickhouseClient(config);

@@ -16,7 +16,6 @@ const tempUsers = ckTable("tmp_users", {
 
 const db = clickhouseClient({
   databaseUrl: "http://localhost:8123/typecheck_db",
-  schema: { users },
   session_max_concurrent_requests: 2,
 });
 
@@ -105,21 +104,18 @@ db.select({ id: users.id }).from(users).iterator({ format: "JSONEachRow" });
 
 clickhouseClient({
   databaseUrl: "http://localhost:8123/typecheck_db",
-  schema: { users },
   // @ts-expect-error client config no longer accepts session_timeout defaults
   session_timeout: 30,
 });
 
 clickhouseClient({
   databaseUrl: "http://localhost:8123/typecheck_db",
-  schema: { users },
   // @ts-expect-error client config no longer accepts session_check defaults
   session_check: 1,
 });
 
 clickhouseClient({
   databaseUrl: "http://localhost:8123/typecheck_db",
-  schema: { users },
   // @ts-expect-error client config no longer accepts custom json hooks
   json: {
     parse: (text: string) => JSON.parse(text) as unknown,
@@ -129,14 +125,12 @@ clickhouseClient({
 
 clickhouseClient({
   databaseUrl: "http://localhost:8123/typecheck_db",
-  schema: { users },
   // @ts-expect-error session_max_concurrent_requests must be a number
   session_max_concurrent_requests: "2",
 });
 
 clickhouseClient({
   databaseUrl: "http://localhost:8123/typecheck_db",
-  schema: { users },
   tracing: {
     // @ts-expect-error tracing database name is derived from the client config
     dbName: "typecheck_db",

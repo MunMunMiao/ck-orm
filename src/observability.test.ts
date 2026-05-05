@@ -272,7 +272,6 @@ describe("ck-orm observability", function describeClickHouseORMObservability() {
 
     const db = clickhouseClient({
       host: "http://localhost:8123",
-      schema: { users },
       instrumentation: [instrumentationA, instrumentationB],
     });
 
@@ -337,13 +336,11 @@ describe("ck-orm observability", function describeClickHouseORMObservability() {
     const structuredDb = clickhouseClient({
       host: "http://clickhouse.local:8123",
       database: "structured_db",
-      schema: { users },
       request_timeout: 12_000,
       instrumentation: [instrumentation],
     });
     const urlDb = clickhouseClient({
       databaseUrl: "https://default:secret@clickhouse.example/url_db",
-      schema: { users },
       instrumentation: [instrumentation],
     });
 
@@ -390,7 +387,6 @@ describe("ck-orm observability", function describeClickHouseORMObservability() {
 
     const db = clickhouseClient({
       host: "http://localhost:8123",
-      schema: { users },
       logger: capturedLogger.logger,
       logLevel: "debug",
       tracing: {

@@ -92,11 +92,8 @@ export type SessionRunInSessionOptions = Omit<ClickHouseBaseQueryOptions, "sessi
   onCleanupError?: (errors: readonly unknown[], context: { sessionId: string }) => void;
 };
 
-export interface Session<TSchema = unknown, TJoinUseNulls extends 0 | 1 = 1>
-  extends Pick<
-    QueryClient<TSchema, TJoinUseNulls>,
-    "schema" | "ctes" | "select" | "count" | "insert" | "$with" | "with"
-  > {
+export interface Session<TJoinUseNulls extends 0 | 1 = 1>
+  extends Pick<QueryClient<TJoinUseNulls>, "ctes" | "select" | "count" | "insert" | "$with" | "with"> {
   readonly sessionId: string;
   execute(query: RawQueryInput, options?: ClickHouseQueryOptions): Promise<Record<string, unknown>[]>;
   stream(
@@ -108,7 +105,7 @@ export interface Session<TSchema = unknown, TJoinUseNulls extends 0 | 1 = 1>
   replicasStatus(options?: ClickHouseEndpointOptions): Promise<void>;
   withSettings<TSettings extends ClickHouseSettings>(
     settings: TSettings,
-  ): Session<TSchema, ResolveJoinUseNulls<TSettings, TJoinUseNulls>>;
+  ): Session<ResolveJoinUseNulls<TSettings, TJoinUseNulls>>;
   insertJsonEachRow(
     table: AnyTable | string,
     rows: readonly Record<string, unknown>[] | AsyncIterable<Record<string, unknown>>,
@@ -118,7 +115,7 @@ export interface Session<TSchema = unknown, TJoinUseNulls extends 0 | 1 = 1>
   createTemporaryTable(table: AnyTable, options?: CreateTemporaryTableOptions): Promise<void>;
   createTemporaryTableRaw(name: string, definition: string): Promise<void>;
   runInSession<TResult>(
-    callback: (session: Session<TSchema, TJoinUseNulls>) => Promise<TResult>,
+    callback: (session: Session<TJoinUseNulls>) => Promise<TResult>,
     options?: SessionRunInSessionOptions,
   ): Promise<TResult>;
 }
@@ -192,8 +189,7 @@ type SharedClientConfigOptions = {
 export type ClickHouseFetchConfigOptions = SharedClientConfigOptions &
   (DatabaseUrlConnectionConfig | StructuredConnectionConfig);
 
-export type ClickHouseClientConfig<TSchema> = ClickHouseFetchConfigOptions & {
-  readonly schema: TSchema;
+export type ClickHouseClientConfig = ClickHouseFetchConfigOptions & {
   readonly logger?: ClickHouseORMLogger | false;
   readonly logLevel?: ClickHouseORMLogLevel;
   readonly tracing?: false | ClickHouseORMTracingOptions;

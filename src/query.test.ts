@@ -95,13 +95,7 @@ const pets = ckTable(
   }),
 );
 
-type TestSchema = {
-  users: typeof users;
-  pets: typeof pets;
-};
-
-const typeDb = createQueryClient<TestSchema, 1>({
-  schema: { users, pets },
+const typeDb = createQueryClient<1>({
   joinUseNulls: 1,
 });
 const defaultLeftJoin = typeDb.select().from(users).leftJoin(pets, eq(users.id, pets.owner_id));
@@ -115,8 +109,7 @@ const explicitLeftJoin = typeDb
   })
   .from(users)
   .leftJoin(pets, eq(users.id, pets.owner_id));
-const noNullsDb = createQueryClient<TestSchema, 0>({
-  schema: { users, pets },
+const noNullsDb = createQueryClient<0>({
   joinUseNulls: 0,
 });
 const noNullsLeftJoin = noNullsDb.select().from(users).leftJoin(pets, eq(users.id, pets.owner_id));
@@ -127,7 +120,6 @@ const drizzleStyleOrderBy = typeDb
   .orderBy(users.id, desc(pets.id));
 const publicDb = clickhouseClient({
   databaseUrl: "http://127.0.0.1:8123",
-  schema: { users, pets },
 });
 const publicLeftJoin = publicDb.select().from(users).leftJoin(pets, eq(users.id, pets.owner_id));
 const publicRawQuery = sql`select 1 as one`;
@@ -352,11 +344,7 @@ describe("ck-orm query compile", function describeClickHouseORMQueryCompile() {
     expect(aliasedLog.options.orderBy?.map((column) => column.tableAlias)).toEqual(["orl", "orl", "orl"]);
     expect(aliasedLog.options.versionColumn?.tableAlias).toBe("orl");
 
-    const db = createQueryClient({
-      schema: {
-        orderRewardLog,
-      },
-    });
+    const db = createQueryClient();
     const query = db
       .select({
         userId: aliasedLog.user_id,
@@ -396,13 +384,7 @@ describe("ck-orm query compile", function describeClickHouseORMQueryCompile() {
   });
 
   it("wraps complex FINAL table sources as stable table-level subqueries", function testComplexFinalTableSource() {
-    const db = createQueryClient({
-      schema: {
-        users,
-        pets,
-        camelRewardLog,
-      },
-    });
+    const db = createQueryClient();
 
     const joinedFinal = buildCompiled(
       db
@@ -455,12 +437,7 @@ describe("ck-orm query compile", function describeClickHouseORMQueryCompile() {
   });
 
   it("compiles cte, subquery, tuple, arrayZip and limit by", function testCompileCteAndFunctions() {
-    const db = createQueryClient({
-      schema: {
-        orderRewardLog,
-        shipmentOrder,
-      },
-    });
+    const db = createQueryClient();
 
     const ranked = db.$with("ranked").as(
       db
@@ -513,11 +490,7 @@ describe("ck-orm query compile", function describeClickHouseORMQueryCompile() {
   });
 
   it("compiles insert values using table schema types", function testCompileInsert() {
-    const db = createQueryClient({
-      schema: {
-        orderRewardLog,
-      },
-    });
+    const db = createQueryClient();
 
     const built = buildCompiled(
       db
@@ -550,11 +523,7 @@ describe("ck-orm query compile", function describeClickHouseORMQueryCompile() {
   });
 
   it("compiles physical column names while decoding and inserting logical keys", function testLogicalAndPhysicalNames() {
-    const db = createQueryClient({
-      schema: {
-        camelRewardLog,
-      },
-    });
+    const db = createQueryClient();
 
     const implicitSelect = db.select().from(camelRewardLog)[compileQuerySymbol]();
     expect(normalizeSql(implicitSelect.statement)).toContain(
@@ -605,12 +574,7 @@ describe("ck-orm query compile", function describeClickHouseORMQueryCompile() {
   });
 
   it("supports drizzle-style orderBy(column, desc(expr)) and nested default left-join selection", function testOrderByAndJoinShape() {
-    const db = createQueryClient({
-      schema: {
-        users,
-        pets,
-      },
-    });
+    const db = createQueryClient();
 
     const built = buildCompiled(
       db

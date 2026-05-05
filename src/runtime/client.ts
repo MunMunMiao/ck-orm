@@ -40,9 +40,9 @@ import type { SessionConcurrencyController } from "./session-concurrency";
 import type { ClickHouseSettings } from "./settings";
 import type { FetchClickHouseTransport } from "./transport";
 
-export interface ClickHouseORMClient<TSchema, TJoinUseNulls extends 0 | 1 = 1>
-  extends QueryClient<TSchema, TJoinUseNulls>,
-    Session<TSchema, TJoinUseNulls> {
+export interface ClickHouseORMClient<TJoinUseNulls extends 0 | 1 = 1>
+  extends QueryClient<TJoinUseNulls>,
+    Session<TJoinUseNulls> {
   readonly $client: FetchClickHouseTransport;
   executeCompiled<TResult extends Record<string, unknown>>(
     compiled: CompiledQuery<TResult>,
@@ -54,8 +54,7 @@ export interface ClickHouseORMClient<TSchema, TJoinUseNulls extends 0 | 1 = 1>
   ): AsyncGenerator<TResult, void, unknown>;
 }
 
-type ClickHouseORMClientConfig<TSchema, TJoinUseNulls extends 0 | 1> = {
-  schema: TSchema;
+type ClickHouseORMClientConfig<TJoinUseNulls extends 0 | 1> = {
   client: FetchClickHouseTransport;
   defaultOptions?: ClickHouseBaseQueryOptions;
   instrumentations?: readonly ClickHouseORMInstrumentation[];
@@ -99,19 +98,18 @@ const createSessionController = (sessionId: string, ancestorSessionIds: readonly
   };
 };
 
-export const createClickHouseORMClient = <TSchema, TJoinUseNulls extends 0 | 1 = 1>(
-  config: ClickHouseORMClientConfig<TSchema, TJoinUseNulls>,
-): ClickHouseORMClient<TSchema, TJoinUseNulls> => {
+export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
+  config: ClickHouseORMClientConfig<TJoinUseNulls>,
+): ClickHouseORMClient<TJoinUseNulls> => {
   const defaultOptions = config.defaultOptions ?? {};
   const instrumentations = config.instrumentations ?? [];
   const sessionController = config.sessionController;
   const sessionConcurrencyController = config.sessionConcurrencyController;
   const joinUseNulls = (config.joinUseNulls ?? 1) as TJoinUseNulls;
 
-  let client!: ClickHouseORMClient<TSchema, TJoinUseNulls>;
+  let client!: ClickHouseORMClient<TJoinUseNulls>;
   const runner = createORMRunner(() => client);
-  const queryClient = createQueryClient<TSchema, TJoinUseNulls>({
-    schema: config.schema,
+  const queryClient = createQueryClient<TJoinUseNulls>({
     runner,
     joinUseNulls,
   });
@@ -360,11 +358,10 @@ export const createClickHouseORMClient = <TSchema, TJoinUseNulls extends 0 | 1 =
     nextSessionController?: SessionController,
     nextJoinUseNulls?: TNextJoinUseNulls,
   ) => {
-    return createClickHouseORMClient<TSchema, TNextJoinUseNulls>({
+    return createClickHouseORMClient<TNextJoinUseNulls>({
       client: config.client,
       defaultOptions: nextDefaultOptions,
       instrumentations,
-      schema: config.schema,
       databaseName: config.databaseName,
       serverAddress: config.serverAddress,
       serverPort: config.serverPort,
@@ -559,7 +556,7 @@ export const createClickHouseORMClient = <TSchema, TJoinUseNulls extends 0 | 1 =
 
     withSettings<TSettings extends ClickHouseSettings>(
       settings: TSettings,
-    ): ClickHouseORMClient<TSchema, ResolveJoinUseNulls<TSettings, TJoinUseNulls>> {
+    ): ClickHouseORMClient<ResolveJoinUseNulls<TSettings, TJoinUseNulls>> {
       const nextJoinUseNulls = (
         settings.join_use_nulls === 0 || settings.join_use_nulls === 1 ? settings.join_use_nulls : joinUseNulls
       ) as ResolveJoinUseNulls<TSettings, TJoinUseNulls>;
@@ -642,7 +639,7 @@ export const createClickHouseORMClient = <TSchema, TJoinUseNulls extends 0 | 1 =
     },
 
     async runInSession<TResult>(
-      callback: (session: Session<TSchema, TJoinUseNulls>) => Promise<TResult>,
+      callback: (session: Session<TJoinUseNulls>) => Promise<TResult>,
       options?: SessionRunInSessionOptions,
     ): Promise<TResult> {
       if (sessionController && options?.session_check === 1) {
@@ -721,13 +718,13 @@ export const createClickHouseORMClient = <TSchema, TJoinUseNulls extends 0 | 1 =
 
     executeCompiled,
     iteratorCompiled,
-  } as ClickHouseORMClient<TSchema, TJoinUseNulls>;
+  } as ClickHouseORMClient<TJoinUseNulls>;
 
   return client;
 };
 
-export const createORMRunner = <TSchema, TJoinUseNulls extends 0 | 1>(
-  resolveClient: () => Pick<ClickHouseORMClient<TSchema, TJoinUseNulls>, "executeCompiled" | "iteratorCompiled">,
+export const createORMRunner = <TJoinUseNulls extends 0 | 1>(
+  resolveClient: () => Pick<ClickHouseORMClient<TJoinUseNulls>, "executeCompiled" | "iteratorCompiled">,
 ) => ({
   execute<TResult extends Record<string, unknown>>(
     compiled: CompiledQuery<TResult>,

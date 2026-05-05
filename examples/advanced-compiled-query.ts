@@ -1,5 +1,5 @@
 import { type CompiledQuery, ck, ckSql, clickhouseClient, fn } from "./ck-orm";
-import { commerceSchema, customerInvoice } from "./schema/commerce";
+import { customerInvoice } from "./schema/commerce";
 
 const createCommerceDb = () => {
   return clickhouseClient({
@@ -7,7 +7,6 @@ const createCommerceDb = () => {
     database: "demo_store",
     username: "default",
     password: "<password>",
-    schema: commerceSchema,
   });
 };
 

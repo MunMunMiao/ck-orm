@@ -26,12 +26,12 @@ export type {
   ClickHouseSettingValue,
 } from "./runtime/settings";
 
-export const clickhouseClient = <TSchema, TSettings extends ClickHouseSettings | undefined = undefined>(
-  config: ClickHouseClientConfig<TSchema> & {
+export const clickhouseClient = <TSettings extends ClickHouseSettings | undefined = undefined>(
+  config: ClickHouseClientConfig & {
     readonly clickhouse_settings?: TSettings;
   },
-): ClickHouseORMClient<TSchema, ResolveJoinUseNulls<TSettings, 1>> => {
-  const { schema, logger, logLevel, tracing, instrumentation, ...clientOptions } = config;
+): ClickHouseORMClient<ResolveJoinUseNulls<TSettings, 1>> => {
+  const { logger, logLevel, tracing, instrumentation, ...clientOptions } = config;
 
   const normalizedConfig = normalizeClientConfig(clientOptions);
   const instrumentations = [
@@ -46,8 +46,7 @@ export const clickhouseClient = <TSchema, TSettings extends ClickHouseSettings |
   );
   const joinUseNulls = (config.clickhouse_settings?.join_use_nulls === 0 ? 0 : 1) as ResolveJoinUseNulls<TSettings, 1>;
 
-  return createClickHouseORMClient<TSchema, ResolveJoinUseNulls<TSettings, 1>>({
-    schema,
+  return createClickHouseORMClient<ResolveJoinUseNulls<TSettings, 1>>({
     client,
     instrumentations,
     databaseName: normalizedConfig.database,

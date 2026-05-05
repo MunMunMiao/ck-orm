@@ -308,10 +308,7 @@ export const getE2EDatabaseUrl = () => {
 };
 
 export const createE2EDb = (
-  overrides?: Omit<
-    ClickHouseClientConfig<E2ESchema>,
-    "databaseUrl" | "host" | "database" | "username" | "password" | "schema"
-  >,
+  overrides?: Omit<ClickHouseClientConfig, "databaseUrl" | "host" | "database" | "username" | "password">,
 ) => {
   const config = getE2EConfig();
   return clickhouseClient({
@@ -319,7 +316,6 @@ export const createE2EDb = (
     database: config.database,
     username: config.username,
     password: config.password,
-    schema: e2eSchema,
     clickhouse_settings: {
       ...experimentalSettings,
       ...(overrides?.clickhouse_settings ?? {}),
@@ -335,7 +331,6 @@ export const createAdminDb = () => {
     database: "default",
     username: config.username,
     password: config.password,
-    schema: {},
     clickhouse_settings: experimentalSettings,
   });
 };

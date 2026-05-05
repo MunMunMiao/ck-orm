@@ -10,7 +10,6 @@ const createStructuredTransportDb = (overrides?: Record<string, unknown>) => {
     database: config.database,
     username: config.username,
     password: config.password,
-    schema: {},
     ...(overrides ?? {}),
   });
 };
@@ -24,7 +23,6 @@ describeE2E("ck-orm e2e transport contracts", function describeTransportContract
     await withFetchSampling(async (calls) => {
       const db = clickhouseClient({
         databaseUrl: getE2EDatabaseUrl(),
-        schema: {},
       });
 
       const rows = await db.execute(ckSql`
@@ -94,7 +92,6 @@ describeE2E("ck-orm e2e transport contracts", function describeTransportContract
           database: config.database,
           username: roleUsername,
           password: rolePassword,
-          schema: {},
           role: roles,
         });
 

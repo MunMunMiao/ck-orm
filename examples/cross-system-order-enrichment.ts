@@ -1,6 +1,6 @@
 import { ck, clickhouseClient } from "./ck-orm";
-import { commerceSchema, orderRewardLog } from "./schema/commerce";
-import { fulfillmentSchema, shipmentEvent } from "./schema/fulfillment";
+import { orderRewardLog } from "./schema/commerce";
+import { shipmentEvent } from "./schema/fulfillment";
 
 const createCommerceDb = () => {
   return clickhouseClient({
@@ -8,7 +8,6 @@ const createCommerceDb = () => {
     database: "demo_store",
     username: "default",
     password: "<password>",
-    schema: commerceSchema,
   });
 };
 
@@ -18,7 +17,6 @@ const createFulfillmentDb = () => {
     database: "demo_fulfillment",
     username: "default",
     password: "<password>",
-    schema: fulfillmentSchema,
   });
 };
 

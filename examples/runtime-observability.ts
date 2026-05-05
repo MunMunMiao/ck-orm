@@ -6,7 +6,6 @@ import {
   ckSql,
   clickhouseClient,
 } from "./ck-orm";
-import { commerceSchema } from "./schema/commerce";
 
 const logger: ClickHouseORMLogger = {
   trace(message, fields) {
@@ -41,7 +40,6 @@ const instrumentation: ClickHouseORMInstrumentation = {
 export const createInstrumentedCommerceDb = () => {
   return clickhouseClient({
     databaseUrl: "http://default:<password>@127.0.0.1:8123/demo_store",
-    schema: commerceSchema,
     logger,
     logLevel: "info",
     instrumentation: [instrumentation],

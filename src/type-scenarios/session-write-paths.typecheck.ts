@@ -1,10 +1,9 @@
 import { ckSql, clickhouseClient, type Session } from "../index";
-import { logicalMetrics, tempMetricScope, typeScenarioSchema } from "./fixtures";
+import { logicalMetrics, tempMetricScope } from "./fixtures";
 import type { Equal, Expect, InferBuilderResult } from "./helpers";
 
 const db = clickhouseClient({
   databaseUrl: "http://localhost:8123/session_typecheck",
-  schema: typeScenarioSchema,
   session_max_concurrent_requests: 2,
 });
 
@@ -66,7 +65,7 @@ const noNullsSelect = noNullsDb.select({ userId: logicalMetrics.userId }).from(l
 type _NoNullsSelectType = Expect<Equal<InferBuilderResult<typeof noNullsSelect>, { userId: string }>>;
 
 db.runInSession(
-  async (session: Session<typeof typeScenarioSchema>) => {
+  async (session: Session) => {
     const sessionId: string = session.sessionId;
     await session.createTemporaryTable(tempMetricScope, { mode: "if_not_exists" });
     await session.createTemporaryTableRaw("tmp_metric_scope_raw", "(user_id String)");
@@ -121,19 +120,16 @@ selectedMetrics.iterator({ format: "JSONEachRow" });
 db.insert(logicalMetrics).values({ typo_name: "alice" });
 clickhouseClient({
   databaseUrl: "http://localhost:8123/session_typecheck",
-  schema: typeScenarioSchema,
   // @ts-expect-error client config no longer accepts session_timeout defaults.
   session_timeout: 30,
 });
 clickhouseClient({
   databaseUrl: "http://localhost:8123/session_typecheck",
-  schema: typeScenarioSchema,
   // @ts-expect-error client config no longer accepts session_check defaults.
   session_check: 1,
 });
 clickhouseClient({
   databaseUrl: "http://localhost:8123/session_typecheck",
-  schema: typeScenarioSchema,
   // @ts-expect-error session_max_concurrent_requests must be a number.
   session_max_concurrent_requests: "2",
 });

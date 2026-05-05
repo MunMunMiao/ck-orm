@@ -76,11 +76,8 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
   });
 
   it("keeps request compression out of the public config surface", function testCompressionRequestTypeBoundary() {
-    const validConfig: ClickHouseClientConfig<{
-      orderRewardLog: typeof orderRewardLog;
-    }> = {
+    const validConfig: ClickHouseClientConfig = {
       databaseUrl: "http://localhost:8123",
-      schema: { orderRewardLog },
       compression: {
         response: true,
       },
@@ -88,11 +85,8 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
 
     expect(validConfig.compression?.response).toBe(true);
 
-    const invalidConfig: ClickHouseClientConfig<{
-      orderRewardLog: typeof orderRewardLog;
-    }> = {
+    const invalidConfig: ClickHouseClientConfig = {
       databaseUrl: "http://localhost:8123",
-      schema: { orderRewardLog },
       compression: {
         response: true,
         // @ts-expect-error request compression is intentionally unsupported in fetch runtime
@@ -123,55 +117,40 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
   });
 
   it("keeps connection modes mutually exclusive in the public config surface", function testConnectionModeTypeBoundary() {
-    const validDatabaseUrlConfig: ClickHouseClientConfig<{
-      orderRewardLog: typeof orderRewardLog;
-    }> = {
+    const validDatabaseUrlConfig: ClickHouseClientConfig = {
       databaseUrl: "http://localhost:8123/demo_store",
-      schema: { orderRewardLog },
     };
 
     expect(validDatabaseUrlConfig.databaseUrl).toBe("http://localhost:8123/demo_store");
 
-    const validStructuredConfig: ClickHouseClientConfig<{
-      orderRewardLog: typeof orderRewardLog;
-    }> = {
+    const validStructuredConfig: ClickHouseClientConfig = {
       host: "http://localhost:8123",
       database: "demo_store",
       username: "default",
       password: "",
-      schema: { orderRewardLog },
     };
 
     expect(validStructuredConfig.host).toBe("http://localhost:8123");
 
-    const invalidMixedConfig: ClickHouseClientConfig<{
-      orderRewardLog: typeof orderRewardLog;
-    }> = {
+    const invalidMixedConfig: ClickHouseClientConfig = {
       databaseUrl: "http://localhost:8123/demo_store",
       // @ts-expect-error databaseUrl is mutually exclusive with structured fields
       username: "default",
-      schema: { orderRewardLog },
     };
 
     expect((invalidMixedConfig as Record<string, unknown>).username).toBe("default");
   });
 
   it("keeps internal transport hooks and session lifetime defaults out of the client config surface", function testInternalConfigTypeBoundary() {
-    const validConfig: ClickHouseClientConfig<{
-      orderRewardLog: typeof orderRewardLog;
-    }> = {
+    const validConfig: ClickHouseClientConfig = {
       databaseUrl: "http://localhost:8123/demo_store",
-      schema: { orderRewardLog },
       session_id: "default_session",
     };
 
     expect(validConfig.session_id).toBe("default_session");
 
-    const invalidJsonConfig: ClickHouseClientConfig<{
-      orderRewardLog: typeof orderRewardLog;
-    }> = {
+    const invalidJsonConfig: ClickHouseClientConfig = {
       databaseUrl: "http://localhost:8123/demo_store",
-      schema: { orderRewardLog },
       // @ts-expect-error json hooks are intentionally internal to the fetch transport
       json: {
         parse: JSON.parse,
@@ -179,20 +158,14 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
       },
     };
 
-    const invalidSessionTimeoutConfig: ClickHouseClientConfig<{
-      orderRewardLog: typeof orderRewardLog;
-    }> = {
+    const invalidSessionTimeoutConfig: ClickHouseClientConfig = {
       databaseUrl: "http://localhost:8123/demo_store",
-      schema: { orderRewardLog },
       // @ts-expect-error session_timeout belongs on requests and runInSession(), not client defaults
       session_timeout: 30,
     };
 
-    const invalidSessionCheckConfig: ClickHouseClientConfig<{
-      orderRewardLog: typeof orderRewardLog;
-    }> = {
+    const invalidSessionCheckConfig: ClickHouseClientConfig = {
       databaseUrl: "http://localhost:8123/demo_store",
-      schema: { orderRewardLog },
       // @ts-expect-error session_check belongs on requests and runInSession(), not client defaults
       session_check: 1,
     };
@@ -219,7 +192,6 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
 
     const db = clickhouseClient({
       host: "http://localhost:8123",
-      schema: { orderRewardLog },
       clickhouse_settings: {
         max_execution_time: 10,
       },
@@ -274,7 +246,6 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
 
     const db = clickhouseClient({
       host: "http://localhost:8123",
-      schema: { orderRewardLog },
       instrumentation: [
         {
           onQueryStart(event) {
@@ -306,7 +277,6 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
 
     const db = clickhouseClient({
       host: "http://localhost:8123",
-      schema: { orderRewardLog },
     });
 
     await expect(
@@ -356,7 +326,6 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
 
     const db = clickhouseClient({
       host: "http://localhost:8123",
-      schema: { orderRewardLog },
     });
 
     const first = db.execute(sql`select 1`, {
@@ -410,7 +379,6 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
 
     const db = clickhouseClient({
       host: "http://localhost:8123",
-      schema: { orderRewardLog },
       session_id: "default_session",
     });
 
@@ -459,7 +427,6 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
 
     const db = clickhouseClient({
       host: "http://localhost:8123",
-      schema: { orderRewardLog },
     });
 
     const outside = db.execute(sql`select 1`, {
@@ -516,7 +483,6 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
 
     const db = clickhouseClient({
       host: "http://localhost:8123",
-      schema: { orderRewardLog },
       session_max_concurrent_requests: 2,
     });
 
@@ -558,7 +524,6 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
 
     const db = clickhouseClient({
       host: "http://localhost:8123",
-      schema: { orderRewardLog },
       application: "demo-store-test",
       username: "demo-user",
       password: "demo-pass",
@@ -578,7 +543,6 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
 
     const db = clickhouseClient({
       databaseUrl: "http://demo-user:demo-pass@localhost:8123/demo_store",
-      schema: { orderRewardLog },
     });
 
     await db.execute(sql`select 1`);
@@ -608,7 +572,6 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
     const db = clickhouseClient({
       host: "http://localhost:8123",
       database: "default",
-      schema: { orderRewardLog },
       username: "demo-user",
       password: "demo-pass",
     });
@@ -621,22 +584,16 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
     expect(() =>
       clickhouseClient({
         databaseUrl: "http://localhost:8123/default",
-        schema: { orderRewardLog },
         username: "demo-user",
-      } as unknown as ClickHouseClientConfig<{
-        orderRewardLog: typeof orderRewardLog;
-      }>),
+      } as unknown as ClickHouseClientConfig),
     ).toThrow();
 
     try {
       clickhouseClient({
         databaseUrl: "http://embedded-user:embedded-pass@localhost:8123/default",
-        schema: { orderRewardLog },
         username: "structured-user",
         password: "structured-pass",
-      } as unknown as ClickHouseClientConfig<{
-        orderRewardLog: typeof orderRewardLog;
-      }>);
+      } as unknown as ClickHouseClientConfig);
       throw new Error("expected URL-credentials + username/password to be rejected");
     } catch (error) {
       expect(isClickHouseORMError(error)).toBe(true);
@@ -650,19 +607,13 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
     expect(() =>
       clickhouseClient({
         url: "http://localhost:8123",
-        schema: { orderRewardLog },
-      } as unknown as ClickHouseClientConfig<{
-        orderRewardLog: typeof orderRewardLog;
-      }>),
+      } as unknown as ClickHouseClientConfig),
     ).toThrow();
 
     expect(() =>
       clickhouseClient({
         access_token: "token",
-        schema: { orderRewardLog },
-      } as unknown as ClickHouseClientConfig<{
-        orderRewardLog: typeof orderRewardLog;
-      }>),
+      } as unknown as ClickHouseClientConfig),
     ).toThrow();
 
     expect(() =>
@@ -670,10 +621,7 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
         additional_headers: {
           "x-demo": "1",
         },
-        schema: { orderRewardLog },
-      } as unknown as ClickHouseClientConfig<{
-        orderRewardLog: typeof orderRewardLog;
-      }>),
+      } as unknown as ClickHouseClientConfig),
     ).toThrow();
   });
 
@@ -681,40 +629,30 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
     expect(() =>
       clickhouseClient({
         host: "http://localhost:8123",
-        schema: { orderRewardLog },
         json: {
           parse: JSON.parse,
           stringify: JSON.stringify,
         },
-      } as unknown as ClickHouseClientConfig<{
-        orderRewardLog: typeof orderRewardLog;
-      }>),
+      } as unknown as ClickHouseClientConfig),
     ).toThrow("clickhouseClient() no longer accepts json hooks");
 
     expect(() =>
       clickhouseClient({
         host: "http://localhost:8123",
-        schema: { orderRewardLog },
         session_timeout: 30,
-      } as unknown as ClickHouseClientConfig<{
-        orderRewardLog: typeof orderRewardLog;
-      }>),
+      } as unknown as ClickHouseClientConfig),
     ).toThrow("clickhouseClient() no longer accepts session_timeout");
 
     expect(() =>
       clickhouseClient({
         host: "http://localhost:8123",
-        schema: { orderRewardLog },
         session_check: 1,
-      } as unknown as ClickHouseClientConfig<{
-        orderRewardLog: typeof orderRewardLog;
-      }>),
+      } as unknown as ClickHouseClientConfig),
     ).toThrow("clickhouseClient() no longer accepts session_check");
 
     expect(() =>
       clickhouseClient({
         host: "http://localhost:8123",
-        schema: { orderRewardLog },
         session_max_concurrent_requests: 0,
       }),
     ).toThrow("clickhouseClient() session_max_concurrent_requests must be a positive integer");
@@ -722,7 +660,6 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
     expect(() =>
       clickhouseClient({
         host: "http://localhost:8123",
-        schema: { orderRewardLog },
         session_max_concurrent_requests: 1.5,
       }),
     ).toThrow("clickhouseClient() session_max_concurrent_requests must be a positive integer");
@@ -731,7 +668,6 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
       expect(() =>
         clickhouseClient({
           host: "http://localhost:8123",
-          schema: { orderRewardLog },
           request_timeout,
         }),
       ).toThrow("clickhouseClient() request_timeout must be a finite positive number");
@@ -752,7 +688,6 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
     const db = clickhouseClient({
       host: "http://localhost:8123/base",
       pathname: "/proxy",
-      schema: { orderRewardLog },
       http_headers: {
         "x-client-header": "default",
       },
@@ -805,7 +740,6 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
 
     const db = clickhouseClient({
       host: "http://localhost:8123",
-      schema: { orderRewardLog },
       request_timeout: 5,
     });
 
@@ -817,7 +751,6 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
 
     const abortDb = clickhouseClient({
       host: "http://localhost:8123",
-      schema: { orderRewardLog },
       request_timeout: 1_000,
     });
 
@@ -842,7 +775,6 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
 
     const db = clickhouseClient({
       host: "http://localhost:8123",
-      schema: { orderRewardLog },
       username: "demo-user",
       password: "demo-pass",
       http_headers: {

@@ -129,7 +129,6 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
 
     const db = clickhouseClient({
       host: "http://localhost:8123",
-      schema: { orderRewardLog, users },
     });
 
     const typedRows = await db
@@ -216,7 +215,6 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
       async endpoint() {},
     };
     const db = createClickHouseORMClient({
-      schema: { users },
       client: transport,
     });
 
@@ -338,7 +336,6 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
 
     const db = clickhouseClient({
       databaseUrl: "http://localhost:8123/demo_store",
-      schema: { users },
       request_timeout: 5,
     });
 
@@ -445,7 +442,6 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
 
     const db = clickhouseClient({
       host: "http://localhost:8123",
-      schema: { users },
     });
 
     await expect(
@@ -474,7 +470,6 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
 
     const db = clickhouseClient({
       host: "http://localhost:8123",
-      schema: { users },
       instrumentation: [
         {
           onQuerySuccess(event) {
@@ -510,7 +505,6 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
     expect(() =>
       clickhouseClient({
         host: "http://localhost:8123",
-        schema: { users },
         compression: {
           response: true,
           request: true,
@@ -532,7 +526,6 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
 
     const db = clickhouseClient({
       host: "http://localhost:8123",
-      schema: { users },
     });
 
     await expectRejectsWithClickhouseError(db.execute(sql`select broken`, { query_id: "embedded_json_error" }), {
@@ -571,7 +564,6 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
 
     const db = clickhouseClient({
       host: "http://localhost:8123",
-      schema: { users },
     });
 
     await expectRejectsWithClickhouseError(
@@ -669,7 +661,6 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
 
     const db = clickhouseClient({
       databaseUrl: "http://localhost:8123/demo_store",
-      schema: { users },
     });
 
     expect(
@@ -783,7 +774,6 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
 
     const db = clickhouseClient({
       databaseUrl: "http://localhost:8123/demo_store",
-      schema: { users },
     });
 
     const compiled = {
@@ -804,7 +794,6 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
 
     const db = clickhouseClient({
       host: "http://localhost:8123",
-      schema: { users },
     });
 
     await expectRejectsWithClickhouseError(
@@ -860,7 +849,6 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
 
     const db = clickhouseClient({
       databaseUrl: "http://localhost:8123/demo_store",
-      schema: { users },
     });
 
     let nestedSessionId = "";
@@ -923,7 +911,6 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
 
     const db = clickhouseClient({
       databaseUrl: "http://localhost:8123/demo_store",
-      schema: { users },
     });
 
     await expectRejectsWithClickhouseError(
@@ -949,7 +936,6 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
 
     const db = clickhouseClient({
       databaseUrl: "http://localhost:8123/demo_store",
-      schema: { users },
     });
 
     await expectRejectsWithClickhouseError(
@@ -978,7 +964,6 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
 
     const db = clickhouseClient({
       databaseUrl: "http://localhost:8123/demo_store",
-      schema: { users },
     });
 
     await expectRejectsWithClickhouseError(db.createTemporaryTableRaw("tmp_outside", "(id Int32)"), {
@@ -1006,7 +991,6 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
 
     const db = clickhouseClient({
       databaseUrl: "http://localhost:8123/demo_store",
-      schema: { users },
     });
 
     const sessionIds: string[] = [];
@@ -1042,7 +1026,6 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
 
     const db = clickhouseClient({
       databaseUrl: "http://localhost:8123/demo_store",
-      schema: { users },
     });
 
     await expectRejectsWithClickhouseError(
@@ -1118,7 +1101,6 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
 
     const db = clickhouseClient({
       databaseUrl: "http://localhost:8123/demo_store",
-      schema: { users },
     });
 
     const outerScope = ckTable("tmp_outer_scope", { id: int32() });
@@ -1195,7 +1177,6 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
 
     const db = clickhouseClient({
       databaseUrl: "http://localhost:8123/demo_store",
-      schema: { users },
     });
 
     let outerSessionId = "";
@@ -1237,7 +1218,6 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
 
     const db = clickhouseClient({
       databaseUrl: "http://localhost:8123/demo_store",
-      schema: { mappedRewards },
     });
 
     await db.insertJsonEachRow(mappedRewards, [
@@ -1317,7 +1297,6 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
 
     const db = clickhouseClient({
       databaseUrl: "http://localhost:8123/demo_store",
-      schema: { users },
     });
 
     expect(
@@ -1352,7 +1331,6 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
 
     const db = clickhouseClient({
       databaseUrl: "http://localhost:8123/demo_store",
-      schema: { users },
     });
 
     await db.insertJsonEachRow(
@@ -1379,7 +1357,6 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
 
     const db = clickhouseClient({
       databaseUrl: "http://localhost:8123/demo_store",
-      schema: { users },
     });
 
     await db.runInSession(async (session) => {
@@ -1395,7 +1372,6 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
 
     const db = clickhouseClient({
       databaseUrl: "http://localhost:8123/demo_store",
-      schema: { users },
     });
 
     await expectRejectsWithClickhouseError(
@@ -1424,7 +1400,6 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
 
     const db = clickhouseClient({
       databaseUrl: "http://localhost:8123/demo_store",
-      schema: { users },
     });
 
     await expectRejectsWithClickhouseError(
@@ -1457,7 +1432,6 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
 
     const db = clickhouseClient({
       databaseUrl: "http://localhost:8123/demo_store",
-      schema: { users },
     });
     const tmpA = ckTable("tmp_a", { id: int32() });
     const tmpB = ckTable("tmp_b", { id: int32() });
@@ -1488,7 +1462,6 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
 
     const db = clickhouseClient({
       databaseUrl: "http://localhost:8123/demo_store",
-      schema: { users },
     });
     const tmpHook = ckTable("tmp_hook", { id: int32() });
 
@@ -1529,7 +1502,6 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
 
     const db = clickhouseClient({
       databaseUrl: "http://localhost:8123/demo_store",
-      schema: { users },
     });
 
     await expect(
@@ -1590,7 +1562,6 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
 
     const db = clickhouseClient({
       databaseUrl: "http://localhost:8123/demo_store",
-      schema: { users },
       request_timeout: 5,
     });
 

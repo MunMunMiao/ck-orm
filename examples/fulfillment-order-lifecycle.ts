@@ -1,5 +1,5 @@
 import { ck, clickhouseClient, fn } from "./ck-orm";
-import { fulfillmentSchema, shipmentEvent, shipmentOrder } from "./schema/fulfillment";
+import { shipmentEvent, shipmentOrder } from "./schema/fulfillment";
 
 const createFulfillmentDb = () => {
   return clickhouseClient({
@@ -7,7 +7,6 @@ const createFulfillmentDb = () => {
     database: "demo_fulfillment",
     username: "default",
     password: "<password>",
-    schema: fulfillmentSchema,
     clickhouse_settings: {
       max_execution_time: 10,
     },

@@ -1463,8 +1463,7 @@ export type AnyCte = {
   readonly columns: SourceColumns;
 };
 
-export interface QueryClient<TSchema = unknown, TJoinUseNulls extends JoinUseNulls = 1> {
-  readonly schema: TSchema;
+export interface QueryClient<TJoinUseNulls extends JoinUseNulls = 1> {
   readonly ctes: AnyCte[];
   select<TSelection extends SelectionRecord | undefined = undefined>(
     selection?: TSelection,
@@ -1484,24 +1483,19 @@ export interface QueryClient<TSchema = unknown, TJoinUseNulls extends JoinUseNul
       query: TQuery & (SelectBuilderRow<TQuery> extends never ? never : unknown),
     ) => CteFromQuery<TQuery, TName>;
   };
-  with(...ctes: AnyCte[]): QueryClient<TSchema, TJoinUseNulls>;
+  with(...ctes: AnyCte[]): QueryClient<TJoinUseNulls>;
 }
 
-export const createQueryClient = <TSchema, TJoinUseNulls extends JoinUseNulls = 1>(config: {
-  schema: TSchema;
-  ctes?: AnyCte[];
-  runner?: PreparedRunner;
-  joinUseNulls?: TJoinUseNulls;
-}): QueryClient<TSchema, TJoinUseNulls> => {
+export const createQueryClient = <TJoinUseNulls extends JoinUseNulls = 1>(
+  config: { ctes?: AnyCte[]; runner?: PreparedRunner; joinUseNulls?: TJoinUseNulls } = {},
+): QueryClient<TJoinUseNulls> => {
   const state = {
-    schema: config.schema,
     ctes: config.ctes ?? [],
     runner: config.runner,
     joinUseNulls: (config.joinUseNulls ?? 1) as TJoinUseNulls,
   };
 
   const client = {
-    schema: state.schema,
     ctes: state.ctes,
     select<TSelection extends SelectionRecord | undefined = undefined>(
       selection?: TSelection,
@@ -1558,15 +1552,14 @@ export const createQueryClient = <TSchema, TJoinUseNulls extends JoinUseNulls = 
       };
     },
 
-    with(...ctes: AnyCte[]): QueryClient<TSchema, TJoinUseNulls> {
-      return createQueryClient<TSchema, TJoinUseNulls>({
-        schema: state.schema,
+    with(...ctes: AnyCte[]): QueryClient<TJoinUseNulls> {
+      return createQueryClient<TJoinUseNulls>({
         ctes: [...state.ctes, ...ctes],
         runner: state.runner,
         joinUseNulls: state.joinUseNulls,
       });
     },
-  } as QueryClient<TSchema, TJoinUseNulls>;
+  } as QueryClient<TJoinUseNulls>;
 
   return client;
 };

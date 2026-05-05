@@ -1,10 +1,9 @@
 import { ck, clickhouseClient, fn, type Selection } from "../index";
-import { activityLedger, typeScenarioSchema } from "./fixtures";
+import { activityLedger } from "./fixtures";
 import type { Equal, Expect, InferBuilderResult } from "./helpers";
 
 const db = clickhouseClient({
   databaseUrl: "http://localhost:8123/activity_rollup_typecheck",
-  schema: typeScenarioSchema,
 });
 
 const targetBatches = db.$with("target_batches").as(

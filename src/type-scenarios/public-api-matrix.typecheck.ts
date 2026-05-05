@@ -11,17 +11,15 @@ import {
   type Predicate,
   type Selection,
 } from "../index";
-import { activityLedger, activityMetricLog, typeScenarioSchema } from "./fixtures";
+import { activityLedger, activityMetricLog } from "./fixtures";
 import type { DataOf, Equal, Expect } from "./helpers";
 
 const db = clickhouseClient({
   databaseUrl: "http://localhost:8123/public_api_matrix",
-  schema: typeScenarioSchema,
 });
 
 const settingsDb = clickhouseClient({
   databaseUrl: "http://localhost:8123/public_api_matrix",
-  schema: typeScenarioSchema,
   clickhouse_settings: {
     allow_experimental_correlated_subqueries: 1,
     max_threads: 4,

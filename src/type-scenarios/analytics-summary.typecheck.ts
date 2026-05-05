@@ -1,10 +1,9 @@
 import { ck, ckAlias, ckSql, clickhouseClient, fn, type InferInsertModel, type InferSelectModel } from "../index";
-import { activityMetricLog, logicalMetrics, typeScenarioSchema } from "./fixtures";
+import { activityMetricLog, logicalMetrics } from "./fixtures";
 import type { Equal, Expect, InferBuilderResult } from "./helpers";
 
 const db = clickhouseClient({
   databaseUrl: "http://localhost:8123/analytics_typecheck",
-  schema: typeScenarioSchema,
 });
 
 type _LogicalSelectKeys = Expect<

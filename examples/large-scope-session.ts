@@ -1,5 +1,4 @@
 import { ckSql, ckTable, ckType, clickhouseClient } from "./ck-orm";
-import { commerceSchema } from "./schema/commerce";
 
 const createCommerceDb = () => {
   return clickhouseClient({
@@ -7,7 +6,6 @@ const createCommerceDb = () => {
     database: "demo_store",
     username: "default",
     password: "<password>",
-    schema: commerceSchema,
     clickhouse_settings: {
       max_execution_time: 10,
     },

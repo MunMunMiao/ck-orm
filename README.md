@@ -87,24 +87,18 @@ export const orderRewardLog = ckTable(
     versionColumn: table.peerdbVersion,
   }),
 );
-
-export const commerceSchema = {
-  orderRewardLog,
-};
 ```
 
 ### 2. Create a client
 
 ```ts
 import { clickhouseClient } from "ck-orm";
-import { commerceSchema } from "./schema";
 
 export const db = clickhouseClient({
   host: "http://127.0.0.1:8123",
   database: "demo_store",
   username: "default",
   password: "<password>",
-  schema: commerceSchema,
   clickhouse_settings: {
     allow_experimental_correlated_subqueries: 1,
     max_execution_time: 10,
@@ -189,17 +183,12 @@ Use `ck-orm` with these boundaries in mind:
 - `fn.*` is the SQL function-helper namespace
 - schema describes tables and columns, not the database name
 - the database connection lives on `clickhouseClient(...)`
-- builder queries are the default path, raw SQL is the escape hatch
+- builder queries are the default path, with raw SQL available for ClickHouse-specific expressions
 - `runInSession()` is a ClickHouse session helper, not a transaction
 - `leftJoin()` uses SQL-style null semantics by default
 - large or high-risk numeric results are decoded conservatively rather than silently coerced
 
-`ck-orm` is not trying to be:
-
-- a migration framework
-- a schema sync tool
-- a transaction-oriented ORM with a unit-of-work abstraction
-- a fake OLTP abstraction layered over ClickHouse
+`ck-orm` focuses on typed ClickHouse access: table definitions, query composition, write helpers, session helpers, and observability. Production DDL and schema migration workflows remain in the migration tooling used by the application.
 
 ## Schema DSL
 
@@ -316,13 +305,19 @@ For generic helpers, use:
 - `InferInsertSchema<TSchema>`
 
 ```ts
-import type {
-  InferInsertModel, InferSelectModel, InferSelectSchema } from "ck-orm";
+import type { InferInsertModel, InferSelectModel, InferSelectSchema } from "ck-orm";
 
 type RewardLogRow = InferSelectModel<typeof orderRewardLog>;
 type RewardLogInsert = InferInsertModel<typeof orderRewardLog>;
-type CommerceRows = InferSelectSchema<typeof commerceSchema>;
+
+const commerceTables = {
+  orderRewardLog,
+};
+
+type CommerceRows = InferSelectSchema<typeof commerceTables>;
 ```
+
+Schema objects used with `InferSelectSchema` and `InferInsertSchema` are plain TypeScript groupings. They are useful for shared model types and remain separate from client configuration.
 
 ### `ckAlias()`
 
@@ -377,7 +372,7 @@ const typedColumns = ckTable("typed_columns", {
 });
 ```
 
-`aggregateFunction` and `simpleAggregateFunction` have one extra wrinkle: in their natural ClickHouse-shaped form, the first string is the aggregate function name, not the column name:
+`aggregateFunction` and `simpleAggregateFunction` have a ClickHouse-specific call shape: the first string is the aggregate function name, not the column name:
 
 ```ts
 ckType.aggregateFunction("sum", ckType.uint64());
@@ -465,7 +460,6 @@ Create a client with `clickhouseClient()`:
 ```ts
 const db = clickhouseClient({
   databaseUrl: "http://default:<password>@127.0.0.1:8123/demo_store",
-  schema: commerceSchema,
 });
 ```
 
@@ -480,7 +474,6 @@ Use `databaseUrl` when you want a single connection string:
 ```ts
 const db = clickhouseClient({
   databaseUrl: "http://default:secret@127.0.0.1:8123/demo_store",
-  schema: commerceSchema,
 });
 ```
 
@@ -502,7 +495,6 @@ const db = clickhouseClient({
   database: "demo_store",
   username: "default",
   password: "<password>",
-  schema: commerceSchema,
 });
 ```
 
@@ -519,14 +511,15 @@ Most projects only need a small subset of client fields:
 
 | Field | Purpose |
 | --- | --- |
-| `schema` | Application schema |
 | `request_timeout` | Default request timeout in milliseconds |
 | `clickhouse_settings` | Default ClickHouse session/query settings |
 | `application` | Set the ClickHouse application name |
 
+Table definitions are independent of connection configuration. Define tables with `ckTable(...)`, import those table objects where queries are composed, and pass them directly to `.from(...)`, `.insert(...)`, and temporary-table helpers.
+
 ### Advanced fields
 
-Use these only when you actually need the corresponding behavior:
+Use these fields for advanced runtime behavior:
 
 | Field | Purpose |
 | --- | --- |
@@ -548,7 +541,7 @@ Keep the default `1` unless you intentionally want to remove local serialization
 
 `clickhouse_settings` is only for ClickHouse session/query settings, the same kind of keys documented in ClickHouse's [Session Settings](https://clickhouse.com/docs/operations/settings/settings) and accepted by the HTTP API as query parameters. It is separate from ck-orm client configuration such as `host`, `database`, `request_timeout`, `http_headers`, and `session_max_concurrent_requests`.
 
-Do not put HTTP transport fields such as `query`, `database`, `session_id`, `role`, or `param_*` in `clickhouse_settings`; ck-orm rejects those keys because they collide with the request envelope and named-parameter channel.
+Keep HTTP transport fields such as `query`, `database`, `session_id`, `role`, and `param_*` outside `clickhouse_settings`; ck-orm validates these keys separately because they belong to the request envelope and named-parameter channel.
 
 Official setting keys have TypeScript completion, and arbitrary keys remain valid for newer ClickHouse versions or deployment-specific settings:
 
@@ -566,13 +559,12 @@ const db = clickhouseClient({
   database: "demo_store",
   username: "default",
   password: "<password>",
-  schema: commerceSchema,
   request_timeout: 30_000,
   clickhouse_settings: reportSettings,
 });
 ```
 
-`ck-orm` also keeps JSON parse/stringify hooks internal to the fetch transport. The public client config does not expose a `json` override.
+JSON parse/stringify behavior is managed by the fetch transport. The public client configuration keeps that behavior consistent across runtimes rather than exposing a `json` override.
 
 ### Authentication
 
@@ -912,7 +904,7 @@ const activeUsers = db
 const total = await db.count(activeUsers);
 ```
 
-`db.count(...)` defaults to the convenient unsafe path: it renders `toFloat64(count())` and decodes to `number`, so very large counts can lose JavaScript integer precision. Use the chainable modes when the return shape matters:
+`db.count(...)` defaults to the numeric count mode: it renders `toFloat64(count())` and decodes to `number`. Very large counts can exceed JavaScript integer precision, so use the chainable modes when exactness or wire-shape fidelity matters:
 
 ```ts
 const approximateTotal = await db.count(activeUsers); // number
@@ -1539,7 +1531,7 @@ The `definition` argument starts after the table name. Do not include `CREATE TE
 - real ClickHouse sessions are exclusive on the server side, so raising `session_max_concurrent_requests` above `1` disables local serialization but can still fail with `SESSION_IS_LOCKED`
 - `createTemporaryTable()` automatically registers the table for cleanup
 - `createTemporaryTable()` consumes schema objects; temporary-table lifecycle stays on `Session`, not on the schema itself
-- `createTemporaryTableRaw()` is the trusted-only raw SQL escape hatch and rejects multi-statement definitions
+- `createTemporaryTableRaw()` is the trusted-only raw SQL API for temporary-table definitions and rejects multi-statement definitions
 - `runInSession()` drops registered temporary tables when the callback finishes
 - nested `runInSession()` calls always create a new child session
 - nested calls may not reuse any active ancestor `session_id`
@@ -1639,7 +1631,7 @@ const reportDb = db.withSettings({
 });
 ```
 
-`withSettings()` only changes default ClickHouse session/query settings. The returned client keeps the same schema, transport, auth, timeout, and session concurrency controller as the parent client.
+`withSettings()` only changes default ClickHouse session/query settings. The returned client keeps the same transport, auth, timeout, and session concurrency controller as the parent client.
 
 Session lifecycle options stay separate from ClickHouse settings in `runInSession()`:
 
@@ -1733,7 +1725,6 @@ const logger: ClickHouseORMLogger = {
 
 const db = clickhouseClient({
   databaseUrl: "http://127.0.0.1:8123/demo_store",
-  schema: commerceSchema,
   logger,
   logLevel: "info",
 });
@@ -1744,11 +1735,9 @@ const db = clickhouseClient({
 ```ts
 import { clickhouseClient } from "ck-orm";
 import { trace } from "@opentelemetry/api";
-import { commerceSchema } from "./schema";
 
 const db = clickhouseClient({
   databaseUrl: "http://127.0.0.1:8123/demo_store",
-  schema: commerceSchema,
   tracing: {
     tracer: trace.getTracer("ck-orm-example"),
     includeStatement: false,
@@ -1780,7 +1769,6 @@ const instrumentation: ClickHouseORMInstrumentation = {
 
 const db = clickhouseClient({
   databaseUrl: "http://127.0.0.1:8123/demo_store",
-  schema: commerceSchema,
   instrumentation: [instrumentation],
 });
 ```
@@ -1864,7 +1852,7 @@ const toPublicQueryError = (error: unknown) => {
 };
 ```
 
-Do not return `responseText` or the raw error `message` to untrusted clients. ClickHouse can include SQL fragments and object names in error text.
+Avoid returning `responseText` or the raw error `message` to untrusted clients. ClickHouse can include SQL fragments and object names in error text.
 
 ## Security
 
@@ -1883,7 +1871,7 @@ The built-in protections include:
 
 ### Trusted-only APIs
 
-`ck-orm` does not expose a general-purpose public raw SQL string escape hatch. The remaining trusted-only API is only available inside a `runInSession()` callback:
+For trusted temporary-table DDL that cannot be represented with `ckTable(...)`, `ck-orm` exposes a scoped raw SQL API inside `runInSession()`:
 
 - `session.createTemporaryTableRaw(name, definition)`
 
@@ -1901,4 +1889,4 @@ Bound values are stored separately as ClickHouse named parameters and are not in
 
 `ClickHouseORMError.responseText` and the error `message` may contain raw text from the ClickHouse server, including SQL fragments and database object names.
 
-Do not forward those directly to untrusted clients. Log them server-side and expose a generic message instead.
+Avoid forwarding those details directly to untrusted clients. Log them server-side and expose a generic message instead.

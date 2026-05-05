@@ -27,7 +27,6 @@ const nestedUsers = ckType.nested({
 
 const db = clickhouseClient({
   databaseUrl: "http://localhost:8123/public_api_typecheck",
-  schema: { users },
 });
 
 db.runInSession(async (session: Session) => {

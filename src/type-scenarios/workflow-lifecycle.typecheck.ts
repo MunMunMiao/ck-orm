@@ -1,10 +1,9 @@
 import { ck, clickhouseClient, fn } from "../index";
-import { typeScenarioSchema, workflowEntity, workflowEvent } from "./fixtures";
+import { workflowEntity, workflowEvent } from "./fixtures";
 import type { Equal, Expect, InferBuilderResult } from "./helpers";
 
 const db = clickhouseClient({
   databaseUrl: "http://localhost:8123/workflow_typecheck",
-  schema: typeScenarioSchema,
 });
 
 const latestEntities = db.$with("latest_entities").as(
