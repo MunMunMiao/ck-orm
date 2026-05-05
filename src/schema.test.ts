@@ -1,7 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import type { InferInsertModel, InferInsertSchema, InferSelectModel, InferSelectSchema } from "ck-orm";
 import { int32, string } from "./columns";
-import { ckAlias, ckTable } from "./schema";
+import { ckAlias, ckTable, renderTableIdentifier } from "./schema";
+import { compileSql } from "./sql";
 import type {
   commerceSchema,
   customerInvoice,
@@ -123,6 +124,7 @@ describe("ck-orm schema infer helpers", function describeClickHouseORMSchemaInfe
     const aliased = ckAlias(events, "e");
     expect(aliased.options.partitionBy).toEqual([aliased.tenant_id, aliased.bucket_id]);
     expect(aliased.options.primaryKey).toEqual([aliased.id, aliased.tenant_id]);
+    expect(compileSql(renderTableIdentifier(aliased)).query).toBe("`events` as `e`");
   });
 
   it("rebinds single partitionBy and primaryKey expressions when aliasing tables", function testAliasRebindsSingleExpressions() {

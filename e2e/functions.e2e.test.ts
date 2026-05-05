@@ -1,7 +1,7 @@
 import { expect, it } from "bun:test";
 import { ck, ckSql, ckType, fn } from "./ck-orm";
-import { createE2EDb, users, webEvents } from "./shared";
-import { describeE2E, expectDate, expectPresent } from "./test-helpers";
+import { createE2EDb, schemaPrimitives, users, webEvents } from "./shared";
+import { describeE2E, expectDate, expectPresent, expectRejectsWithClickhouseError } from "./test-helpers";
 
 describeE2E("ck-orm e2e functions", function describeFunctions() {
   it("supports fn.call, fn.withParams and basic type-conversion helpers", async function testGenericAndConversionFunctions() {
@@ -206,6 +206,124 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
       ["segment_0", 4],
     ]);
     expect(presentCompositeRow.isNotVip).toBe(false);
+  });
+
+  it("reproduces ClickHouse NO_COMMON_TYPE for old numeric coalesce shapes", async function testRawNumericCoalesceCommonTypeFailures() {
+    const db = createE2EDb({
+      clickhouse_settings: {
+        use_variant_as_common_type: 0,
+      },
+    });
+
+    await expectRejectsWithClickhouseError(
+      db.execute(ckSql`select coalesce(CAST(NULL AS Nullable(Float64)), {fallback:Int64}) as value`, {
+        query_params: {
+          fallback: 0,
+        },
+      }),
+      {
+        kind: "request_failed",
+        executionState: "rejected",
+        clickhouseCode: 386,
+        clickhouseName: "NO_COMMON_TYPE",
+      },
+    );
+
+    await expectRejectsWithClickhouseError(
+      db.execute(ckSql`select coalesce(CAST(NULL AS Nullable(UInt64)), {fallback:Int64}) as value`, {
+        query_params: {
+          fallback: 0,
+        },
+      }),
+      {
+        kind: "request_failed",
+        executionState: "rejected",
+        clickhouseCode: 386,
+        clickhouseName: "NO_COMMON_TYPE",
+      },
+    );
+
+    await expectRejectsWithClickhouseError(
+      db.execute(ckSql`select coalesce(CAST(NULL AS Nullable(Decimal(18, 2))), {fallback:Float64}) as value`, {
+        query_params: {
+          fallback: 0.5,
+        },
+      }),
+      {
+        kind: "request_failed",
+        executionState: "rejected",
+        clickhouseCode: 386,
+        clickhouseName: "NO_COMMON_TYPE",
+      },
+    );
+  });
+
+  it("keeps Float64 defaults typed through fn.coalesce and floating aggregates", async function testFloatCoalesceDefaults() {
+    const db = createE2EDb({
+      clickhouse_settings: {
+        use_variant_as_common_type: 0,
+      },
+    });
+
+    const [directRow] = await db
+      .select({
+        floatDefault: fn.coalesce(schemaPrimitives.float64_value, 0).as("float_default"),
+        uint64Default: fn.coalesce(schemaPrimitives.uint64_value, 0).as("uint64_default"),
+        decimalDefault: fn.coalesce(schemaPrimitives.decimal_value, "0.00").as("decimal_default"),
+      })
+      .from(schemaPrimitives)
+      .where(ck.eq(schemaPrimitives.id, 1));
+
+    expect(expectPresent(directRow, "direct float coalesce row")).toEqual({
+      floatDefault: 6.5,
+      uint64Default: "64",
+      decimalDefault: "1234.56",
+    });
+
+    const [sumRow] = await db
+      .select({
+        sumDefault: fn.coalesce(fn.sum(schemaPrimitives.float64_value), 0).as("sum_default"),
+      })
+      .from(schemaPrimitives);
+
+    expect(expectPresent(sumRow, "sum float coalesce row")).toEqual({
+      sumDefault: 6.5,
+    });
+
+    const numericRollup = db
+      .select({
+        id: schemaPrimitives.id,
+        price: schemaPrimitives.float64_value.as("price"),
+        volume: schemaPrimitives.uint64_value.as("volume"),
+        amount: schemaPrimitives.decimal_value.as("amount"),
+        profit: fn.sum(schemaPrimitives.float64_value).as("profit"),
+      })
+      .from(schemaPrimitives)
+      .groupBy(
+        schemaPrimitives.id,
+        schemaPrimitives.float64_value,
+        schemaPrimitives.uint64_value,
+        schemaPrimitives.decimal_value,
+      )
+      .as("numeric_rollup");
+
+    const [leftJoinDefaultRow] = await db
+      .select({
+        openPrice: fn.coalesce(numericRollup.price, 0).as("open_price"),
+        volume: fn.coalesce(numericRollup.volume, 0).as("volume"),
+        amount: fn.coalesce(numericRollup.amount, "0.00").as("amount"),
+        profit: fn.coalesce(numericRollup.profit, 0).as("profit"),
+      })
+      .from(schemaPrimitives)
+      .leftJoin(numericRollup, ck.and(ck.eq(schemaPrimitives.id, numericRollup.id), ck.eq(numericRollup.id, -1)))
+      .where(ck.eq(schemaPrimitives.id, 1));
+
+    expect(expectPresent(leftJoinDefaultRow, "left join float coalesce row")).toEqual({
+      openPrice: 0,
+      volume: "0",
+      amount: "0",
+      profit: 0,
+    });
   });
 
   it("supports typed JSONExtract, arrayJoin and array helper functions", async function testStructuredFunctionHelpers() {

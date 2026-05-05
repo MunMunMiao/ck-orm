@@ -83,6 +83,9 @@ describe("ck-orm columns", function describeClickHouseORMColumns() {
     expect(uint64Column.mapToDriverValue(9 as never)).toBe("9");
     expect(uint64Column.mapToDriverValue(9n as never)).toBe("9");
     expect(() => uint64Column.mapFromDriverValue(false)).toThrow("Cannot convert value to string");
+    expect(() => uint64Column.mapFromDriverValue(Number.MAX_SAFE_INTEGER + 1)).toThrow(
+      "Cannot convert value to integer string",
+    );
     expect(() => uint64Column.mapFromDriverValue("-1")).toThrow("Cannot convert value to integer string");
 
     const stringColumn = string();
@@ -136,10 +139,13 @@ describe("ck-orm columns", function describeClickHouseORMColumns() {
   it("covers scalar builder sqlType strings and driver encoders", function testScalarBuilderTypes() {
     expect(int8().sqlType).toBe("Int8");
     expect(int16().sqlType).toBe("Int16");
+    expect(int16().mapFromDriverValue("16")).toBe(16);
     expect(int32().sqlType).toBe("Int32");
     expect(int64().sqlType).toBe("Int64");
     expect(uint8().sqlType).toBe("UInt8");
+    expect(uint8().mapFromDriverValue("8")).toBe(8);
     expect(uint16().sqlType).toBe("UInt16");
+    expect(uint16().mapFromDriverValue("16")).toBe(16);
     expect(uint32().sqlType).toBe("UInt32");
     expect(uint64().sqlType).toBe("UInt64");
     expect(float32().sqlType).toBe("Float32");
@@ -203,7 +209,9 @@ describe("ck-orm columns", function describeClickHouseORMColumns() {
     expect(decimal({ precision: 20, scale: 5 }).configuredName).toBeUndefined();
     expect(fixedString("code", { length: 4 }).configuredName).toBe("code");
     expect(dateTime64("created_at", { precision: 9 }).configuredName).toBe("created_at");
-    expect(qbit("embedding", float32(), { dimensions: 8 }).configuredName).toBe("embedding");
+    const namedQBit = qbit("embedding", float32(), { dimensions: 8 });
+    expect(namedQBit.configuredName).toBe("embedding");
+    expect(namedQBit.mapToDriverValue([1, 2, 3])).toEqual([1, 2, 3]);
     expect(() => qbit("embedding", float32() as never)).toThrow("qbit() requires two values after the column name");
 
     const bound = rewardPoints.bind({
@@ -263,6 +271,7 @@ describe("ck-orm columns", function describeClickHouseORMColumns() {
     expect(tupleColumn.mapToDriverValue(["login", 42])).toEqual(["login", 42]);
     expect(() => tupleColumn.mapFromDriverValue("bad")).toThrow("Cannot convert value to tuple");
     expect(() => tupleColumn.mapFromDriverValue(["login"])).toThrow("expected 2 items, got 1");
+    expect(() => tupleColumn.mapToDriverValue("bad" as never)).toThrow("Cannot convert value to tuple");
     expect(() => tupleColumn.mapToDriverValue(["login"] as never)).toThrow("expected 2 items, got 1");
 
     const mapColumn = map(string(), int32());

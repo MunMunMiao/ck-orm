@@ -635,7 +635,7 @@ export function qbit<TInner extends Float32 | Float64 | BFloat16, TData extends 
       }
       return value as unknown as TData;
     },
-    mapToDriverValue: (value) => value,
+    mapToDriverValue: identity,
   });
 }
 export function enum8<TData extends string = string>(values: Record<string, number>): Enum8<TData>;

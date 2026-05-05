@@ -14,7 +14,7 @@ import {
   getCountSqlType,
   wrapCountSql,
 } from "./internal/count";
-import { type DecimalParams, parseDecimalSqlType } from "./internal/decimal";
+import { type DecimalParams, formatDecimalSqlType, parseDecimalSqlType } from "./internal/decimal";
 import { assertValidSqlIdentifier } from "./internal/identifier";
 import { createTableFunctionSource } from "./query";
 import {
@@ -24,11 +24,12 @@ import {
   type Decoder,
   ensureExpression,
   type InferData,
+  isExpression,
   joinSqlParts,
   passThroughDecoder,
   type Selection,
 } from "./query-shared";
-import { type SQLFragment, sql } from "./sql";
+import { isSqlFragment, type SQLFragment, sql } from "./sql";
 
 /* ── shared helpers ────────────────────────────────────────────── */
 
@@ -99,6 +100,46 @@ const isFloatingSqlType = (sqlType?: string) => {
   return unwrapped?.startsWith("Float") || unwrapped?.startsWith("BFloat");
 };
 
+const isSafeIntegerNumber = (value: unknown): value is number => {
+  return typeof value === "number" && Number.isSafeInteger(value);
+};
+
+const isNonNegativeIntegerLiteral = (value: unknown) => {
+  return (isSafeIntegerNumber(value) && value >= 0) || (typeof value === "bigint" && value >= 0n);
+};
+
+const isDecimalFallbackLiteral = (value: unknown) => {
+  return (
+    typeof value === "string" || typeof value === "bigint" || (typeof value === "number" && Number.isFinite(value))
+  );
+};
+
+const resolveCoalesceFallbackSqlType = (firstSqlType: string | undefined, fallbackValue: unknown) => {
+  if (isExpression(fallbackValue) || isSqlFragment(fallbackValue)) {
+    return undefined;
+  }
+
+  const unwrapped = unwrapNullableOrLowCardinalitySqlType(firstSqlType);
+  if (!unwrapped) {
+    return undefined;
+  }
+
+  if (isFloatingSqlType(unwrapped) && isSafeIntegerNumber(fallbackValue)) {
+    return unwrapped;
+  }
+
+  if (unwrapped === "UInt64" && isNonNegativeIntegerLiteral(fallbackValue)) {
+    return "UInt64";
+  }
+
+  const decimalParams = parseDecimalSqlType(unwrapped);
+  if (decimalParams && isDecimalFallbackLiteral(fallbackValue)) {
+    return formatDecimalSqlType(decimalParams);
+  }
+
+  return undefined;
+};
+
 const numberDecoder: Decoder<number> = toNumberCoercion;
 const stringDecoder: Decoder<string> = toStringCoercion;
 const dateDecoder: Decoder<Date> = toDateCoercion;
@@ -127,15 +168,9 @@ const resolveDecimalParams = (expression: unknown): DecimalParams | undefined =>
   if (isDecimalColumnLike(expression)) {
     return expression.decimalConfig;
   }
-  if (
-    typeof expression === "object" &&
-    expression !== null &&
-    "sqlType" in expression &&
-    typeof (expression as { sqlType?: unknown }).sqlType === "string"
-  ) {
-    return parseDecimalSqlType((expression as { sqlType: string }).sqlType);
-  }
-  return undefined;
+  if (typeof expression !== "object" || expression === null || !("sqlType" in expression)) return undefined;
+  const sqlType = (expression as { sqlType?: unknown }).sqlType;
+  return typeof sqlType === "string" ? parseDecimalSqlType(sqlType) : undefined;
 };
 
 const widenForSum = (params: DecimalParams): DecimalParams => {
@@ -259,6 +294,25 @@ const createNumberExpression = (name: string, args: readonly unknown[], sqlType 
   });
 };
 
+const createCoalesceExpression = <TData>(args: readonly unknown[]): Selection<TData> => {
+  const firstExpression = args.length > 0 ? ensureExpression<TData>(args[0]) : undefined;
+  return createExpression({
+    compile: (ctx) => {
+      assertValidSqlIdentifier("coalesce", "function");
+      const compiledArgs = args.map((argument, index) =>
+        compileValue(
+          argument,
+          ctx,
+          index === 0 ? undefined : resolveCoalesceFallbackSqlType(firstExpression?.sqlType, argument),
+        ),
+      );
+      return sql`coalesce(${joinSqlParts(compiledArgs, ", ")})`;
+    },
+    decoder: firstExpression?.decoder ?? (passThroughDecoder as Decoder<TData>),
+    sqlType: firstExpression?.sqlType,
+  });
+};
+
 const createUInt32Expression = (name: string, args: readonly unknown[]): Selection<number> => {
   return createNumberExpression(name, args, "UInt32");
 };
@@ -341,13 +395,7 @@ const scalarFns = {
     });
   },
   coalesce<TData = unknown>(...args: unknown[]): Selection<TData> {
-    const decoder =
-      args.length > 0 && ensureExpression(args[0]).decoder
-        ? (ensureExpression(args[0]).decoder as Decoder<TData>)
-        : (passThroughDecoder as Decoder<TData>);
-    return createFunctionExpression("coalesce", args, {
-      decoder,
-    });
+    return createCoalesceExpression<TData>(args);
   },
   tuple(...args: unknown[]): Selection<unknown[]> {
     return createFunctionExpression("tuple", args, {
@@ -813,15 +861,19 @@ const aggregateFns = {
   sum(expression: unknown): Selection<number | string> {
     const decimalAware = buildDecimalAwareAggregate("sum", expression, { widenForSum: true });
     if (decimalAware) return decimalAware;
+    const sqlType = isFloatingSqlType(ensureExpression(expression).sqlType) ? "Float64" : undefined;
     return createFunctionExpression<number | string>("sum", [expression], {
       decoder: resolveAggregateDecoder(expression),
+      sqlType,
     });
   },
   sumIf(expression: unknown, condition: unknown): Selection<number | string> {
     const decimalAware = buildDecimalAwareSumIf(expression, condition);
     if (decimalAware) return decimalAware;
+    const sqlType = isFloatingSqlType(ensureExpression(expression).sqlType) ? "Float64" : undefined;
     return createFunctionExpression<number | string>("sumIf", [expression, condition], {
       decoder: resolveAggregateDecoder(expression),
+      sqlType,
     });
   },
   avg(expression: unknown): Selection<number> {

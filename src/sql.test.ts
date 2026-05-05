@@ -4,7 +4,7 @@ import { isClickHouseORMError } from "./errors";
 import { fn } from "./functions";
 import { assertDecimalParams, parseDecimalSqlType } from "./internal/decimal";
 import { ckAlias, ckTable } from "./schema";
-import { compileSql, sql } from "./sql";
+import { compileSql, sql, trustSqlExpressionObject } from "./sql";
 
 const users = ckTable(
   "users",
@@ -129,6 +129,14 @@ describe("ck-orm sql", function describeClickHouseORMSql() {
 
     expect(() => compileSql(sql`select ${Symbol("bad") as unknown as string}`)).toThrow(
       "Unsupported SQL parameter value: Symbol(bad)",
+    );
+    const badRuntimeExpression = trustSqlExpressionObject({
+      compile() {
+        return {} as never;
+      },
+    });
+    expect(() => compileSql(sql`select ${badRuntimeExpression}`)).toThrow(
+      "Invalid SQL fragment: runtime chunks must return a trusted SQL fragment",
     );
   });
 

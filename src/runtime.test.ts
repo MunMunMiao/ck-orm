@@ -262,6 +262,39 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
     expect(startedQueryIds).toEqual([transportQueryId]);
   });
 
+  it("reports default HTTP and HTTPS ports to instrumentation", async function testDefaultPortInstrumentation() {
+    setFetchMock((_url, _init) => {
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    });
+    const serverPorts: Array<number | undefined> = [];
+
+    const httpDb = clickhouseClient({
+      host: "http://localhost",
+      instrumentation: [
+        {
+          onQueryStart(event) {
+            serverPorts.push(event.serverPort);
+          },
+        },
+      ],
+    });
+    await httpDb.execute(sql`select 1`);
+
+    const httpsDb = clickhouseClient({
+      host: "https://localhost",
+      instrumentation: [
+        {
+          onQueryStart(event) {
+            serverPorts.push(event.serverPort);
+          },
+        },
+      ],
+    });
+    await httpsDb.execute(sql`select 1`);
+
+    expect(serverPorts).toEqual([80, 443]);
+  });
+
   it("reuses one session id and cleans temp tables after runInSession failure", async function testRunInSessionCleanup() {
     const bodies: string[] = [];
     const tmpScope = ckTable("tmp_scope", {
@@ -556,6 +589,14 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
 
     await expect(
       db.execute(sql`select 2`, {
+        auth: {
+          username: "request-user",
+          password: "request-pass",
+        },
+      }),
+    ).rejects.toThrow("Per-request auth cannot override credentials embedded in databaseUrl");
+    await expect(
+      db.ping({
         auth: {
           username: "request-user",
           password: "request-pass",

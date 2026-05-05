@@ -1,5 +1,18 @@
 import { describe, expect, it } from "bun:test";
-import { array as arrayColumn, dateTime, decimal, float64, int32, lowCardinality, nullable, string } from "./columns";
+import {
+  array as arrayColumn,
+  bfloat16,
+  dateTime,
+  decimal,
+  float32,
+  float64,
+  int32,
+  int64,
+  lowCardinality,
+  nullable,
+  string,
+  uint64,
+} from "./columns";
 import { fn, tableFn } from "./functions";
 import { compileSql, sql } from "./sql";
 
@@ -479,6 +492,65 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     expect(coalesced.decoder(10)).toBe("10");
     expect(fn.coalesce().decoder({ raw: true })).toEqual({ raw: true });
 
+    const price = float64().bind({ name: "price", tableName: "orders" });
+    const coalescedFloat = fn.coalesce(price, 0);
+    expect(coalescedFloat.sqlType).toBe("Float64");
+    expect(compileExpression(coalescedFloat).query).toContain("coalesce(`orders`.`price`, {orm_param1:Float64})");
+    expect(compileExpression(coalescedFloat).params).toEqual({
+      orm_param1: 0,
+    });
+
+    const coalescedFloatSum = fn.coalesce(fn.sum(price), 0);
+    expect(coalescedFloatSum.sqlType).toBe("Float64");
+    expect(compileExpression(coalescedFloatSum).query).toContain(
+      "coalesce(sum(`orders`.`price`), {orm_param1:Float64})",
+    );
+    expect(compileExpression(fn.coalesce(price, sql.raw("0"))).query).toContain("coalesce(`orders`.`price`, 0)");
+    expect(compileExpression(fn.coalesce(price, fn.toString(0))).query).toContain(
+      "coalesce(`orders`.`price`, toString({orm_param1:Int64}))",
+    );
+    expect(compileExpression(fn.coalesce(fn.call("unknown_type", price), 0)).query).toContain(
+      "coalesce(unknown_type(`orders`.`price`), {orm_param1:Int64})",
+    );
+
+    const float32Price = float32().bind({ name: "price_32", tableName: "orders" });
+    expect(compileExpression(fn.coalesce(float32Price, 0)).query).toContain(
+      "coalesce(`orders`.`price_32`, {orm_param1:Float32})",
+    );
+
+    const bfloatPrice = bfloat16().bind({ name: "price_bfloat", tableName: "orders" });
+    expect(compileExpression(fn.coalesce(bfloatPrice, 0)).query).toContain(
+      "coalesce(`orders`.`price_bfloat`, {orm_param1:BFloat16})",
+    );
+
+    const volume = uint64().bind({ name: "volume", tableName: "orders" });
+    expect(compileExpression(fn.coalesce(volume, 0)).query).toContain(
+      "coalesce(`orders`.`volume`, {orm_param1:UInt64})",
+    );
+
+    const amount = decimal({ precision: 18, scale: 2 }).bind({ name: "amount", tableName: "orders" });
+    expect(compileExpression(fn.coalesce(amount, "0.00")).query).toContain(
+      "coalesce(`orders`.`amount`, {orm_param1:Decimal(18, 2)})",
+    );
+    expect(compileExpression(fn.coalesce(amount, 0.5)).query).toContain(
+      "coalesce(`orders`.`amount`, {orm_param1:Decimal(18, 2)})",
+    );
+
+    const score = int32().bind({ name: "score", tableName: "orders" });
+    expect(compileExpression(fn.coalesce(score, 1.5)).query).toContain(
+      "coalesce(`orders`.`score`, {orm_param1:Float64})",
+    );
+
+    const name = string().bind({ name: "name", tableName: "orders" });
+    expect(compileExpression(fn.coalesce(name, "missing")).query).toContain(
+      "coalesce(`orders`.`name`, {orm_param1:String})",
+    );
+
+    const ticket = int64().bind({ name: "ticket", tableName: "orders" });
+    expect(compileExpression(fn.coalesce(ticket, 1.5)).query).toContain(
+      "coalesce(`orders`.`ticket`, {orm_param1:Float64})",
+    );
+
     expect(fn.not(int32()).decoder(true)).toBe(true);
     expect(fn.not(int32()).decoder("true")).toBe(true);
     expect(fn.not(int32()).decoder(0)).toBe(false);
@@ -580,6 +652,12 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     expect(compileSql(sql`${cast128.compile(createContext())}`).query).toContain("toDecimal128(`ledger`.`amount`, 5)");
     expect(cast128.sqlType).toBe("Decimal(38, 5)");
     expect(cast128.decoder("1.23")).toBe("1.23");
+    const cast64 = fn.toDecimal64(amount, 2);
+    expect(compileSql(sql`${cast64.compile(createContext())}`).query).toContain("toDecimal64(`ledger`.`amount`, 2)");
+    expect(fn.sum(cast64).sqlType).toBe("Decimal(38, 2)");
+    const cast256 = fn.toDecimal256(amount, 8);
+    expect(compileSql(sql`${cast256.compile(createContext())}`).query).toContain("toDecimal256(`ledger`.`amount`, 8)");
+    expect(cast256.sqlType).toBe("Decimal(76, 8)");
     expect(() => fn.toDecimal128(amount, "5" as never)).toThrow(
       /toDecimal128 scale must be an integer between 0 and 38 \(the toDecimal128 fixed width\)/,
     );
@@ -613,8 +691,14 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     expect(fn.sum(int32()).sqlType).toBeUndefined();
     expect(fn.avg(int32()).decoder("4.5")).toBe(4.5);
 
+    const floatAmount = float64().bind({ name: "amount", tableName: "ledger" });
+    expect(fn.sum(floatAmount).sqlType).toBe("Float64");
+    expect(fn.sumIf(floatAmount, sql`1`).sqlType).toBe("Float64");
+
     const nullableFloat = nullable(float64()).bind({ name: "score", tableName: "ledger" });
     const lowCardFloat = lowCardinality(float64()).bind({ name: "fee_ratio", tableName: "ledger" });
+    expect(fn.sum(nullableFloat).sqlType).toBe("Float64");
+    expect(fn.sum(lowCardFloat).sqlType).toBe("Float64");
     expect(fn.sum(nullableFloat).decoder("4.5")).toBe(4.5);
     expect(fn.sum(lowCardFloat).decoder("2.25")).toBe(2.25);
 

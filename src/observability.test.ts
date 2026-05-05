@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { Span, Tracer } from "@opentelemetry/api";
 import { int32, string } from "./columns";
+import { createRequestFailedError } from "./errors";
 import {
   type ClickHouseORMInstrumentation,
   compactStatement,
@@ -232,6 +233,56 @@ describe("ck-orm observability", function describeClickHouseORMObservability() {
     await instrumentation.onQueryError?.(createQueryErrorEvent(streamEvent, "bad", 20, 5));
     expect(tracer.spans[1]?.attributes["db.response.row_count"]).toBeUndefined();
     expect(tracer.spans[1]?.exceptions).toEqual(["bad"]);
+
+    const clickhouseErrorEvent = createQueryEvent({
+      mode: "query",
+      queryKind: "raw",
+      statement: "select coalesce(toFloat64(1), toInt64(0))",
+      operation: "SELECT",
+      startedAt: 300,
+    });
+    await instrumentation.onQueryStart?.(clickhouseErrorEvent);
+    await instrumentation.onQueryError?.(
+      createQueryErrorEvent(
+        clickhouseErrorEvent,
+        createRequestFailedError({
+          httpStatus: 500,
+          clickhouseCode: 386,
+          clickhouseName: "NO_COMMON_TYPE",
+          responseText: "Code: 386. DB::Exception: no common type (NO_COMMON_TYPE)",
+        }),
+        30,
+      ),
+    );
+    expect(tracer.spans[2]?.attributes).toMatchObject({
+      "error.type": "NO_COMMON_TYPE",
+      "ck_orm.error.kind": "request_failed",
+      "ck_orm.execution_state": "rejected",
+      "db.response.status_code": "386",
+    });
+
+    const httpErrorEvent = createQueryEvent({
+      mode: "query",
+      queryKind: "raw",
+      statement: "select 1",
+      operation: "SELECT",
+      startedAt: 400,
+    });
+    await instrumentation.onQueryStart?.(httpErrorEvent);
+    await instrumentation.onQueryError?.(
+      createQueryErrorEvent(
+        httpErrorEvent,
+        createRequestFailedError({
+          httpStatus: 503,
+          responseText: "temporarily unavailable",
+        }),
+        40,
+      ),
+    );
+    expect(tracer.spans[3]?.attributes).toMatchObject({
+      "error.type": "request_failed",
+      "db.response.status_code": "503",
+    });
   });
 
   it("emits instrumentation hooks in forward/reverse order around runtime execution", async function testRuntimeInstrumentationOrder() {

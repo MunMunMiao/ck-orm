@@ -230,6 +230,41 @@ describe("session concurrency controller", function describeSessionConcurrencyCo
     expect(thirdStarted).toBe(true);
   });
 
+  it("keeps queued abort reasons and empty-queue cleanup deterministic", async function testQueuedAbortReasons() {
+    const controller = createSessionConcurrencyController(1);
+    const firstGate = createDeferred<void>();
+    const errorReason = new Error("pre-cancelled");
+
+    const first = controller.run("shared_session", async () => {
+      await firstGate.promise;
+      return "first";
+    });
+    await flushAsyncWork();
+
+    const preAborted = new AbortController();
+    preAborted.abort(errorReason);
+    await expect(controller.run("shared_session", async () => "second", preAborted.signal)).rejects.toThrow(
+      "pre-cancelled",
+    );
+
+    firstGate.resolve();
+    await expect(first).resolves.toBe("first");
+
+    const zeroSlotController = createSessionConcurrencyController(0);
+    const queuedAbort = new AbortController();
+    const queued = zeroSlotController.run("never_started", async () => "never", queuedAbort.signal);
+    await flushAsyncWork();
+    Object.defineProperty(queuedAbort.signal, "reason", { value: undefined, configurable: true });
+    queuedAbort.abort();
+    await expect(queued).rejects.toThrow("ClickHouse request was aborted");
+
+    const stringPreAborted = new AbortController();
+    stringPreAborted.abort("string-pre-cancelled");
+    await expect(
+      zeroSlotController.run("empty_pre_aborted", async () => "never", stringPreAborted.signal),
+    ).rejects.toThrow("string-pre-cancelled");
+  });
+
   it("holds a same-session slot until the stream iterator closes", async function testStreamSlotLifetime() {
     const controller = createSessionConcurrencyController(1);
     const events: string[] = [];

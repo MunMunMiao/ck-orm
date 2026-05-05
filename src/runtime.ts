@@ -69,11 +69,9 @@ const resolveServerPort = (url: URL): number | undefined => {
   if (url.port) {
     return Number(url.port);
   }
-  if (url.protocol === "http:") {
-    return 80;
-  }
-  if (url.protocol === "https:") {
-    return 443;
-  }
-  return undefined;
+  const defaultPorts: Record<string, number | undefined> = {
+    "http:": 80,
+    "https:": 443,
+  };
+  return defaultPorts[url.protocol];
 };

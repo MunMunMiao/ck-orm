@@ -98,9 +98,7 @@ export const createSessionConcurrencyController = (maxConcurrentRequests: number
         }
       };
       const onAbort = () => {
-        if (settled) {
-          return;
-        }
+        if (settled) return;
         settled = true;
         cleanup();
         removeWaiter();
@@ -108,9 +106,7 @@ export const createSessionConcurrencyController = (maxConcurrentRequests: number
       };
       const waiter: SessionWaiter = {
         resume() {
-          if (settled) {
-            return;
-          }
+          if (settled) return;
           settled = true;
           cleanup();
           entry.activeCount += 1;

@@ -300,6 +300,9 @@ describe("ck-orm public api", function describePublicApi() {
     const built = compileSql(publicApi.ckSql.join([publicApi.ckSql.identifier("events"), publicApi.ckSql`final`], " "));
 
     expect(built.query).toBe("`events` final");
+    expect(compileSql(publicApi.ckSql.decimal(publicApi.ckSql`sum(amount)`, 18, 2)).query).toBe(
+      "CAST(sum(amount) AS Decimal(18, 2))",
+    );
   });
 
   it("keeps advanced root-exported types aligned with public_api.ts", function testRootExportedTypes() {
