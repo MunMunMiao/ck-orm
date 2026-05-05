@@ -159,6 +159,9 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     const toDateBuilt = compileExpression(fn.toDate(string().bind({ name: "created_at", tableName: "orders" })));
     expect(toDateBuilt.query).toContain("toDate(`orders`.`created_at`)");
 
+    const toDate32Built = compileExpression(fn.toDate32(string().bind({ name: "created_at", tableName: "orders" })));
+    expect(toDate32Built.query).toContain("toDate32(`orders`.`created_at`)");
+
     const toDateTimeBuilt = compileExpression(
       fn.toDateTime(string().bind({ name: "created_at", tableName: "orders" }), "Asia/Shanghai"),
     );
@@ -167,10 +170,95 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
       orm_param1: "Asia/Shanghai",
     });
 
+    const toDateTime32Built = compileExpression(
+      fn.toDateTime32(string().bind({ name: "created_at", tableName: "orders" }), "Asia/Shanghai"),
+    );
+    expect(toDateTime32Built.query).toContain("toDateTime32(`orders`.`created_at`, {orm_param1:String})");
+    expect(toDateTime32Built.params).toEqual({
+      orm_param1: "Asia/Shanghai",
+    });
+
+    const toDateTime64Built = compileExpression(
+      fn.toDateTime64(string().bind({ name: "created_at", tableName: "orders" }), 3, "UTC"),
+    );
+    expect(toDateTime64Built.query).toContain("toDateTime64(`orders`.`created_at`, 3, {orm_param1:String})");
+    expect(toDateTime64Built.params).toEqual({
+      orm_param1: "UTC",
+    });
+    expect(() => fn.toDateTime64(string(), 10)).toThrow(
+      "toDateTime64 scale must be an integer between 0 and 9, got 10",
+    );
+
     const toStartOfMonthBuilt = compileExpression(
       fn.toStartOfMonth(string().bind({ name: "created_at", tableName: "orders" })),
     );
     expect(toStartOfMonthBuilt.query).toContain("toStartOfMonth(`orders`.`created_at`)");
+
+    const toUnixTimestampBuilt = compileExpression(
+      fn.toUnixTimestamp(string().bind({ name: "created_at", tableName: "orders" }), "UTC"),
+    );
+    expect(toUnixTimestampBuilt.query).toContain("toUnixTimestamp(`orders`.`created_at`, {orm_param1:String})");
+    expect(toUnixTimestampBuilt.params).toEqual({
+      orm_param1: "UTC",
+    });
+
+    const toUnixTimestamp64MilliBuilt = compileExpression(
+      fn.toUnixTimestamp64Milli(string().bind({ name: "created_at", tableName: "orders" })),
+    );
+    expect(toUnixTimestamp64MilliBuilt.query).toContain("toUnixTimestamp64Milli(`orders`.`created_at`)");
+    const toUnixTimestamp64SecondBuilt = compileExpression(
+      fn.toUnixTimestamp64Second(string().bind({ name: "created_at", tableName: "orders" })),
+    );
+    expect(toUnixTimestamp64SecondBuilt.query).toContain("toUnixTimestamp64Second(`orders`.`created_at`)");
+    const toUnixTimestamp64MicroBuilt = compileExpression(
+      fn.toUnixTimestamp64Micro(string().bind({ name: "created_at", tableName: "orders" })),
+    );
+    expect(toUnixTimestamp64MicroBuilt.query).toContain("toUnixTimestamp64Micro(`orders`.`created_at`)");
+    const toUnixTimestamp64NanoBuilt = compileExpression(
+      fn.toUnixTimestamp64Nano(string().bind({ name: "created_at", tableName: "orders" })),
+    );
+    expect(toUnixTimestamp64NanoBuilt.query).toContain("toUnixTimestamp64Nano(`orders`.`created_at`)");
+
+    const fromUnixTimestampBuilt = compileExpression(
+      fn.fromUnixTimestamp(int32().bind({ name: "created_at_epoch", tableName: "orders" })),
+    );
+    expect(fromUnixTimestampBuilt.query).toContain("fromUnixTimestamp(`orders`.`created_at_epoch`)");
+
+    const formattedFromUnixTimestampBuilt = compileExpression(
+      fn.fromUnixTimestamp(int32().bind({ name: "created_at_epoch", tableName: "orders" }), "%F %T", "UTC"),
+    );
+    expect(formattedFromUnixTimestampBuilt.query).toContain(
+      "fromUnixTimestamp(`orders`.`created_at_epoch`, {orm_param1:String}, {orm_param2:String})",
+    );
+    expect(formattedFromUnixTimestampBuilt.params).toEqual({
+      orm_param1: "%F %T",
+      orm_param2: "UTC",
+    });
+
+    const fromUnixTimestamp64MilliBuilt = compileExpression(
+      fn.fromUnixTimestamp64Milli(int64().bind({ name: "created_at_ms", tableName: "orders" }), "UTC"),
+    );
+    expect(fromUnixTimestamp64MilliBuilt.query).toContain(
+      "fromUnixTimestamp64Milli(`orders`.`created_at_ms`, {orm_param1:String})",
+    );
+    const fromUnixTimestamp64SecondBuilt = compileExpression(
+      fn.fromUnixTimestamp64Second(int64().bind({ name: "created_at_s", tableName: "orders" }), "UTC"),
+    );
+    expect(fromUnixTimestamp64SecondBuilt.query).toContain(
+      "fromUnixTimestamp64Second(`orders`.`created_at_s`, {orm_param1:String})",
+    );
+    const fromUnixTimestamp64MicroBuilt = compileExpression(
+      fn.fromUnixTimestamp64Micro(int64().bind({ name: "created_at_us", tableName: "orders" }), "UTC"),
+    );
+    expect(fromUnixTimestamp64MicroBuilt.query).toContain(
+      "fromUnixTimestamp64Micro(`orders`.`created_at_us`, {orm_param1:String})",
+    );
+    const fromUnixTimestamp64NanoBuilt = compileExpression(
+      fn.fromUnixTimestamp64Nano(int64().bind({ name: "created_at_ns", tableName: "orders" }), "UTC"),
+    );
+    expect(fromUnixTimestamp64NanoBuilt.query).toContain(
+      "fromUnixTimestamp64Nano(`orders`.`created_at_ns`, {orm_param1:String})",
+    );
 
     const withParamsBuilt = compileExpression(
       fn.withParams("quantileExact", [0.95], float64().bind({ name: "price", tableName: "orders" })),
@@ -463,6 +551,20 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     const existingDate = new Date("2026-04-21T12:34:56.000Z");
     expect(fn.toDate(string()).decoder(existingDate)).toBe(existingDate);
     expect(fn.toDateTime(string()).decoder("2026-04-21T00:00:00.000Z")).toEqual(new Date("2026-04-21T00:00:00.000Z"));
+    expect(fn.toDate32(string()).decoder("2026-04-21")).toEqual(new Date("2026-04-21"));
+    expect(fn.toDateTime32(string()).decoder("2026-04-21T00:00:00.000Z")).toEqual(new Date("2026-04-21T00:00:00.000Z"));
+    expect(fn.toDateTime64(string(), 3).decoder("2026-04-21T00:00:00.123Z")).toEqual(
+      new Date("2026-04-21T00:00:00.123Z"),
+    );
+    expect(fn.fromUnixTimestamp(int32()).decoder("2026-04-21T00:00:00.000Z")).toEqual(
+      new Date("2026-04-21T00:00:00.000Z"),
+    );
+    expect(fn.fromUnixTimestamp(int32(), "%F").decoder(20260421)).toBe("20260421");
+    expect(fn.fromUnixTimestamp64Milli(int64()).decoder("2026-04-21T00:00:00.123Z")).toEqual(
+      new Date("2026-04-21T00:00:00.123Z"),
+    );
+    expect(fn.toUnixTimestamp(string()).decoder("1739489491")).toBe(1739489491);
+    expect(fn.toUnixTimestamp64Milli(string()).decoder(1739489491011n)).toBe("1739489491011");
     expect(fn.toStartOfMonth(string()).decoder("2026-04-01")).toEqual(new Date("2026-04-01"));
     expect(fn.avg(int32()).decoder(4.5)).toBe(4.5);
     expect(fn.avg(int32()).decoder("8")).toBe(8);

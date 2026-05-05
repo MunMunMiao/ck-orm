@@ -15,7 +15,31 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
           .mapWith((value) => String(value))
           .as("upper_name"),
         createdAtDate: fn.toDate(users.created_at).as("created_at_date"),
+        createdAtDate32: fn.toDate32(users.created_at).as("created_at_date32"),
         createdAtTime: fn.toDateTime(users.created_at).as("created_at_time"),
+        createdAtTime32: fn.toDateTime32(users.created_at, "UTC").as("created_at_time32"),
+        createdAtTime64: fn.toDateTime64(users.created_at, 3, "UTC").as("created_at_time64"),
+        createdAtUnix: fn.toUnixTimestamp(users.created_at, "UTC").as("created_at_unix"),
+        createdAtUnix64Second: fn.toUnixTimestamp64Second(users.created_at).as("created_at_unix64_second"),
+        createdAtUnix64Milli: fn.toUnixTimestamp64Milli(users.created_at).as("created_at_unix64_milli"),
+        createdAtUnix64Micro: fn.toUnixTimestamp64Micro(users.created_at).as("created_at_unix64_micro"),
+        createdAtUnix64Nano: fn.toUnixTimestamp64Nano(users.created_at).as("created_at_unix64_nano"),
+        fromUnixTimestamp: fn.fromUnixTimestamp(fn.toUnixTimestamp(users.created_at, "UTC")).as("from_unix_timestamp"),
+        formattedUnixTimestamp: fn
+          .fromUnixTimestamp(fn.toUnixTimestamp(users.created_at, "UTC"), "%Y-%m-%d", "UTC")
+          .as("formatted_unix_timestamp"),
+        roundTripSecond: fn
+          .fromUnixTimestamp64Second(fn.toUnixTimestamp64Second(users.created_at), "UTC")
+          .as("round_trip_second"),
+        roundTripMilli: fn
+          .fromUnixTimestamp64Milli(fn.toUnixTimestamp64Milli(users.created_at), "UTC")
+          .as("round_trip_milli"),
+        roundTripMicro: fn
+          .fromUnixTimestamp64Micro(fn.toUnixTimestamp64Micro(users.created_at), "UTC")
+          .as("round_trip_micro"),
+        roundTripNano: fn
+          .fromUnixTimestamp64Nano(fn.toUnixTimestamp64Nano(users.created_at), "UTC")
+          .as("round_trip_nano"),
       })
       .from(users)
       .where(ck.eq(users.id, 1));
@@ -25,10 +49,42 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
       idText: "1",
       upperName: "ALICE",
       createdAtDate: presentRow.createdAtDate,
+      createdAtDate32: presentRow.createdAtDate32,
       createdAtTime: presentRow.createdAtTime,
+      createdAtTime32: presentRow.createdAtTime32,
+      createdAtTime64: presentRow.createdAtTime64,
+      createdAtUnix: presentRow.createdAtUnix,
+      createdAtUnix64Second: presentRow.createdAtUnix64Second,
+      createdAtUnix64Milli: presentRow.createdAtUnix64Milli,
+      createdAtUnix64Micro: presentRow.createdAtUnix64Micro,
+      createdAtUnix64Nano: presentRow.createdAtUnix64Nano,
+      fromUnixTimestamp: presentRow.fromUnixTimestamp,
+      formattedUnixTimestamp: "2026-01-01",
+      roundTripSecond: presentRow.roundTripSecond,
+      roundTripMilli: presentRow.roundTripMilli,
+      roundTripMicro: presentRow.roundTripMicro,
+      roundTripNano: presentRow.roundTripNano,
     });
     expectDate(presentRow.createdAtDate);
+    expectDate(presentRow.createdAtDate32);
     expectDate(presentRow.createdAtTime);
+    expectDate(presentRow.createdAtTime32);
+    expectDate(presentRow.createdAtTime64);
+    expectDate(presentRow.fromUnixTimestamp);
+    expectDate(presentRow.roundTripSecond);
+    expectDate(presentRow.roundTripMilli);
+    expectDate(presentRow.roundTripMicro);
+    expectDate(presentRow.roundTripNano);
+    expect(presentRow.createdAtUnix).toBe(1767225600);
+    expect(presentRow.createdAtUnix64Second).toBe("1767225600");
+    expect(presentRow.createdAtUnix64Milli).toBe("1767225600000");
+    expect(presentRow.createdAtUnix64Micro).toBe("1767225600000000");
+    expect(presentRow.createdAtUnix64Nano).toBe("1767225600000000000");
+    expect(presentRow.fromUnixTimestamp.getTime()).toBe(presentRow.createdAtTime.getTime());
+    expect(presentRow.roundTripSecond.getTime()).toBe(presentRow.createdAtTime.getTime());
+    expect(presentRow.roundTripMilli.getTime()).toBe(presentRow.createdAtTime.getTime());
+    expect(presentRow.roundTripMicro.getTime()).toBe(presentRow.createdAtTime.getTime());
+    expect(presentRow.roundTripNano.getTime()).toBe(presentRow.createdAtTime.getTime());
 
     const [quantileRow] = await db
       .select({

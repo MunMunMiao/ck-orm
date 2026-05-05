@@ -119,8 +119,10 @@ This matrix records the public API coverage contract. Runtime behavior rows poin
 | `fn.call` | `query-basics.e2e.test.ts`, `functions.e2e.test.ts` |
 | `fn.withParams` | `functions.e2e.test.ts`, `injection-identifiers.e2e.test.ts` |
 | `fn.toString` | `functions.e2e.test.ts` |
-| `fn.toDate` | `functions.e2e.test.ts` |
-| `fn.toDateTime` | `functions.e2e.test.ts` |
+| `fn.toDate`, `fn.toDate32` | `functions.e2e.test.ts` |
+| `fn.toDateTime`, `fn.toDateTime32`, `fn.toDateTime64` | `functions.e2e.test.ts` |
+| `fn.toUnixTimestamp`, `fn.toUnixTimestamp64Second`, `fn.toUnixTimestamp64Milli`, `fn.toUnixTimestamp64Micro`, `fn.toUnixTimestamp64Nano` | `functions.e2e.test.ts` |
+| `fn.fromUnixTimestamp`, `fn.fromUnixTimestamp64Second`, `fn.fromUnixTimestamp64Milli`, `fn.fromUnixTimestamp64Micro`, `fn.fromUnixTimestamp64Nano` | `functions.e2e.test.ts` |
 | `fn.toDecimal32`, `fn.toDecimal64`, `fn.toDecimal128`, `fn.toDecimal256` | `builder-analytics.e2e.test.ts` |
 | `fn.toStartOfMonth` | `functions.e2e.test.ts`, `builder-analytics.e2e.test.ts` |
 | `fn.count`, `fn.count().toUnsafe`, `fn.count().toSafe`, `fn.count().toMixed` | `dataset-smoke.e2e.test.ts`, `functions.e2e.test.ts` |

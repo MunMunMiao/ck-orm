@@ -39,6 +39,18 @@ db.runInSession(async (session: Session) => {
 });
 
 const nameSelection: Selection<string> = fn.toString(users.name);
+const unixTimestampSelection: Selection<number> = fn.toUnixTimestamp(ckSql`now()`, "UTC");
+const unixTimestamp64Selection: Selection<string> = fn.toUnixTimestamp64Milli(
+  fn.toDateTime64("2026-01-01 00:00:00.123", 3, "UTC"),
+);
+const fromUnixTimestampSelection: Selection<Date> = fn.fromUnixTimestamp(1735689600);
+const formattedUnixTimestampSelection: Selection<string> = fn.fromUnixTimestamp(1735689600, "%F %T", "UTC");
+const namespaceFromUnixTimestamp64Selection: Selection<Date> = ck.fn.fromUnixTimestamp64Milli(1735689600123n, "UTC");
+void unixTimestampSelection;
+void unixTimestamp64Selection;
+void fromUnixTimestampSelection;
+void formattedUnixTimestampSelection;
+void namespaceFromUnixTimestamp64Selection;
 const constantSelection: Selection<number> = ck.expr(ckSql`1`, {
   decoder: (value) => Number(value),
   sqlType: "UInt8",

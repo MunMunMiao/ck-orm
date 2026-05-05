@@ -1119,10 +1119,12 @@ Generic, conversion, aggregate, JSON, tuple, and table-related helpers include:
 - `fn.call()`
 - `fn.withParams()`
 - `fn.toString()`
-- `fn.toDate()`
-- `fn.toDateTime()`
+- `fn.toDate()` / `fn.toDate32()`
+- `fn.toDateTime()` / `fn.toDateTime32()` / `fn.toDateTime64()`
 - `fn.toDecimal32()` / `fn.toDecimal64()` / `fn.toDecimal128()` / `fn.toDecimal256()`
 - `fn.toStartOfMonth()`
+- `fn.toUnixTimestamp()` / `fn.toUnixTimestamp64Second()` / `fn.toUnixTimestamp64Milli()` / `fn.toUnixTimestamp64Micro()` / `fn.toUnixTimestamp64Nano()`
+- `fn.fromUnixTimestamp()` / `fn.fromUnixTimestamp64Second()` / `fn.fromUnixTimestamp64Milli()` / `fn.fromUnixTimestamp64Micro()` / `fn.fromUnixTimestamp64Nano()`
 - `fn.count()` / `fn.countIf()` — default `Selection<number>` wrapped as `toFloat64(count(...))`. Chain `.toSafe()` for `Selection<string>` (`toString(count(...))`), `.toMixed()` for `Selection<number | string>` (`toUInt64(count(...))`), or `.toUnsafe()` to revert to the default. Mirrors `db.count`. Decoders enforce non-negative integers and reject `NaN`, negatives, booleans, etc. — see [`fn.count` / `fn.uniqExact` modes](#fncount--fnuniqexact-modes) for examples.
 - `fn.sum()` / `fn.sumIf()` / `fn.min()` / `fn.max()` — auto-cast to `Decimal(P, S)` for Decimal columns; see [Decimal precision in expressions](#decimal-precision-in-expressions)
 - `fn.avg()` — `Selection<number>` (Float64), matching ClickHouse's native `avg(Decimal)` behavior

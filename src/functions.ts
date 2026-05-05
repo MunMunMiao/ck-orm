@@ -154,6 +154,12 @@ const FIXED_WIDTH_DECIMAL_PRECISION = {
 
 type FixedWidthDecimalName = keyof typeof FIXED_WIDTH_DECIMAL_PRECISION;
 
+const assertDateTime64Scale: (scale: unknown) => asserts scale is number = (scale) => {
+  if (typeof scale !== "number" || !Number.isInteger(scale) || scale < 0 || scale > 9) {
+    throw createClientValidationError(`toDateTime64 scale must be an integer between 0 and 9, got ${String(scale)}`);
+  }
+};
+
 const isDecimalColumnLike = (value: unknown): value is { decimalConfig: DecimalParams } => {
   return (
     typeof value === "object" &&
@@ -203,6 +209,22 @@ const createFixedWidthDecimalCast = (
     },
     decoder: stringDecoder,
     sqlType,
+  });
+};
+
+const createDateTime64Cast = (expression: unknown, scale: unknown, timezone?: unknown): Selection<Date> => {
+  assertDateTime64Scale(scale);
+  return createExpression<Date>({
+    compile: (ctx) => {
+      assertValidSqlIdentifier("toDateTime64", "function");
+      const compiledArgs =
+        timezone === undefined
+          ? [compileValue(expression, ctx), sql.raw(String(scale))]
+          : [compileValue(expression, ctx), sql.raw(String(scale)), compileValue(timezone, ctx)];
+      return sql`toDateTime64(${joinSqlParts(compiledArgs, ", ")})`;
+    },
+    decoder: dateDecoder,
+    sqlType: `DateTime64(${scale})`,
   });
 };
 
@@ -324,9 +346,35 @@ const createUInt64Expression = (name: string, args: readonly unknown[]): Selecti
   });
 };
 
+const createInt64Expression = (name: string, args: readonly unknown[]): Selection<string> => {
+  return createFunctionExpression(name, args, {
+    decoder: stringDecoder,
+    sqlType: "Int64",
+  });
+};
+
 const withOptional = (args: readonly unknown[], optional: unknown | undefined): readonly unknown[] => {
   return optional === undefined ? args : [...args, optional];
 };
+
+function createFromUnixTimestampExpression(timestamp: unknown): Selection<Date>;
+function createFromUnixTimestampExpression(timestamp: unknown, format: unknown, timezone?: unknown): Selection<string>;
+function createFromUnixTimestampExpression(
+  timestamp: unknown,
+  format?: unknown,
+  timezone?: unknown,
+): Selection<Date | string> {
+  if (format === undefined) {
+    return createFunctionExpression("fromUnixTimestamp", [timestamp], {
+      decoder: dateDecoder,
+      sqlType: "DateTime",
+    });
+  }
+  return createFunctionExpression("fromUnixTimestamp", withOptional([timestamp, format], timezone), {
+    decoder: stringDecoder,
+    sqlType: "String",
+  });
+}
 
 const createJsonExtractExpression = <TColumn extends AnyColumn>(
   json: unknown,
@@ -381,6 +429,12 @@ const scalarFns = {
       sqlType: "Date",
     });
   },
+  toDate32(expression: unknown): Selection<Date> {
+    return createFunctionExpression("toDate32", [expression], {
+      decoder: dateDecoder,
+      sqlType: "Date32",
+    });
+  },
   toDateTime(expression: unknown, timezone?: unknown): Selection<Date> {
     const args = timezone === undefined ? [expression] : [expression, timezone];
     return createFunctionExpression("toDateTime", args, {
@@ -388,11 +442,60 @@ const scalarFns = {
       sqlType: "DateTime",
     });
   },
+  toDateTime32(expression: unknown, timezone?: unknown): Selection<Date> {
+    return createFunctionExpression("toDateTime32", withOptional([expression], timezone), {
+      decoder: dateDecoder,
+      sqlType: "DateTime",
+    });
+  },
+  toDateTime64(expression: unknown, scale: number, timezone?: unknown): Selection<Date> {
+    return createDateTime64Cast(expression, scale, timezone);
+  },
+  fromUnixTimestamp: createFromUnixTimestampExpression,
+  fromUnixTimestamp64Second(expression: unknown, timezone?: unknown): Selection<Date> {
+    return createFunctionExpression("fromUnixTimestamp64Second", withOptional([expression], timezone), {
+      decoder: dateDecoder,
+      sqlType: "DateTime64(0)",
+    });
+  },
+  fromUnixTimestamp64Milli(expression: unknown, timezone?: unknown): Selection<Date> {
+    return createFunctionExpression("fromUnixTimestamp64Milli", withOptional([expression], timezone), {
+      decoder: dateDecoder,
+      sqlType: "DateTime64(3)",
+    });
+  },
+  fromUnixTimestamp64Micro(expression: unknown, timezone?: unknown): Selection<Date> {
+    return createFunctionExpression("fromUnixTimestamp64Micro", withOptional([expression], timezone), {
+      decoder: dateDecoder,
+      sqlType: "DateTime64(6)",
+    });
+  },
+  fromUnixTimestamp64Nano(expression: unknown, timezone?: unknown): Selection<Date> {
+    return createFunctionExpression("fromUnixTimestamp64Nano", withOptional([expression], timezone), {
+      decoder: dateDecoder,
+      sqlType: "DateTime64(9)",
+    });
+  },
   toStartOfMonth(expression: unknown): Selection<Date> {
     return createFunctionExpression("toStartOfMonth", [expression], {
       decoder: dateDecoder,
       sqlType: "Date",
     });
+  },
+  toUnixTimestamp(expression: unknown, timezone?: unknown): Selection<number> {
+    return createUInt32Expression("toUnixTimestamp", withOptional([expression], timezone));
+  },
+  toUnixTimestamp64Second(expression: unknown): Selection<string> {
+    return createInt64Expression("toUnixTimestamp64Second", [expression]);
+  },
+  toUnixTimestamp64Milli(expression: unknown): Selection<string> {
+    return createInt64Expression("toUnixTimestamp64Milli", [expression]);
+  },
+  toUnixTimestamp64Micro(expression: unknown): Selection<string> {
+    return createInt64Expression("toUnixTimestamp64Micro", [expression]);
+  },
+  toUnixTimestamp64Nano(expression: unknown): Selection<string> {
+    return createInt64Expression("toUnixTimestamp64Nano", [expression]);
   },
   coalesce<TData = unknown>(...args: unknown[]): Selection<TData> {
     return createCoalesceExpression<TData>(args);
