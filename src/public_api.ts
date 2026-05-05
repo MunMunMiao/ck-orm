@@ -214,6 +214,7 @@ export {
   type ClickHouseEndpointOptions,
   type ClickHouseKnownSettingName,
   type ClickHouseKnownSettings,
+  type ClickHouseORMClient,
   type ClickHouseQueryOptions,
   type ClickHouseSettings,
   type ClickHouseSettingValue,

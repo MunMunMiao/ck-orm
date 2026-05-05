@@ -312,6 +312,7 @@ describe("ck-orm public api", function describePublicApi() {
     expectType<RootApi.ClickHouseEndpointOptions | undefined>(undefined);
     expectType<RootApi.ClickHouseKnownSettingName | undefined>(undefined);
     expectType<RootApi.ClickHouseKnownSettings | undefined>(undefined);
+    expectType<RootApi.ClickHouseORMClient | undefined>(undefined);
     expectType<RootApi.ClickHouseORMExecutionState | undefined>(undefined);
     expectType<RootApi.ClickHouseORMInstrumentation | undefined>(undefined);
     expectType<RootApi.ClickHouseORMLogLevel | undefined>(undefined);

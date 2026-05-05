@@ -9,6 +9,7 @@ import { createSessionConcurrencyController } from "./runtime/session-concurrenc
 import type { ClickHouseSettings } from "./runtime/settings";
 import { createFetchClickHouseTransport } from "./runtime/transport";
 
+export type { ClickHouseORMClient } from "./runtime/client";
 export type {
   ClickHouseBaseQueryOptions,
   ClickHouseClientConfig,

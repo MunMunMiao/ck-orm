@@ -1,5 +1,6 @@
 import type * as RootApi from "./index";
 import {
+  type ClickHouseORMClient,
   ck,
   ckSql,
   ckTable,
@@ -28,6 +29,8 @@ const nestedUsers = ckType.nested({
 const db = clickhouseClient({
   databaseUrl: "http://localhost:8123/public_api_typecheck",
 });
+const typedDb: ClickHouseORMClient = db;
+void typedDb;
 
 db.runInSession(async (session: Session) => {
   await session.createTemporaryTable(tempUsers);
