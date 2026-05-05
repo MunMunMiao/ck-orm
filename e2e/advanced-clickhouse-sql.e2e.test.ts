@@ -1,19 +1,19 @@
 import { beforeEach, expect, it } from "bun:test";
-import { csql } from "./ck-orm";
+import { ckSql } from "./ck-orm";
 import { createE2EDb } from "./shared";
 import { describeE2E } from "./test-helpers";
 
 describeE2E("ck-orm e2e advanced clickhouse sql", function describeAdvancedClickHouseSql() {
   beforeEach(async function truncateDailySummary() {
     const db = createE2EDb();
-    await db.command(csql`TRUNCATE TABLE user_daily_summary`);
+    await db.command(ckSql`TRUNCATE TABLE user_daily_summary`);
   });
 
   it("supports scalar WITH and ARRAY JOIN in raw SQL", async function testScalarWithAndArrayJoin() {
     const db = createE2EDb();
 
     expect(
-      await db.execute(csql`
+      await db.execute(ckSql`
         WITH 10 AS min_user_id
         SELECT count() AS total
         FROM users
@@ -22,7 +22,7 @@ describeE2E("ck-orm e2e advanced clickhouse sql", function describeAdvancedClick
     ).toEqual([{ total: "4990" }]);
 
     expect(
-      await db.execute(csql`
+      await db.execute(ckSql`
         SELECT
           event_id,
           tag
@@ -40,7 +40,7 @@ describeE2E("ck-orm e2e advanced clickhouse sql", function describeAdvancedClick
   it("supports window functions over real datasets", async function testWindowFunctions() {
     const db = createE2EDb();
 
-    const rows = await db.execute(csql`
+    const rows = await db.execute(ckSql`
       SELECT
         id,
         tier,
@@ -68,7 +68,7 @@ describeE2E("ck-orm e2e advanced clickhouse sql", function describeAdvancedClick
   it("supports ASOF JOIN over time-series tables", async function testAsofJoin() {
     const db = createE2EDb();
 
-    const rows = await db.execute(csql`
+    const rows = await db.execute(ckSql`
       SELECT
         f.trade_id,
         f.symbol,
@@ -100,7 +100,7 @@ describeE2E("ck-orm e2e advanced clickhouse sql", function describeAdvancedClick
   it("supports multi-cte reporting SQL and insert into select pipelines", async function testCteReportAndInsertSelect() {
     const db = createE2EDb();
 
-    const reportRows = await db.execute(csql`
+    const reportRows = await db.execute(ckSql`
       WITH scoped_users AS
       (
         SELECT id, tier
@@ -132,7 +132,7 @@ describeE2E("ck-orm e2e advanced clickhouse sql", function describeAdvancedClick
       { tier: "vip", cnt: "1", rank: "3" },
     ]);
 
-    const expectedRows = await db.execute(csql`
+    const expectedRows = await db.execute(ckSql`
       SELECT
         toDate(viewed_at) AS day,
         user_id,
@@ -144,7 +144,7 @@ describeE2E("ck-orm e2e advanced clickhouse sql", function describeAdvancedClick
       ORDER BY day, user_id
     `);
 
-    await db.command(csql`
+    await db.command(ckSql`
       INSERT INTO user_daily_summary
       SELECT
         toDate(viewed_at) AS day,
@@ -156,7 +156,7 @@ describeE2E("ck-orm e2e advanced clickhouse sql", function describeAdvancedClick
       GROUP BY day, user_id
     `);
 
-    const insertedRows = await db.execute(csql`
+    const insertedRows = await db.execute(ckSql`
       SELECT day, user_id, total_events, total_revenue
       FROM user_daily_summary
       ORDER BY day, user_id

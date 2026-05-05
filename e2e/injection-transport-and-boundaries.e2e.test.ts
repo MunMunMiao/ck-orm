@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { ckTable, ckType, csql } from "./ck-orm";
+import { ckSql, ckTable, ckType } from "./ck-orm";
 import { createE2EDb, createTempTableName, users } from "./shared";
 import { describeE2E, expectClientValidationNotSent, expectNoMutationAfterRejectedInjection } from "./test-helpers";
 
@@ -10,14 +10,14 @@ describeE2E(
       const db = createE2EDb();
 
       await expectClientValidationNotSent(
-        db.execute(csql`SELECT * FROM ${users} WHERE id = ${1}`, {
+        db.execute(ckSql`SELECT * FROM ${users} WHERE id = ${1}`, {
           query_params: {
             orm_param1: 999,
           },
         }),
         {
           message:
-            '[ck-orm] query_params key "orm_param1" uses reserved internal prefix "orm_param". This prefix is reserved for csql`...` generated parameters.',
+            '[ck-orm] query_params key "orm_param1" uses reserved internal prefix "orm_param". This prefix is reserved for ckSql`...` generated parameters.',
         },
       );
     });
@@ -30,7 +30,7 @@ describeE2E(
         readonly message: string;
       }> = [
         {
-          promise: db.execute(csql`select {safe_key:String} as value`, {
+          promise: db.execute(ckSql`select {safe_key:String} as value`, {
             query_params: {
               "bad-key": "unsafe",
             },
@@ -38,14 +38,14 @@ describeE2E(
           message: '[ck-orm] Invalid query parameter key: "bad-key". Keys must match ^[a-zA-Z_][a-zA-Z0-9_]{0,99}$',
         },
         {
-          promise: db.execute(csql`select 1`, {
+          promise: db.execute(ckSql`select 1`, {
             query_id: "bad query id",
           }),
           message:
             '[ck-orm] Invalid query_id: "bad query id". Must be 1-100 chars of alphanumerics, underscores, or hyphens.',
         },
         {
-          promise: db.execute(csql`select 1`, {
+          promise: db.execute(ckSql`select 1`, {
             session_id: "bad session id",
           }),
           message:
@@ -82,11 +82,11 @@ describeE2E(
 
       await db.runInSession(async (session) => {
         await session.createTemporaryTableRaw(tempTable, "(id Int32, note String DEFAULT ';')");
-        await session.command(csql`INSERT INTO ${csql.identifier(tempTable)} (id) VALUES (${1})`);
+        await session.command(ckSql`INSERT INTO ${ckSql.identifier(tempTable)} (id) VALUES (${1})`);
 
-        const rows = await session.execute(csql`
+        const rows = await session.execute(ckSql`
         select note
-        from ${csql.identifier(tempTable)}
+        from ${ckSql.identifier(tempTable)}
         where id = ${1}
       `);
 
@@ -100,17 +100,17 @@ describeE2E(
       const tempTable = createTempTableName("tmp_session_opts");
 
       try {
-        await db.command(csql`CREATE TEMPORARY TABLE ${csql.identifier(tempTable)} (id Int32)`, {
+        await db.command(ckSql`CREATE TEMPORARY TABLE ${ckSql.identifier(tempTable)} (id Int32)`, {
           session_id: sessionId,
           session_timeout: 30,
         });
-        await db.command(csql`INSERT INTO ${csql.identifier(tempTable)} (id) VALUES (${1})`, {
+        await db.command(ckSql`INSERT INTO ${ckSql.identifier(tempTable)} (id) VALUES (${1})`, {
           session_id: sessionId,
           session_timeout: 30,
           session_check: 1,
         });
 
-        const rows = await db.execute(csql`SELECT id FROM ${csql.identifier(tempTable)} ORDER BY id`, {
+        const rows = await db.execute(ckSql`SELECT id FROM ${ckSql.identifier(tempTable)} ORDER BY id`, {
           session_id: sessionId,
           session_timeout: 30,
           session_check: 1,
@@ -122,8 +122,8 @@ describeE2E(
             const sessionTempTable = createTempTableName("tmp_run_in_session_opts");
             const sessionTempScope = ckTable(sessionTempTable, { id: ckType.int32() });
             await session.createTemporaryTable(sessionTempScope);
-            await session.command(csql`INSERT INTO ${csql.identifier(sessionTempTable)} (id) VALUES (${2})`);
-            return await session.execute(csql`SELECT id FROM ${csql.identifier(sessionTempTable)} ORDER BY id`);
+            await session.command(ckSql`INSERT INTO ${ckSql.identifier(sessionTempTable)} (id) VALUES (${2})`);
+            return await session.execute(ckSql`SELECT id FROM ${ckSql.identifier(sessionTempTable)} ORDER BY id`);
           },
           {
             session_timeout: 30,
@@ -131,7 +131,7 @@ describeE2E(
         );
         expect(sessionRows).toEqual([{ id: 2 }]);
       } finally {
-        await db.command(csql`DROP TABLE IF EXISTS ${csql.identifier(tempTable)}`, {
+        await db.command(ckSql`DROP TABLE IF EXISTS ${ckSql.identifier(tempTable)}`, {
           session_id: sessionId,
           session_timeout: 30,
           session_check: 1,
@@ -140,7 +140,7 @@ describeE2E(
       }
     });
 
-    it("rejects dangerous csql.join() separator patterns before a request is sent", async function testJoinSeparatorValidation() {
+    it("rejects dangerous ckSql.join() separator patterns before a request is sent", async function testJoinSeparatorValidation() {
       const db = createE2EDb();
       const evilSeparator = "`) UNION ALL SELECT password FROM users; -- ";
 
@@ -148,14 +148,14 @@ describeE2E(
         db
           .select()
           .from(users)
-          .orderBy(csql.join([csql.identifier("a")], evilSeparator)),
+          .orderBy(ckSql.join([ckSql.identifier("a")], evilSeparator)),
       ).toThrow("Invalid SQL join separator");
 
       expect(() =>
         db
           .select()
           .from(users)
-          .orderBy(csql.join([csql.identifier("a")], "a;b")),
+          .orderBy(ckSql.join([ckSql.identifier("a")], "a;b")),
       ).toThrow("Invalid SQL join separator");
     });
 
@@ -164,9 +164,9 @@ describeE2E(
       const tempTable = createTempTableName("tmp_structured_schema");
       const structuredScope = ckTable(tempTable, {
         base: ckType.int32(),
-        note: ckType.string().default(csql`'auto'`),
-        doubled: ckType.int32().materialized(csql`base * 2`),
-        label: ckType.string().aliasExpr(csql`concat('n=', toString(base))`),
+        note: ckType.string().default(ckSql`'auto'`),
+        doubled: ckType.int32().materialized(ckSql`base * 2`),
+        label: ckType.string().aliasExpr(ckSql`concat('n=', toString(base))`),
       });
 
       await db.runInSession(async (session) => {

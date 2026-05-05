@@ -3,9 +3,9 @@ import {
   type ClickHouseBaseQueryOptions,
   type ClickHouseSettings,
   ck,
+  ckSql,
   ckType,
   clickhouseClient,
-  csql,
   fn,
   type Order,
   type Predicate,
@@ -49,9 +49,9 @@ const settingsChildDb = db.withSettings({
   future_clickhouse_setting_from_child: true,
 });
 
-settingsDb.execute(csql`SELECT 1`, requestOptions);
-settingsChildDb.execute(csql`SELECT 1`);
-db.execute(csql`SELECT 1`, { clickhouse_settings: knownAndDynamicSettings });
+settingsDb.execute(ckSql`SELECT 1`, requestOptions);
+settingsChildDb.execute(ckSql`SELECT 1`);
+db.execute(ckSql`SELECT 1`, { clickhouse_settings: knownAndDynamicSettings });
 
 const invalidObjectSettings: ClickHouseSettings = {
   // @ts-expect-error object values are not valid ClickHouse HTTP setting values.
@@ -239,12 +239,12 @@ type _ChTypeDataMatrix = Expect<
 const functionTypeMatrix = {
   array: fn.array<string>("vip", "pro"),
   arrayAUCPR: fn.arrayAUCPR([0.1, 0.4], [0, 1]),
-  arrayAll: fn.arrayAll(csql`x -> x > 0`, [1, 2]),
+  arrayAll: fn.arrayAll(ckSql`x -> x > 0`, [1, 2]),
   arrayAutocorrelation: fn.arrayAutocorrelation([1, 2, 3]),
   arrayAvg: fn.arrayAvg([1, 2, 3]),
   arrayCompact: fn.arrayCompact<string>(["vip", "vip", "pro"]),
   arrayConcat: fn.arrayConcat<string>(["vip"], ["pro"]),
-  arrayCount: fn.arrayCount(csql`x -> x > 0`, [1, 2, 3]),
+  arrayCount: fn.arrayCount(ckSql`x -> x > 0`, [1, 2, 3]),
   arrayCumSum: fn.arrayCumSum<number>([1, 2, 3]),
   arrayCumSumNonNegative: fn.arrayCumSumNonNegative<number>([1, -3, 4]),
   arrayDifference: fn.arrayDifference<number>([1, 3, 6]),
@@ -258,23 +258,23 @@ const functionTypeMatrix = {
   arrayEnumerateUniq: fn.arrayEnumerateUniq(["vip"], ["pro"]),
   arrayEnumerateUniqRanked: fn.arrayEnumerateUniqRanked(1, [[1, 2]], 2),
   arrayExcept: fn.arrayExcept<string>(["vip", "pro"], ["pro"]),
-  arrayExists: fn.arrayExists(csql`x -> x > 1`, [1, 2]),
-  arrayFill: fn.arrayFill<number>(csql`x -> x > 0`, [1, 0, 2]),
-  arrayFilter: fn.arrayFilter<number>(csql`x -> x > 1`, [1, 2, 3]),
-  arrayFirst: fn.arrayFirst<number>(csql`x -> x > 1`, [1, 2, 3]),
-  arrayFirstIndex: fn.arrayFirstIndex(csql`x -> x > 1`, [1, 2, 3]),
-  arrayFirstOrNull: fn.arrayFirstOrNull<number>(csql`x -> x > 9`, [1, 2, 3]),
+  arrayExists: fn.arrayExists(ckSql`x -> x > 1`, [1, 2]),
+  arrayFill: fn.arrayFill<number>(ckSql`x -> x > 0`, [1, 0, 2]),
+  arrayFilter: fn.arrayFilter<number>(ckSql`x -> x > 1`, [1, 2, 3]),
+  arrayFirst: fn.arrayFirst<number>(ckSql`x -> x > 1`, [1, 2, 3]),
+  arrayFirstIndex: fn.arrayFirstIndex(ckSql`x -> x > 1`, [1, 2, 3]),
+  arrayFirstOrNull: fn.arrayFirstOrNull<number>(ckSql`x -> x > 9`, [1, 2, 3]),
   arrayFlatten: fn.arrayFlatten<string>([["vip"], ["pro"]]),
-  arrayFold: fn.arrayFold<number>(csql`(acc, x) -> acc + x`, [1, 2], 0),
+  arrayFold: fn.arrayFold<number>(ckSql`(acc, x) -> acc + x`, [1, 2], 0),
   arrayIntersect: fn.arrayIntersect<string>(["vip"], ["pro", "vip"]),
   arrayJaccardIndex: fn.arrayJaccardIndex(["vip"], ["vip", "pro"]),
   arrayJoin: fn.arrayJoin<number>([1, 2]),
-  arrayLast: fn.arrayLast<number>(csql`x -> x > 1`, [1, 2, 3]),
-  arrayLastIndex: fn.arrayLastIndex(csql`x -> x > 1`, [1, 2, 3]),
-  arrayLastOrNull: fn.arrayLastOrNull<number>(csql`x -> x > 9`, [1, 2, 3]),
+  arrayLast: fn.arrayLast<number>(ckSql`x -> x > 1`, [1, 2, 3]),
+  arrayLastIndex: fn.arrayLastIndex(ckSql`x -> x > 1`, [1, 2, 3]),
+  arrayLastOrNull: fn.arrayLastOrNull<number>(ckSql`x -> x > 9`, [1, 2, 3]),
   arrayLevenshteinDistance: fn.arrayLevenshteinDistance(["A"], ["B"]),
   arrayLevenshteinDistanceWeighted: fn.arrayLevenshteinDistanceWeighted(["A"], ["B"], [1], [1]),
-  arrayMap: fn.arrayMap<number>(csql`x -> x + 1`, [1, 2]),
+  arrayMap: fn.arrayMap<number>(ckSql`x -> x + 1`, [1, 2]),
   arrayMax: fn.arrayMax<number>([1, 2]),
   arrayMin: fn.arrayMin<number>([1, 2]),
   arrayNormalizedGini: fn.arrayNormalizedGini([0.9, 0.3], [1, 0]),
@@ -293,9 +293,9 @@ const functionTypeMatrix = {
   arrayRemove: fn.arrayRemove<string>(["vip", "pro"], "pro"),
   arrayResize: fn.arrayResize<string>(["vip"], 2, "pro"),
   arrayReverse: fn.arrayReverse<string>(["vip", "pro"]),
-  arrayReverseFill: fn.arrayReverseFill<number>(csql`x -> x > 0`, [1, 0, 2]),
+  arrayReverseFill: fn.arrayReverseFill<number>(ckSql`x -> x > 0`, [1, 0, 2]),
   arrayReverseSort: fn.arrayReverseSort<number>([2, 1]),
-  arrayReverseSplit: fn.arrayReverseSplit<number>(csql`x -> x = 0`, [1, 0, 2]),
+  arrayReverseSplit: fn.arrayReverseSplit<number>(ckSql`x -> x = 0`, [1, 0, 2]),
   arrayRotateLeft: fn.arrayRotateLeft<number>([1, 2, 3], 1),
   arrayRotateRight: fn.arrayRotateRight<number>([1, 2, 3], 1),
   arrayShiftLeft: fn.arrayShiftLeft<number>([1, 2, 3], 1, 0),
@@ -305,7 +305,7 @@ const functionTypeMatrix = {
   arraySimilarity: fn.arraySimilarity(["A"], ["B"], [1], [1]),
   arraySlice: fn.arraySlice<string>(["vip", "pro"], 1, 1),
   arraySort: fn.arraySort<number>([2, 1]),
-  arraySplit: fn.arraySplit<number>(csql`x -> x = 0`, [1, 0, 2]),
+  arraySplit: fn.arraySplit<number>(ckSql`x -> x = 0`, [1, 0, 2]),
   arraySum: fn.arraySum<number>([1, 2]),
   arraySymmetricDifference: fn.arraySymmetricDifference<string>(["vip"], ["pro"]),
   arrayTranspose: fn.arrayTranspose<number>([
@@ -521,7 +521,7 @@ const ckApiMatrix = {
   endsWithIgnoreCase: ck.endsWithIgnoreCase(activityLedger.system_id, "_A"),
   eq: ck.eq(activityLedger.actor_id, 10001),
   exists: ck.exists(db.select({ actor_id: activityLedger.actor_id }).from(activityLedger)),
-  expr: ck.expr<boolean>(csql`1`, { decoder: (value) => Number(value) === 1, sqlType: "UInt8" }),
+  expr: ck.expr<boolean>(ckSql`1`, { decoder: (value) => Number(value) === 1, sqlType: "UInt8" }),
   fn: ck.fn,
   gt: ck.gt(activityLedger.actor_id, 0),
   gte: ck.gte(activityLedger.actor_id, 0),
@@ -545,14 +545,14 @@ const ckApiMatrix = {
   startsWithIgnoreCase: ck.startsWithIgnoreCase(activityLedger.system_id, "SYSTEM"),
 } satisfies { readonly [K in keyof typeof ck]: unknown };
 
-const csqlMatrix = {
-  identifier: csql.identifier({ table: "activity_ledger", column: "actor_id" }),
-  join: csql.join([csql`select 1`, csql`select 2`], csql`, `),
-  decimal: csql.decimal(csql`sum(${activityLedger.delta_value})`, 20, 5),
-} satisfies { readonly [K in keyof typeof csql]: unknown };
+const ckSqlMatrix = {
+  identifier: ckSql.identifier({ table: "activity_ledger", column: "actor_id" }),
+  join: ckSql.join([ckSql`select 1`, ckSql`select 2`], ckSql`, `),
+  decimal: ckSql.decimal(ckSql`sum(${activityLedger.delta_value})`, 20, 5),
+} satisfies { readonly [K in keyof typeof ckSql]: unknown };
 
-const csqlTaggedTemplate = {
-  tagged: csql`select ${activityLedger.actor_id}`,
+const ckSqlTaggedTemplate = {
+  tagged: ckSql`select ${activityLedger.actor_id}`,
 };
 
 const nameSelection: Selection<string> = fn.toString(activityLedger.system_id);
@@ -575,10 +575,10 @@ ckType.time64(6);
 ckType.qbit(ckType.float32(), 8);
 // @ts-expect-error simpleAggregateFunction named form requires a value column.
 ckType.simpleAggregateFunction("sum_value", { name: "sum" });
-// @ts-expect-error csql only supports tagged-template usage.
-csql("select 1");
+// @ts-expect-error ckSql only supports tagged-template usage.
+ckSql("select 1");
 // @ts-expect-error jsonExtract return type must come from ckType.
-fn.jsonExtract(csql`payload`, "Array(String)");
+fn.jsonExtract(ckSql`payload`, "Array(String)");
 // @ts-expect-error Selection should not expose compile.
 nameSelection.compile;
 // @ts-expect-error Selection should not expose decoder.
@@ -612,8 +612,8 @@ void columnTypeMatrix;
 void functionTypeMatrix;
 void tableFunctionTypeMatrix;
 void ckApiMatrix;
-void csqlMatrix;
-void csqlTaggedTemplate;
+void ckSqlMatrix;
+void ckSqlTaggedTemplate;
 void hiddenSqlExpression;
 void hiddenGrouping;
 void sortOrder;

@@ -1,4 +1,4 @@
-import { clickhouseClient, csql, type Session } from "../index";
+import { ckSql, clickhouseClient, type Session } from "../index";
 import { logicalMetrics, tempMetricScope, typeScenarioSchema } from "./fixtures";
 import type { Equal, Expect, InferBuilderResult } from "./helpers";
 
@@ -43,9 +43,9 @@ const insertExecute: Promise<undefined> = insertBuilder.execute({
 const insertCatch: Promise<undefined | "insert_failed"> = insertBuilder.catch(() => "insert_failed" as const);
 const insertFinally: Promise<undefined> = insertBuilder.finally(() => undefined);
 
-db.execute(csql`select 1`, { format: "JSON" });
-db.stream(csql`select 1`, { format: "JSONEachRow" });
-db.command(csql`optimize table logical_metrics`);
+db.execute(ckSql`select 1`, { format: "JSON" });
+db.stream(ckSql`select 1`, { format: "JSONEachRow" });
+db.command(ckSql`optimize table logical_metrics`);
 db.ping();
 db.replicasStatus();
 db.insertJsonEachRow(logicalMetrics, [
@@ -73,9 +73,9 @@ db.runInSession(
     session.registerTempTable("tmp_manual_cleanup");
     await session.insertJsonEachRow(tempMetricScope, [{ userId: "user_1", groupId: 1 }]);
     const sessionRows = await session.select({ userId: tempMetricScope.userId }).from(tempMetricScope).execute();
-    const sessionRawRows = await session.execute(csql`select 1`, { format: "JSON" });
-    const sessionStream = session.stream(csql`select 1`, { format: "JSONEachRow" });
-    await session.command(csql`select 1`);
+    const sessionRawRows = await session.execute(ckSql`select 1`, { format: "JSON" });
+    const sessionStream = session.stream(ckSql`select 1`, { format: "JSONEachRow" });
+    await session.command(ckSql`select 1`);
     await session.ping();
     await session.replicasStatus();
     await session.withSettings({ join_use_nulls: 0 as const }).runInSession(async (childSession) => {
@@ -104,9 +104,9 @@ db.runInSession(
 );
 
 // @ts-expect-error raw eager queries only support JSON output.
-db.execute(csql`select 1`, { format: "JSONEachRow" });
+db.execute(ckSql`select 1`, { format: "JSONEachRow" });
 // @ts-expect-error raw streaming queries only support JSONEachRow output.
-db.stream(csql`select 1`, { format: "JSON" });
+db.stream(ckSql`select 1`, { format: "JSON" });
 // @ts-expect-error raw query execution no longer accepts plain strings.
 db.execute("select 1");
 // @ts-expect-error raw command execution no longer accepts plain strings.

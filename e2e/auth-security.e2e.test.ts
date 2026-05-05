@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { clickhouseClient, csql } from "./ck-orm";
+import { ckSql, clickhouseClient } from "./ck-orm";
 import { describeE2E } from "./test-helpers";
 
 describeE2E("ck-orm e2e auth security", function describeAuthSecurity() {
@@ -16,7 +16,7 @@ describeE2E("ck-orm e2e auth security", function describeAuthSecurity() {
 
     let error: unknown;
     try {
-      await db.execute(csql`SELECT 1`);
+      await db.execute(ckSql`SELECT 1`);
     } catch (caught) {
       error = caught;
     }

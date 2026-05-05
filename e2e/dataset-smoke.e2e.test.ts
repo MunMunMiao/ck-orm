@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { ck, csql, fn } from "./ck-orm";
+import { ck, ckSql, fn } from "./ck-orm";
 import { createE2EDb, datasetCounts, pets, quoteSnapshots, rewardEvents, tradeFills, users, webEvents } from "./shared";
 import { describeE2E, expectPresent } from "./test-helpers";
 
@@ -30,7 +30,7 @@ describeE2E("ck-orm e2e dataset smoke", function describeDatasetSmoke() {
     expect(physicalCdcTotal).toBeLessThanOrEqual(datasetCounts.rewardEventsPhysicalRows);
     expect(logicalCdcTotal).toBe(19_000);
 
-    const [ownerStats] = await db.execute(csql`
+    const [ownerStats] = await db.execute(ckSql`
       select
         uniqExact(owner_id) as distinct_owner_count,
         max(owner_id) as max_owner_id

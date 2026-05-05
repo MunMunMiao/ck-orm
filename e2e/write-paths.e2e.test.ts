@@ -1,13 +1,13 @@
 import { beforeEach, expect, it } from "bun:test";
-import { ck, ckTable, ckType, csql } from "./ck-orm";
+import { ck, ckSql, ckTable, ckType } from "./ck-orm";
 import { auditEvents, createE2EDb, createTempTableName, writePathBigInts } from "./shared";
 import { describeE2E } from "./test-helpers";
 
 describeE2E("ck-orm e2e write paths", function describeWritePaths() {
   beforeEach(async function truncateWritePathTables() {
     const db = createE2EDb();
-    await db.command(csql`TRUNCATE TABLE audit_events`);
-    await db.command(csql`TRUNCATE TABLE write_path_bigints`);
+    await db.command(ckSql`TRUNCATE TABLE audit_events`);
+    await db.command(ckSql`TRUNCATE TABLE write_path_bigints`);
   });
 
   it("writes with insert builder via direct await", async function testInsertBuilderAwait() {
@@ -154,15 +154,15 @@ describeE2E("ck-orm e2e write paths", function describeWritePaths() {
     const tempTable = createTempTableName("tmp_json_each_row_complex");
     const scope = ckTable(tempTable, {
       id: ckType.int32(),
-      note: ckType.string().default(csql`'auto'`),
+      note: ckType.string().default(ckSql`'auto'`),
       nullable_note: ckType.nullable(ckType.string()),
       tags: ckType.array(ckType.nullable(ckType.string())),
       signed_ids: ckType.array(ckType.int64()),
       unsigned_ids: ckType.array(ckType.uint64()),
       scores: ckType.map(ckType.string(), ckType.int32()),
       pair: ckType.tuple(ckType.string(), ckType.int32()),
-      doubled: ckType.int32().materialized(csql`id * 2`),
-      label: ckType.string().aliasExpr(csql`concat('id=', toString(id))`),
+      doubled: ckType.int32().materialized(ckSql`id * 2`),
+      label: ckType.string().aliasExpr(ckSql`concat('id=', toString(id))`),
     });
 
     await db.runInSession(async (session) => {
@@ -276,7 +276,7 @@ describeE2E("ck-orm e2e write paths", function describeWritePaths() {
     await db.runInSession(async (session) => {
       await session.createTemporaryTable(scope);
 
-      const description = await session.execute(csql`DESCRIBE TABLE ${csql.identifier(tempTable)}`);
+      const description = await session.execute(ckSql`DESCRIBE TABLE ${ckSql.identifier(tempTable)}`);
       expect(description.map((row) => row.name)).toEqual(["user_id", "reward_points", "event_rank"]);
 
       await session.insert(scope).values({

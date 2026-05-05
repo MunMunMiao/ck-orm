@@ -1,4 +1,4 @@
-import { ckTable, ckType, csql, type InferInsertModel, type InferSelectModel, type InferSelectSchema } from "./ck-orm";
+import { ckSql, ckTable, ckType, type InferInsertModel, type InferSelectModel, type InferSelectSchema } from "./ck-orm";
 import type { commerceSchema, orderRewardLog } from "./schema/commerce";
 
 export const auditEvent = ckTable(
@@ -12,16 +12,16 @@ export const auditEvent = ckTable(
       deleted: 3,
     }),
     payload: ckType.json<Record<string, unknown>>(),
-    labels: ckType.array(ckType.string()).default(csql`[]`),
+    labels: ckType.array(ckType.string()).default(ckSql`[]`),
     amountDelta: ckType.nullable("amount_delta", ckType.decimal({ precision: 18, scale: 5 })),
     createdAt: ckType.dateTime64("created_at", { precision: 3, timezone: "UTC" }),
-    createdDay: ckType.date("created_day").materialized(csql`toDate(created_at)`),
-    searchText: ckType.string("search_text").aliasExpr(csql`lowerUTF8(JSONExtractString(payload, 'message'))`),
+    createdDay: ckType.date("created_day").materialized(ckSql`toDate(created_at)`),
+    searchText: ckType.string("search_text").aliasExpr(ckSql`lowerUTF8(JSONExtractString(payload, 'message'))`),
     peerdbVersion: ckType.uint64("_peerdb_version"),
   },
   (table) => ({
     engine: "ReplacingMergeTree",
-    partitionBy: csql`toYYYYMM(${table.createdAt})`,
+    partitionBy: ckSql`toYYYYMM(${table.createdAt})`,
     orderBy: [table.actorId, table.createdAt, table.id],
     versionColumn: table.peerdbVersion,
     settings: {

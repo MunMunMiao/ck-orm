@@ -1,4 +1,4 @@
-import { ckTable, ckType, clickhouseClient, csql } from "./ck-orm";
+import { ckSql, ckTable, ckType, clickhouseClient } from "./ck-orm";
 import { commerceSchema } from "./schema/commerce";
 
 const createCommerceDb = () => {
@@ -34,14 +34,14 @@ export const exportRewardSummaryForLargeUserScope = async (
       },
     );
 
-    const scopeSummary = await sessionDb.execute(csql`
+    const scopeSummary = await sessionDb.execute(ckSql`
       select
         count() as scoped_user_count
       from tmp_user_scope
     `);
 
     for await (const row of sessionDb.stream(
-      csql`
+      ckSql`
         SELECT
           user_id,
           sum(reward_points) AS total_reward_points,

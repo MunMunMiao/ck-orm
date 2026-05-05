@@ -1,6 +1,6 @@
 import { expect, it } from "bun:test";
 import { compileQuerySymbol } from "../src/query";
-import { ck, csql, fn } from "./ck-orm";
+import { ck, ckSql, fn } from "./ck-orm";
 import { aliasedUsers, createE2EDb, users } from "./shared";
 import { describeE2E, expectPresent } from "./test-helpers";
 
@@ -12,17 +12,17 @@ describeE2E("ck-orm e2e query basics", function describeQueryBasics() {
     await db.replicasStatus();
   });
 
-  it("supports csql tagged templates, csql.join and csql.identifier", async function testRawSqlFactories() {
+  it("supports ckSql tagged templates, ckSql.join and ckSql.identifier", async function testRawSqlFactories() {
     const db = createE2EDb();
 
-    expect(await db.execute(csql`SELECT 1 AS one`)).toEqual([{ one: 1 }]);
-    expect(await db.execute(csql`SELECT 2 AS two`)).toEqual([{ two: 2 }]);
-    expect(await db.execute(csql`select ${csql.join([csql`1 as one`, csql`2 as two`], ", ")}, 3 as three`)).toEqual([
-      { one: 1, two: 2, three: 3 },
-    ]);
+    expect(await db.execute(ckSql`SELECT 1 AS one`)).toEqual([{ one: 1 }]);
+    expect(await db.execute(ckSql`SELECT 2 AS two`)).toEqual([{ two: 2 }]);
+    expect(await db.execute(ckSql`select ${ckSql.join([ckSql`1 as one`, ckSql`2 as two`], ", ")}, 3 as three`)).toEqual(
+      [{ one: 1, two: 2, three: 3 }],
+    );
     expect(
       await db.execute(
-        csql`select count() as total from ${csql.identifier("users")} where ${csql.identifier({ column: "id" })} <= ${3}`,
+        ckSql`select count() as total from ${ckSql.identifier("users")} where ${ckSql.identifier({ column: "id" })} <= ${3}`,
       ),
     ).toEqual([{ total: "3" }]);
   });
@@ -30,7 +30,7 @@ describeE2E("ck-orm e2e query basics", function describeQueryBasics() {
   it("supports interpolated SQL with tables, columns, sources, values and fn expressions", async function testInterpolatedSql() {
     const db = createE2EDb();
 
-    const rows = await db.execute(csql`
+    const rows = await db.execute(ckSql`
       select
         ${aliasedUsers.id} as id,
         ${fn.call<string>("upper", aliasedUsers.name).mapWith((value) => String(value))} as upper_name
@@ -56,7 +56,7 @@ describeE2E("ck-orm e2e query basics", function describeQueryBasics() {
     const rows = await db
       .select({
         id: users.id,
-        upperName: csql<string>`upper(${users.name})`.mapWith((value) => String(value)).as("upper_name"),
+        upperName: ckSql<string>`upper(${users.name})`.mapWith((value) => String(value)).as("upper_name"),
       })
       .from(users)
       .where(ck.gt(users.id, 0))
@@ -79,7 +79,7 @@ describeE2E("ck-orm e2e query basics", function describeQueryBasics() {
     const builder = db
       .select({
         id: users.id,
-        upperName: csql<string>`upper(${users.name})`.mapWith((value) => String(value)).as("upper_name"),
+        upperName: ckSql<string>`upper(${users.name})`.mapWith((value) => String(value)).as("upper_name"),
       })
       .from(users)
       .orderBy(users.id)
@@ -87,10 +87,10 @@ describeE2E("ck-orm e2e query basics", function describeQueryBasics() {
 
     const compiled = builder[compileQuerySymbol]();
     const [idSelection, upperNameSelection] = compiled.selection;
-    const [rawRow] = await db.execute(csql`
+    const [rawRow] = await db.execute(ckSql`
       select
-        ${users.id} as ${csql.identifier(idSelection.sqlAlias)},
-        upper(${users.name}) as ${csql.identifier(upperNameSelection.sqlAlias)}
+        ${users.id} as ${ckSql.identifier(idSelection.sqlAlias)},
+        upper(${users.name}) as ${ckSql.identifier(upperNameSelection.sqlAlias)}
       from ${users}
       order by ${users.id}
       limit 1

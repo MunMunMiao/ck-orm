@@ -214,7 +214,7 @@ describe("ck-orm sql security", function describeSqlSecurity() {
     expect(compiled.params.orm_param1).toBe(evil);
   });
 
-  it("does not trust user-shaped compile objects inside csql templates", function testFakeCompileObjects() {
+  it("does not trust user-shaped compile objects inside ckSql templates", function testFakeCompileObjects() {
     const fakeExpression = {
       compile() {
         return sql.raw("1 OR 1=1");

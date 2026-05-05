@@ -817,7 +817,7 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
         kind: "client_validation",
         executionState: "not_sent",
         message:
-          '[ck-orm] query_params key "orm_param1" uses reserved internal prefix "orm_param". This prefix is reserved for csql`...` generated parameters.',
+          '[ck-orm] query_params key "orm_param1" uses reserved internal prefix "orm_param". This prefix is reserved for ckSql`...` generated parameters.',
       },
     );
 
@@ -831,7 +831,7 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
         kind: "client_validation",
         executionState: "not_sent",
         message:
-          '[ck-orm] query_params key "orm_param1" uses reserved internal prefix "orm_param". This prefix is reserved for csql`...` generated parameters.',
+          '[ck-orm] query_params key "orm_param1" uses reserved internal prefix "orm_param". This prefix is reserved for ckSql`...` generated parameters.',
       },
     );
 

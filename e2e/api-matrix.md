@@ -6,9 +6,9 @@ This matrix records the public API coverage contract. Runtime behavior rows poin
 
 | API | Coverage location |
 | --- | --- |
-| root runtime exports: `ck`, `fn`, `csql`, `ckType`, `ckTable`, `ckAlias`, `clickhouseClient`, `isClickHouseORMError`, `isDecodeError` | `src/public_api.test.ts` |
+| root runtime exports: `ck`, `fn`, `ckSql`, `ckType`, `ckTable`, `ckAlias`, `clickhouseClient`, `isClickHouseORMError`, `isDecodeError` | `src/public_api.test.ts` |
 | root type exports: columns, tables, query selections, compiled query metadata, runtime config/options/settings/session, observability events, error contracts, schema inference helpers, `SQLFragment`, `JsonPathSegment` | `src/public_api.test.ts`, `src/public_api.typecheck.ts`, `src/type-scenarios/public-api-matrix.typecheck.ts` |
-| namespace key guards for `ck`, `fn`, `fn.table`, `csql`, `ckType` | `src/public_api.test.ts`, `src/type-scenarios/public-api-matrix.typecheck.ts` |
+| namespace key guards for `ck`, `fn`, `fn.table`, `ckSql`, `ckType` | `src/public_api.test.ts`, `src/type-scenarios/public-api-matrix.typecheck.ts` |
 
 ## Runtime API
 
@@ -107,10 +107,10 @@ This matrix records the public API coverage contract. Runtime behavior rows poin
 
 | API | Coverage location |
 | --- | --- |
-| `` csql`...` `` | most E2E files |
-| `csql.join` | `query-basics.e2e.test.ts`, `injection-transport-and-boundaries.e2e.test.ts` |
-| `csql.identifier` | `query-basics.e2e.test.ts`, `session-cdc-stream.e2e.test.ts`, `injection-identifiers.e2e.test.ts`, `injection-transport-and-boundaries.e2e.test.ts` |
-| `csql.decimal` (CAST(... AS Decimal(P, S)) precision wrapper) | `builder-analytics.e2e.test.ts` |
+| `` ckSql`...` `` | most E2E files |
+| `ckSql.join` | `query-basics.e2e.test.ts`, `injection-transport-and-boundaries.e2e.test.ts` |
+| `ckSql.identifier` | `query-basics.e2e.test.ts`, `session-cdc-stream.e2e.test.ts`, `injection-identifiers.e2e.test.ts`, `injection-transport-and-boundaries.e2e.test.ts` |
+| `ckSql.decimal` (CAST(... AS Decimal(P, S)) precision wrapper) | `builder-analytics.e2e.test.ts` |
 
 ## Function API
 
@@ -237,4 +237,4 @@ All `fn` keys are guarded by `src/public_api.test.ts` and `src/type-scenarios/pu
 | `query_params`, `query_id`, and `session_id` validation | `injection-transport-and-boundaries.e2e.test.ts` |
 | per-request `session_timeout` and continued-session `session_check` | `injection-transport-and-boundaries.e2e.test.ts` |
 | `createTemporaryTableRaw()` trusted-only boundary | `injection-transport-and-boundaries.e2e.test.ts` |
-| `csql.join()` separator validation | `injection-transport-and-boundaries.e2e.test.ts` |
+| `ckSql.join()` separator validation | `injection-transport-and-boundaries.e2e.test.ts` |

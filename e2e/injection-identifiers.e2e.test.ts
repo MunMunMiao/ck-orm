@@ -1,5 +1,5 @@
 import { it } from "bun:test";
-import { ckAlias, csql, fn, type SQLFragment } from "./ck-orm";
+import { ckAlias, ckSql, fn, type SQLFragment } from "./ck-orm";
 import { createE2EDb, users } from "./shared";
 import { describeE2E, expectClientValidationNotSent, expectNoMutationAfterRejectedInjection } from "./test-helpers";
 
@@ -13,18 +13,18 @@ describeE2E("ck-orm e2e injection identifiers", function describeInjectionIdenti
       readonly message: string;
     }> = [
       {
-        run: () => db.execute(csql`select * from ${csql.identifier("users`; DROP")}`),
+        run: () => db.execute(ckSql`select * from ${ckSql.identifier("users`; DROP")}`),
         message: "[ck-orm] Invalid SQL identifier: users`; DROP",
       },
       {
         run: () =>
           db.execute(
-            csql`select ${csql.identifier({ table: "users", column: "id; DROP TABLE users" })} from ${users} limit 1`,
+            ckSql`select ${ckSql.identifier({ table: "users", column: "id; DROP TABLE users" })} from ${users} limit 1`,
           ),
         message: "[ck-orm] Invalid SQL identifier: id; DROP TABLE users",
       },
       {
-        run: () => db.execute(csql`select 1 as ${csql.identifier({ as: "user_id--comment" })}`),
+        run: () => db.execute(ckSql`select 1 as ${ckSql.identifier({ as: "user_id--comment" })}`),
         message: "[ck-orm] Invalid SQL identifier: user_id--comment",
       },
       {
@@ -67,13 +67,13 @@ describeE2E("ck-orm e2e injection identifiers", function describeInjectionIdenti
     }> = [
       {
         run: () =>
-          db.execute(csql`select ${fn.withParams("; DROP TABLE users; --", [0.95], users.id)} from ${users} limit 1`),
+          db.execute(ckSql`select ${fn.withParams("; DROP TABLE users; --", [0.95], users.id)} from ${users} limit 1`),
         message: "[ck-orm] Invalid function name: ; DROP TABLE users; --",
       },
       {
         run: () =>
           db.execute(
-            csql`select * from ${fn.table.call("; DROP TABLE users; --", 5).as("evil_source") as SQLFragment<unknown>}`,
+            ckSql`select * from ${fn.table.call("; DROP TABLE users; --", 5).as("evil_source") as SQLFragment<unknown>}`,
           ),
         message: "[ck-orm] Invalid function name: ; DROP TABLE users; --",
       },

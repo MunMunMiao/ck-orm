@@ -119,7 +119,7 @@ type CkNamespace = {
   desc: typeof desc;
 };
 
-type CsqlNamespace = {
+type CkSqlNamespace = {
   <TData = unknown>(strings: TemplateStringsArray, ...values: unknown[]): SQLFragment<TData>;
   join(parts: readonly SQLFragment<unknown>[], separator?: string | SQLFragment<unknown>): SQLFragment;
   identifier(
@@ -233,24 +233,24 @@ export {
 } from "./schema";
 export type { SQLFragment } from "./sql";
 
-const csqlTaggedTemplateError =
-  '[ck-orm] csql only supports tagged-template usage. Use csql`...` instead of csql("...").';
+const ckSqlTaggedTemplateError =
+  '[ck-orm] ckSql only supports tagged-template usage. Use ckSql`...` instead of ckSql("...").';
 
-const createCsqlNamespace = (): CsqlNamespace => {
-  const csqlFactory = (<TData = unknown>(strings: TemplateStringsArray, ...values: unknown[]): SQLFragment<TData> => {
+const createCkSqlNamespace = (): CkSqlNamespace => {
+  const ckSqlFactory = (<TData = unknown>(strings: TemplateStringsArray, ...values: unknown[]): SQLFragment<TData> => {
     if (Array.isArray(strings) && Array.isArray(strings.raw)) return sql<TData>(strings, ...values);
-    throw new TypeError(csqlTaggedTemplateError);
-  }) as CsqlNamespace;
+    throw new TypeError(ckSqlTaggedTemplateError);
+  }) as CkSqlNamespace;
 
-  csqlFactory.join = (parts, separator = ", ") => sql.join(parts, separator);
-  csqlFactory.identifier = (value) => sql.identifier(value);
-  csqlFactory.decimal = (expression: unknown, precision: number, scale: number) =>
+  ckSqlFactory.join = (parts, separator = ", ") => sql.join(parts, separator);
+  ckSqlFactory.identifier = (value) => sql.identifier(value);
+  ckSqlFactory.decimal = (expression: unknown, precision: number, scale: number) =>
     sql.decimal(expression, precision, scale);
 
-  return csqlFactory;
+  return ckSqlFactory;
 };
 
-export const csql = createCsqlNamespace();
+export const ckSql = createCkSqlNamespace();
 
 export const ckType: CkTypeNamespace = {
   aggregateFunction,

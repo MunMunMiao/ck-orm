@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { ck, ckType, csql, fn } from "./ck-orm";
+import { ck, ckSql, ckType, fn } from "./ck-orm";
 import { createE2EDb, users, webEvents } from "./shared";
 import { describeE2E, expectDate, expectPresent } from "./test-helpers";
 
@@ -187,7 +187,7 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
 
     const [row] = await db
       .select({
-        safeTier: fn.coalesce(users.tier, csql`'missing'`).as("safe_tier"),
+        safeTier: fn.coalesce(users.tier, ckSql`'missing'`).as("safe_tier"),
         tupleValue: fn.tuple(users.id, users.name).as("tuple_value"),
         zippedTags: fn.arrayZip(webEvents.tags, webEvents.tag_scores).as("zipped_tags"),
         isNotVip: fn.not(ck.eq(users.tier, "vip")).as("is_not_vip"),
@@ -304,9 +304,9 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
 
     const [tupleElementRow] = await db.select({
       namedValue: fn
-        .tupleElement<string>(csql`CAST(('alice', 7), 'Tuple(name String, score UInt8)')`, "name")
+        .tupleElement<string>(ckSql`CAST(('alice', 7), 'Tuple(name String, score UInt8)')`, "name")
         .as("named_value"),
-      defaultedValue: fn.tupleElement<string>(csql`tuple('only')`, 2, "fallback").as("defaulted_value"),
+      defaultedValue: fn.tupleElement<string>(ckSql`tuple('only')`, 2, "fallback").as("defaulted_value"),
     });
 
     expect(expectPresent(tupleElementRow, "tuple element row")).toEqual({
@@ -325,17 +325,17 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
     const db = createE2EDb();
 
     const [row] = await db.select({
-      anyLarge: fn.arrayExists(csql`x -> x > 2`, [1, 2, 3]).as("any_large"),
-      allPositive: fn.arrayAll(csql`x -> x > 0`, [1, 2, 3]).as("all_positive"),
-      countLarge: fn.arrayCount(csql`x -> x > 1`, [1, 2, 3]).as("count_large"),
-      filtered: fn.arrayFilter<number>(csql`x -> x > 1`, [1, 2, 3]).as("filtered"),
-      mapped: fn.arrayMap<number>(csql`x -> x + 1`, [1, 2]).as("mapped"),
-      firstLarge: fn.arrayFirst<number>(csql`x -> x > 1`, [1, 2, 3]).as("first_large"),
-      firstLargeIndex: fn.arrayFirstIndex(csql`x -> x > 1`, [1, 2, 3]).as("first_large_index"),
-      firstMissing: fn.arrayFirstOrNull<number>(csql`x -> x > 9`, [1, 2, 3]).as("first_missing"),
-      lastLarge: fn.arrayLast<number>(csql`x -> x > 1`, [1, 2, 3]).as("last_large"),
-      lastLargeIndex: fn.arrayLastIndex(csql`x -> x > 1`, [1, 2, 3]).as("last_large_index"),
-      lastMissing: fn.arrayLastOrNull<number>(csql`x -> x > 9`, [1, 2, 3]).as("last_missing"),
+      anyLarge: fn.arrayExists(ckSql`x -> x > 2`, [1, 2, 3]).as("any_large"),
+      allPositive: fn.arrayAll(ckSql`x -> x > 0`, [1, 2, 3]).as("all_positive"),
+      countLarge: fn.arrayCount(ckSql`x -> x > 1`, [1, 2, 3]).as("count_large"),
+      filtered: fn.arrayFilter<number>(ckSql`x -> x > 1`, [1, 2, 3]).as("filtered"),
+      mapped: fn.arrayMap<number>(ckSql`x -> x + 1`, [1, 2]).as("mapped"),
+      firstLarge: fn.arrayFirst<number>(ckSql`x -> x > 1`, [1, 2, 3]).as("first_large"),
+      firstLargeIndex: fn.arrayFirstIndex(ckSql`x -> x > 1`, [1, 2, 3]).as("first_large_index"),
+      firstMissing: fn.arrayFirstOrNull<number>(ckSql`x -> x > 9`, [1, 2, 3]).as("first_missing"),
+      lastLarge: fn.arrayLast<number>(ckSql`x -> x > 1`, [1, 2, 3]).as("last_large"),
+      lastLargeIndex: fn.arrayLastIndex(ckSql`x -> x > 1`, [1, 2, 3]).as("last_large_index"),
+      lastMissing: fn.arrayLastOrNull<number>(ckSql`x -> x > 9`, [1, 2, 3]).as("last_missing"),
       sortedAsc: fn.arraySort<number>([3, 1, 2]).as("sorted_asc"),
       sortedDesc: fn.arrayReverseSort<number>([3, 1, 2]).as("sorted_desc"),
       compacted: fn.arrayCompact<number>([1, 1, 2, 2, 3]).as("compacted"),
@@ -411,21 +411,21 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
     const db = createE2EDb();
 
     const [row] = await db.select({
-      multiArrayExists: fn.arrayExists(csql`(x, y) -> x = y`, [1, 2, 3], [9, 2, 8]).as("multi_array_exists"),
-      filled: fn.arrayFill<number>(csql`x -> x > 0`, [1, 0, 2, 0]).as("filled"),
-      reverseFilled: fn.arrayReverseFill<number>(csql`x -> x > 0`, [1, 0, 2, 0]).as("reverse_filled"),
-      split: fn.arraySplit<number>(csql`x -> x = 0`, [1, 0, 2, 3, 0, 4]).as("split"),
-      reverseSplit: fn.arrayReverseSplit<number>(csql`x -> x = 0`, [1, 0, 2, 3, 0, 4]).as("reverse_split"),
+      multiArrayExists: fn.arrayExists(ckSql`(x, y) -> x = y`, [1, 2, 3], [9, 2, 8]).as("multi_array_exists"),
+      filled: fn.arrayFill<number>(ckSql`x -> x > 0`, [1, 0, 2, 0]).as("filled"),
+      reverseFilled: fn.arrayReverseFill<number>(ckSql`x -> x > 0`, [1, 0, 2, 0]).as("reverse_filled"),
+      split: fn.arraySplit<number>(ckSql`x -> x = 0`, [1, 0, 2, 3, 0, 4]).as("split"),
+      reverseSplit: fn.arrayReverseSplit<number>(ckSql`x -> x = 0`, [1, 0, 2, 3, 0, 4]).as("reverse_split"),
       folded: fn
-        .arrayFold<number>(csql`(acc, x, y) -> acc + x * y`, [1, 2, 3], [10, 20, 30], 0)
+        .arrayFold<number>(ckSql`(acc, x, y) -> acc + x * y`, [1, 2, 3], [10, 20, 30], 0)
         .mapWith((value) => Number(value))
         .as("folded"),
       lambdaSum: fn
-        .arraySum<number>(csql`(x, y) -> x + y`, [1, 2], [3, 4])
+        .arraySum<number>(ckSql`(x, y) -> x + y`, [1, 2], [3, 4])
         .mapWith((value) => Number(value))
         .as("lambda_sum"),
       lambdaMax: fn
-        .arrayMax<number>(csql`x -> -x`, [1, 2, 3])
+        .arrayMax<number>(ckSql`x -> -x`, [1, 2, 3])
         .mapWith((value) => Number(value))
         .as("lambda_max"),
     });
@@ -542,19 +542,19 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
       levenshtein: fn.arrayLevenshteinDistance(["a", "b"], ["a", "c"]).as("levenshtein"),
       rocAuc: fn.arrayROCAUC([0.1, 0.9], [0, 1]).as("roc_auc"),
       partialSortedHead: fn
-        .arraySlice<number>(fn.arrayPartialSort<number>(csql`toUInt8(2)`, [5, 1, 3, 2]), 1, 2)
+        .arraySlice<number>(fn.arrayPartialSort<number>(ckSql`toUInt8(2)`, [5, 1, 3, 2]), 1, 2)
         .as("partial_sorted_head"),
       partialReverseSortedHead: fn
-        .arraySlice<number>(fn.arrayPartialReverseSort<number>(csql`toUInt8(2)`, [5, 1, 3, 2]), 1, 2)
+        .arraySlice<number>(fn.arrayPartialReverseSort<number>(ckSql`toUInt8(2)`, [5, 1, 3, 2]), 1, 2)
         .as("partial_reverse_sorted_head"),
       shuffledSorted: fn
-        .arraySort<number>(fn.arrayShuffle<number>([3, 1, 2], csql`toUInt64(42)`))
+        .arraySort<number>(fn.arrayShuffle<number>([3, 1, 2], ckSql`toUInt64(42)`))
         .as("shuffled_sorted"),
       randomSampleSize: fn
-        .length(fn.arrayRandomSample<number>([1, 2, 3, 4], csql`toUInt8(2)`))
+        .length(fn.arrayRandomSample<number>([1, 2, 3, 4], ckSql`toUInt8(2)`))
         .as("random_sample_size"),
       partialShuffleSize: fn
-        .length(fn.arrayPartialShuffle<number>([1, 2, 3, 4], csql`toUInt8(2)`, csql`toUInt64(42)`))
+        .length(fn.arrayPartialShuffle<number>([1, 2, 3, 4], ckSql`toUInt8(2)`, ckSql`toUInt64(42)`))
         .as("partial_shuffle_size"),
       rotatedRight: fn.arrayRotateRight<number>([1, 2, 3], 1).as("rotated_right"),
       shiftedRight: fn.arrayShiftRight<number>([1, 2, 3], 1, 0).as("shifted_right"),
@@ -588,10 +588,10 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
 
     const rows = await db
       .select({
-        value: ck.expr(csql<bigint>`number`.mapWith((value) => BigInt(String(value)))),
+        value: ck.expr(ckSql<bigint>`number`.mapWith((value) => BigInt(String(value)))),
       })
       .from(numbers)
-      .orderBy(ck.expr(csql`number`));
+      .orderBy(ck.expr(ckSql`number`));
 
     expect(rows).toEqual([{ value: 0n }, { value: 1n }, { value: 2n }, { value: 3n }, { value: 4n }]);
   });

@@ -1,4 +1,4 @@
-import { clickhouseClient, csql, fn } from "./ck-orm";
+import { ckSql, clickhouseClient, fn } from "./ck-orm";
 import { commerceSchema, orderRewardLog } from "./schema/commerce";
 
 const createCommerceDb = () => {
@@ -34,7 +34,7 @@ export const runRawQueryExample = async () => {
   const commerceDb = createCommerceDb();
   const threshold = 10;
 
-  return commerceDb.execute(csql`
+  return commerceDb.execute(ckSql`
     select
       ${orderRewardLog.userId},
       ${fn.sum(orderRewardLog.rewardPoints)} as total_reward_points
@@ -46,18 +46,18 @@ export const runRawQueryExample = async () => {
 
 export const runTaggedTemplateRawQueryExample = async () => {
   const commerceDb = createCommerceDb();
-  return commerceDb.execute(csql`SELECT 1 AS one`);
+  return commerceDb.execute(ckSql`SELECT 1 AS one`);
 };
 
 export const runIdentifierQueryExample = async () => {
   const commerceDb = createCommerceDb();
-  const selectedColumns = csql.join([csql.identifier("user_id"), csql.identifier("reward_points")], ", ");
+  const selectedColumns = ckSql.join([ckSql.identifier("user_id"), ckSql.identifier("reward_points")], ", ");
 
   return commerceDb.execute(
-    csql`
+    ckSql`
       SELECT ${selectedColumns}
-      FROM ${csql.identifier("order_reward_log")}
-      WHERE ${csql.identifier("region")} = ${"AU"}
+      FROM ${ckSql.identifier("order_reward_log")}
+      WHERE ${ckSql.identifier("region")} = ${"AU"}
       LIMIT ${10}
     `,
   );

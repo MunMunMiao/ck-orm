@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { ck, csql } from "./ck-orm";
+import { ck, ckSql } from "./ck-orm";
 import { createE2EDb, users } from "./shared";
 import { describeE2E } from "./test-helpers";
 
@@ -41,7 +41,7 @@ describeE2E("ck-orm e2e SQL injection foundations", function describeSqlInjectio
     ];
 
     for (const payload of payloads) {
-      const rows = await db.execute(csql`
+      const rows = await db.execute(ckSql`
         select ${users.id} as id
         from ${users}
         where ${users.name} = ${payload}

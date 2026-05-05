@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { clickhouseClient, csql } from "./ck-orm";
+import { ckSql, clickhouseClient } from "./ck-orm";
 import { getE2EConfig, getE2EDatabaseUrl, hasTransportRoleFixtures, transportRoleFixtures } from "./shared";
 import { describeE2E, expectPresent, withFetchSampling } from "./test-helpers";
 
@@ -27,7 +27,7 @@ describeE2E("ck-orm e2e transport contracts", function describeTransportContract
         schema: {},
       });
 
-      const rows = await db.execute(csql`
+      const rows = await db.execute(ckSql`
         select
           currentUser() as current_user,
           currentDatabase() as current_database
@@ -60,7 +60,7 @@ describeE2E("ck-orm e2e transport contracts", function describeTransportContract
         },
       });
 
-      const rows = await db.execute(csql`select 1 as ok`, {
+      const rows = await db.execute(ckSql`select 1 as ok`, {
         http_headers: {
           Authorization: "Bearer request-attack",
           "x-per-request-header": "request",
@@ -98,7 +98,7 @@ describeE2E("ck-orm e2e transport contracts", function describeTransportContract
           role: roles,
         });
 
-        const rows = await db.execute(csql`
+        const rows = await db.execute(ckSql`
         select arraySort(currentRoles()) as current_roles
       `);
 
@@ -122,7 +122,7 @@ describeE2E("ck-orm e2e transport contracts", function describeTransportContract
         },
       });
 
-      const rows = await db.execute(csql`
+      const rows = await db.execute(ckSql`
         select
           number,
           repeat('transport_payload_', 32) as payload,

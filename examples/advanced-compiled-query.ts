@@ -1,4 +1,4 @@
-import { type CompiledQuery, ck, clickhouseClient, csql, fn } from "./ck-orm";
+import { type CompiledQuery, ck, ckSql, clickhouseClient, fn } from "./ck-orm";
 import { commerceSchema, customerInvoice } from "./schema/commerce";
 
 const createCommerceDb = () => {
@@ -59,7 +59,7 @@ export const decodeCompiledRowExample = () => {
  * Decimal precision example: every numeric value travels as `string` end to end.
  *
  * - `fn.sum(decimalColumn)` auto-injects `CAST(... AS Decimal(38, 5))`.
- * - `csql.decimal(...)` wraps a hand-written expression into a precision cast.
+ * - `ckSql.decimal(...)` wraps a hand-written expression into a precision cast.
  * - The decoded row keeps the value as `string`, ready for `decimal.js` on the consumer side.
  */
 export const runDecimalPrecisionAggregate = async () => {
@@ -69,8 +69,8 @@ export const runDecimalPrecisionAggregate = async () => {
     .select({
       userId: customerInvoice.userId,
       grossTotal: fn.sum(customerInvoice.totalAmount).as("gross_total"),
-      netTotal: csql
-        .decimal(csql`sum(${customerInvoice.totalAmount}) - sum(${customerInvoice.feeAmount})`, 20, 5)
+      netTotal: ckSql
+        .decimal(ckSql`sum(${customerInvoice.totalAmount}) - sum(${customerInvoice.feeAmount})`, 20, 5)
         .as("net_total"),
     })
     .from(customerInvoice)

@@ -1,10 +1,10 @@
 import type * as RootApi from "./index";
 import {
   ck,
+  ckSql,
   ckTable,
   ckType,
   clickhouseClient,
-  csql,
   fn,
   type Order,
   type Predicate,
@@ -18,7 +18,7 @@ const users = ckTable("users", {
 });
 const tempUsers = ckTable("tmp_users", {
   id: ckType.int32(),
-  name: ckType.string().default(csql`'anonymous'`),
+  name: ckType.string().default(ckSql`'anonymous'`),
 });
 const stringArray = ckType.array(ckType.string());
 const nestedUsers = ckType.nested({
@@ -37,17 +37,17 @@ db.runInSession(async (session: Session) => {
 });
 
 const nameSelection: Selection<string> = fn.toString(users.name);
-const constantSelection: Selection<number> = ck.expr(csql`1`, {
+const constantSelection: Selection<number> = ck.expr(ckSql`1`, {
   decoder: (value) => Number(value),
   sqlType: "UInt8",
 });
-const groupedSelection: Selection<number> = ck.expr(csql`toUInt8(1)`, {
+const groupedSelection: Selection<number> = ck.expr(ckSql`toUInt8(1)`, {
   decoder: (value) => Number(value),
   sqlType: "UInt8",
 });
 const idPredicate: Predicate = ck.eq(users.id, 1);
 const sortOrder: Order = ck.asc(nameSelection);
-const namespaceFlag: Selection<boolean> = ck.expr<boolean>(csql`1`, {
+const namespaceFlag: Selection<boolean> = ck.expr<boolean>(ckSql`1`, {
   decoder: (value) => Number(value) === 1,
   sqlType: "UInt8",
 });
@@ -67,8 +67,8 @@ const namespaceEndsWith: Predicate = ck.endsWith(users.name, "_done");
 const namespaceContainsIgnoreCase: Predicate = ck.containsIgnoreCase(users.name, "user_100%");
 const namespaceStartsWithIgnoreCase: Predicate = ck.startsWithIgnoreCase(users.name, "arch_");
 const namespaceEndsWithIgnoreCase: Predicate = ck.endsWithIgnoreCase(users.name, "_done");
-const jsonArraySelection: Selection<string[]> = fn.jsonExtract(csql`payload`, stringArray, "regulatory");
-const namespaceJsonArraySelection: Selection<string[]> = ck.fn.jsonExtract(csql`payload`, stringArray);
+const jsonArraySelection: Selection<string[]> = fn.jsonExtract(ckSql`payload`, stringArray, "regulatory");
+const namespaceJsonArraySelection: Selection<string[]> = ck.fn.jsonExtract(ckSql`payload`, stringArray);
 const arraySelection: Selection<string[]> = fn.array<string>("vip", "pro");
 const arrayConcatSelection: Selection<string[]> = fn.arrayConcat<string>(["vip"], ["pro"]);
 const arrayElementSelection: Selection<string> = fn.arrayElement<string>(arraySelection, 1);
@@ -76,11 +76,11 @@ const arrayElementOrNullSelection: Selection<string | null> = fn.arrayElementOrN
 const arraySliceSelection: Selection<string[]> = fn.arraySlice<string>(arraySelection, 1, 2);
 const arrayFlattenSelection: Selection<string[]> = fn.arrayFlatten<string>([["vip"], ["pro"]]);
 const arrayIntersectSelection: Selection<string[]> = fn.arrayIntersect<string>(["vip"], ["pro", "vip"]);
-const arrayExistsSelection: Selection<boolean> = fn.arrayExists(csql`x -> x = 'vip'`, arraySelection);
-const arrayFilterSelection: Selection<unknown[]> = fn.arrayFilter<string>(csql`x -> x != ''`, arraySelection);
-const arrayFirstSelection: Selection<string> = fn.arrayFirst<string>(csql`x -> x != ''`, arraySelection);
+const arrayExistsSelection: Selection<boolean> = fn.arrayExists(ckSql`x -> x = 'vip'`, arraySelection);
+const arrayFilterSelection: Selection<unknown[]> = fn.arrayFilter<string>(ckSql`x -> x != ''`, arraySelection);
+const arrayFirstSelection: Selection<string> = fn.arrayFirst<string>(ckSql`x -> x != ''`, arraySelection);
 const arrayFirstOrNullSelection: Selection<string | null> = fn.arrayFirstOrNull<string>(
-  csql`x -> x = 'missing'`,
+  ckSql`x -> x = 'missing'`,
   arraySelection,
 );
 const emptyArraySelection: Selection<string[]> = fn.emptyArrayString();
@@ -193,11 +193,11 @@ ck.escapeLike("literal");
 // @ts-expect-error ck.sql should no longer be part of the public ck namespace
 ck.sql;
 
-// @ts-expect-error csql only supports tagged-template usage
-csql("select 1");
+// @ts-expect-error ckSql only supports tagged-template usage
+ckSql("select 1");
 
 // @ts-expect-error jsonExtract return type must come from ckType
-fn.jsonExtract(csql`payload`, "Array(String)");
+fn.jsonExtract(ckSql`payload`, "Array(String)");
 
 // @ts-expect-error SqlExpression should remain internal to the package root
 const hiddenSqlExpression: RootApi.SqlExpression | undefined = undefined;

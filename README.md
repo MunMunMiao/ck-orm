@@ -171,7 +171,7 @@ Public API coverage by guide:
 | `select`, joins, filters, grouping, ordering, `limitBy`, CTEs | [Query builder](#query-builder) | [`basic-select.ts`](./examples/basic-select.ts), [`cte-and-subquery.ts`](./examples/cte-and-subquery.ts), [`fulfillment-order-lifecycle.ts`](./examples/fulfillment-order-lifecycle.ts) |
 | `count`, `count().toSafe()`, `count().toMixed()` | [`db.count()`](#dbcount) | [`count-and-errors.ts`](./examples/count-and-errors.ts) |
 | `insert`, `insertJsonEachRow` | [Writes](#writes) | [`params-and-insert.ts`](./examples/params-and-insert.ts), [`large-scope-session.ts`](./examples/large-scope-session.ts) |
-| `csql`, `ck.expr`, `query_params`, identifiers | [Raw SQL](#raw-sql) | [`raw-sql.ts`](./examples/raw-sql.ts), [`params-and-insert.ts`](./examples/params-and-insert.ts) |
+| `ckSql`, `ck.expr`, `query_params`, identifiers | [Raw SQL](#raw-sql) | [`raw-sql.ts`](./examples/raw-sql.ts), [`params-and-insert.ts`](./examples/params-and-insert.ts) |
 | `fn.*` scalar, aggregate, JSON, array, tuple, table helpers | [Functions and table functions](#functions-and-table-functions) | [`json-array-functions.ts`](./examples/json-array-functions.ts), [`raw-sql.ts`](./examples/raw-sql.ts), [`activity-monthly-export.ts`](./examples/activity-monthly-export.ts) |
 | `runInSession`, temporary tables, session concurrency | [Sessions and temporary tables](#sessions-and-temporary-tables) | [`session-temp-table.ts`](./examples/session-temp-table.ts), [`large-scope-session.ts`](./examples/large-scope-session.ts) |
 | `execute`, `stream`, `command`, `ping`, `replicasStatus`, `withSettings` | [Runtime methods](#runtime-methods) | [`runtime-observability.ts`](./examples/runtime-observability.ts), [`raw-sql.ts`](./examples/raw-sql.ts) |
@@ -210,7 +210,7 @@ Use `ckTable(name, columns, options?)` to define a table.
 Examples in this section assume:
 
 ```ts
-import { ckTable, ckType, csql } from "ck-orm";
+import { ckTable, ckType, ckSql } from "ck-orm";
 ```
 
 ```ts
@@ -281,12 +281,12 @@ const orderRewardLog = ckTable(
   {
     id: ckType.int32(),
     createdAt: ckType.dateTime("created_at"),
-    shardDay: ckType.date("shard_day").materialized(csql`toDate(created_at)`),
-    note: ckType.string().default(csql`'pending'`),
+    shardDay: ckType.date("shard_day").materialized(ckSql`toDate(created_at)`),
+    note: ckType.string().default(ckSql`'pending'`),
   },
   (table) => ({
     engine: "ReplacingMergeTree",
-    partitionBy: csql`toYYYYMM(created_at)`,
+    partitionBy: ckSql`toYYYYMM(created_at)`,
     orderBy: [table.id],
     versionColumn: table.createdAt,
   }),
@@ -728,7 +728,7 @@ const query = db
 
 `Predicate` is the public name for reusable boolean SQL clauses. You can use the same predicate objects in `where`, `having`, join `on` clauses, and boolean-aware helpers such as `ck.exists(...)`.
 
-`Selection` is the public name for reusable computed builder values such as `fn.sum(...)`, `fn.toString(...)`, and `ck.expr(csql...)`. Use `.as(...)` to alias them and `.mapWith(...)` to override decoding. `Order` is the clause object returned by `ck.asc(...)` and `ck.desc(...)`.
+`Selection` is the public name for reusable computed builder values such as `fn.sum(...)`, `fn.toString(...)`, and `ck.expr(ckSql...)`. Use `.as(...)` to alias them and `.mapWith(...)` to override decoding. `Order` is the clause object returned by `ck.asc(...)` and `ck.desc(...)`.
 
 `ck.has(...)`, `ck.hasAll(...)`, and `ck.hasAny(...)` map directly to the native ClickHouse functions and keep ClickHouse's array, map, and JSON semantics.
 
@@ -988,12 +988,12 @@ An empty regular array is treated as a client-side no-op and still reports a suc
 
 `ck-orm` includes its own SQL template API. Use it when builder syntax would be less direct than the SQL you already want to write.
 
-### `` csql`...` ``
+### `` ckSql`...` ``
 
 ```ts
-import { csql, fn } from "ck-orm";
+import { ckSql, fn } from "ck-orm";
 
-const rows = await db.execute(csql`
+const rows = await db.execute(ckSql`
   select
     ${orderRewardLog.userId},
     ${fn.sum(orderRewardLog.rewardPoints)} as total_reward_points
@@ -1003,28 +1003,28 @@ const rows = await db.execute(csql`
 `);
 ```
 
-### `csql.join()` and `csql.identifier()`
+### `ckSql.join()` and `ckSql.identifier()`
 
 ```ts
-import { csql } from "ck-orm";
+import { ckSql } from "ck-orm";
 
-const fields = csql.join(
-  [csql.identifier("user_id"), csql.identifier("reward_points")],
+const fields = ckSql.join(
+  [ckSql.identifier("user_id"), ckSql.identifier("reward_points")],
   ", ",
 );
 
 const rows = await db.execute(
-  csql`select ${fields} from ${csql.identifier("order_reward_log")}`,
+  ckSql`select ${fields} from ${ckSql.identifier("order_reward_log")}`,
 );
 ```
 
 ### Raw SQL with `query_params`
 
 ```ts
-import { csql } from "ck-orm";
+import { ckSql } from "ck-orm";
 
 const rows = await db.execute(
-  csql`select user_id, reward_points from order_reward_log where user_id = {user_id:String} limit {limit:Int64}`,
+  ckSql`select user_id, reward_points from order_reward_log where user_id = {user_id:String} limit {limit:Int64}`,
   {
     query_params: {
       user_id: "user_100",
@@ -1036,13 +1036,13 @@ const rows = await db.execute(
 
 Parameter transport is chosen automatically. You do not need to configure multipart handling for `query_params`.
 
-`query_params` keys that start with `orm_param` are rejected. That prefix is reserved for parameters generated internally by `` csql`...` ``.
+`query_params` keys that start with `orm_param` are rejected. That prefix is reserved for parameters generated internally by `` ckSql`...` ``.
 
 The value formatter supports primitive values, `Date`, `NaN`, `Infinity`, arrays, objects, and `Map` values for ClickHouse typed placeholders such as `{ids:Array(UInt64)}` or `{attrs:Map(String, String)}`. Use ClickHouse's `Identifier` placeholder type when the parameter is a table or column name:
 
 ```ts
 const rows = await db.execute(
-  csql`
+  ckSql`
     select {selected_column:Identifier}
     from {target_table:Identifier}
     where id = {id:Int32}
@@ -1062,10 +1062,10 @@ const rows = await db.execute(
 Use `ck.expr()` to wrap a SQL fragment as a reusable `Selection`:
 
 ```ts
-import { ck, csql } from "ck-orm";
+import { ck, ckSql } from "ck-orm";
 
 const query = db.select({
-  constantOne: ck.expr(csql`1`).as("constant_one"),
+  constantOne: ck.expr(ckSql`1`).as("constant_one"),
 });
 ```
 
@@ -1074,7 +1074,7 @@ const query = db.select({
 Raw eager queries only support `JSON` output:
 
 ```ts
-const rows = await db.execute(csql`select 1`, {
+const rows = await db.execute(ckSql`select 1`, {
   format: "JSON",
 });
 ```
@@ -1082,7 +1082,7 @@ const rows = await db.execute(csql`select 1`, {
 Raw streaming queries only support `JSONEachRow` output:
 
 ```ts
-for await (const row of db.stream(csql`select 1`, {
+for await (const row of db.stream(ckSql`select 1`, {
   format: "JSONEachRow",
 })) {
   console.log(row);
@@ -1092,7 +1092,7 @@ for await (const row of db.stream(csql`select 1`, {
 ### Decimal precision in expressions
 
 ```ts
-import { ckType, csql, fn } from "ck-orm";
+import { ckSql, ckTable, ckType, fn } from "ck-orm";
 
 const ledger = ckTable("ledger", {
   amount: ckType.decimal({ precision: 18, scale: 5 }),
@@ -1104,12 +1104,12 @@ db.select({ total: fn.sum(ledger.amount) }).from(ledger);
 
 // Explicit casts.
 fn.toDecimal128(ledger.amount, 5);     // toDecimal32 / 64 / 128 / 256
-csql.decimal(csql`sum(a) - sum(b)`, 20, 5);
+ckSql.decimal(ckSql`sum(a) - sum(b)`, 20, 5);
 ledger.amount.cast(20, 2);             // column shortcut
 ```
 
 - `sum` / `sumIf` widen P to ≥ 38; `min` / `max` keep the column's P. Auto-cast also fires through `nullable(decimal(...))` and `lowCardinality(decimal(...))`.
-- `avg` is **not** auto-cast — ClickHouse computes `avg(Decimal)` over Float64, so `fn.avg` returns `Selection<number>`. For exact Decimal averages, use `csql.decimal(csql\`sum(x) / count(x)\`, P, S)`.
+- `avg` is **not** auto-cast — ClickHouse computes `avg(Decimal)` over Float64, so `fn.avg` returns `Selection<number>`. For exact Decimal averages, use `ckSql.decimal(ckSql\`sum(x) / count(x)\`, P, S)`.
 - `column.cast(P, S)` casts the column, not the aggregate — using it bare inside `GROUP BY` raises `NOT_AN_AGGREGATE`. Use `fn.sum(column)` or wrap the aggregate.
 - Inserts reject non-string/number objects (e.g. raw `decimal.js` instances) — pass `.toFixed(scale)`:
 
@@ -1296,10 +1296,10 @@ const firstTicket = fn.jsonExtract(
 );
 ```
 
-Higher-order array functions follow ClickHouse's parameter order. Use `csql` for the lambda, interpolate outer schema fields, and leave lambda-local variables as bare SQL names. Functions whose lambda controls the element shape, such as `fn.arrayMap(...)`, `fn.arrayFilter(...)`, and `fn.range(...)`, return `Selection<unknown[]>` by default; chain `.mapWith(...)` when your query needs a narrower decoded element type.
+Higher-order array functions follow ClickHouse's parameter order. Use `ckSql` for the lambda, interpolate outer schema fields, and leave lambda-local variables as bare SQL names. Functions whose lambda controls the element shape, such as `fn.arrayMap(...)`, `fn.arrayFilter(...)`, and `fn.range(...)`, return `Selection<unknown[]>` by default; chain `.mapWith(...)` when your query needs a narrower decoded element type.
 
 ```ts
-import { ck, csql, fn, type Predicate, type Selection } from "ck-orm";
+import { ck, ckSql, fn, type Predicate, type Selection } from "ck-orm";
 
 const buildRangePredicate = (params: {
   timeColumn: Selection<Date>;
@@ -1310,7 +1310,7 @@ const buildRangePredicate = (params: {
   };
 }): Predicate => {
   const rangeMatched = fn.arrayExists(
-    csql`
+    ckSql`
       (start_ts, end_ts) ->
         ${params.timeColumn} >= start_ts
         AND ${params.timeColumn} < end_ts
@@ -1472,7 +1472,7 @@ Inside a session callback, `ck-orm` gives you:
 ### `runInSession()`
 
 ```ts
-import { ckTable, ckType, csql } from "ck-orm";
+import { ckTable, ckType, ckSql } from "ck-orm";
 
 const tmpScope = ckTable("tmp_scope", {
   user_id: ckType.string(),
@@ -1486,7 +1486,7 @@ await db.runInSession(async (session) => {
     { user_id: "user_200" },
   ]);
 
-  return session.execute(csql`
+  return session.execute(ckSql`
     SELECT user_id
     FROM order_reward_log
     WHERE user_id IN (SELECT user_id FROM tmp_scope)
@@ -1498,7 +1498,7 @@ Use `registerTempTable(name)` when the temporary table is created by a command y
 
 ```ts
 await db.runInSession(async (session) => {
-  await session.command(csql`
+  await session.command(ckSql`
     CREATE TEMPORARY TABLE tmp_external_scope
     (
       user_id String
@@ -1589,7 +1589,7 @@ Any request that carries a `session_id` participates in the same per-session lim
 Per-request `clickhouse_settings` only override ClickHouse settings for that request:
 
 ```ts
-await db.execute(csql`SELECT 1`, {
+await db.execute(ckSql`SELECT 1`, {
   query_id: "debug-query",
   session_id: "debug-session",
   session_timeout: 60,
@@ -1605,7 +1605,7 @@ await db.execute(csql`SELECT 1`, {
 Execute a raw query and return `Record<string, unknown>[]`:
 
 ```ts
-const rows = await db.execute(csql`SELECT 1 AS one`);
+const rows = await db.execute(ckSql`SELECT 1 AS one`);
 ```
 
 ### `stream()`
@@ -1613,7 +1613,7 @@ const rows = await db.execute(csql`SELECT 1 AS one`);
 Stream raw query results:
 
 ```ts
-for await (const row of db.stream(csql`SELECT number FROM numbers(10)`)) {
+for await (const row of db.stream(ckSql`SELECT number FROM numbers(10)`)) {
   console.log(row);
 }
 ```
@@ -1625,7 +1625,7 @@ If `stream()` targets a `session_id`, the same-session slot is released only aft
 Execute a command that does not return a row set:
 
 ```ts
-await db.command(csql`SYSTEM FLUSH LOGS`);
+await db.command(ckSql`SYSTEM FLUSH LOGS`);
 ```
 
 ### `withSettings()`
@@ -1646,13 +1646,13 @@ Session lifecycle options stay separate from ClickHouse settings in `runInSessio
 ```ts
 await db.runInSession(
   async (session) => {
-    await session.execute(csql`SELECT 1`);
+    await session.execute(ckSql`SELECT 1`);
 
     await session
       .withSettings({
         max_threads: 2,
       })
-      .execute(csql`SELECT 2`);
+      .execute(ckSql`SELECT 2`);
   },
   {
     session_id: "report-session",
@@ -1872,9 +1872,9 @@ Do not return `responseText` or the raw error `message` to untrusted clients. Cl
 
 The built-in protections include:
 
-- identifiers passed to `csql.identifier()` are validated and quoted
+- identifiers passed to `ckSql.identifier()` are validated and quoted
 - function names used by `fn.call(...)`, `fn.withParams(...)`, `ckType.aggregateFunction(...)`, `ckType.simpleAggregateFunction(...)`, and `ckType.nested({...})` keys are validated
-- values interpolated into `` csql`...` `` become ClickHouse named parameters rather than raw SQL text
+- values interpolated into `` ckSql`...` `` become ClickHouse named parameters rather than raw SQL text
 - `query_params` keys that start with `orm_param` are rejected because that prefix is reserved for internal SQL-template parameters
 - only a single top-level statement is allowed per request
 - authorization headers derived from connection config cannot be overridden by user-supplied `http_headers`
@@ -1889,7 +1889,7 @@ The built-in protections include:
 
 `fn.call(name, ...)` and `fn.withParams(name, ...)` validate `name`, but you should still treat dynamically chosen function names as developer-controlled input rather than end-user input.
 
-`csql.identifier(...)` validates on the compile/execute boundary. Constructing the fragment is cheap; the error appears when the fragment is compiled into a query.
+`ckSql.identifier(...)` validates on the compile/execute boundary. Constructing the fragment is cheap; the error appears when the fragment is compiled into a query.
 
 ### Tracing data exposure
 

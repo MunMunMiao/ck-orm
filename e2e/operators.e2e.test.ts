@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { ck, csql } from "./ck-orm";
+import { ck, ckSql } from "./ck-orm";
 import { createE2EDb, pets, users, webEvents } from "./shared";
 import { describeE2E, expectPresent } from "./test-helpers";
 
@@ -160,7 +160,7 @@ describeE2E("ck-orm e2e operators", function describeOperators() {
         country: webEvents.country,
       })
       .from(webEvents)
-      .where(ck.expr(csql`(${webEvents.event_id} % 2) = ${0}`))
+      .where(ck.expr(ckSql`(${webEvents.event_id} % 2) = ${0}`))
       .orderBy(ck.asc(webEvents.country), ck.desc(webEvents.event_id))
       .limit(4);
 

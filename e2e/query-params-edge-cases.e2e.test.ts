@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { csql } from "./ck-orm";
+import { ckSql } from "./ck-orm";
 import { createE2EDb } from "./shared";
 import {
   describeE2E,
@@ -14,7 +14,7 @@ describeE2E("ck-orm e2e query parameter edge cases", function describeQueryParam
     const timestamp = new Date("2026-04-24T01:02:03.456Z");
 
     const [row] = await db.execute(
-      csql`
+      ckSql`
       select
         {literal:String} as literal,
         {items:Array(Nullable(String))} as items,
@@ -51,7 +51,7 @@ describeE2E("ck-orm e2e query parameter edge cases", function describeQueryParam
     const db = createE2EDb();
 
     const rows = await db.execute(
-      csql`
+      ckSql`
       select {selected_column:Identifier} as value
       from {target_table:Identifier}
       where {id_column:Identifier} = {user_id:Int32}
@@ -74,7 +74,7 @@ describeE2E("ck-orm e2e query parameter edge cases", function describeQueryParam
 
     await expectRejectsWithClickhouseError(
       db.execute(
-        csql`
+        ckSql`
         select count() as total
         from {target_table:Identifier}
       `,

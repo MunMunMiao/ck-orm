@@ -9,7 +9,7 @@ const expectedRootRuntimeKeys = [
   "ckType",
   "ck",
   "clickhouseClient",
-  "csql",
+  "ckSql",
   "fn",
   "isClickHouseORMError",
   "isDecodeError",
@@ -236,7 +236,7 @@ describe("ck-orm public api", function describePublicApi() {
   it("keeps runtime public namespace keys explicit", function testPublicNamespaceSurface() {
     expect(Object.keys(publicApi).sort()).toEqual([...expectedRootRuntimeKeys].sort());
     expect(Object.keys(publicApi.ck).sort()).toEqual([...expectedCkKeys].sort());
-    expect(Object.keys(publicApi.csql).sort()).toEqual(["decimal", "identifier", "join"]);
+    expect(Object.keys(publicApi.ckSql).sort()).toEqual(["decimal", "identifier", "join"]);
     expect(Object.keys(publicApi.ckType).sort()).toEqual([...expectedChTypeKeys].sort());
     expect(Object.keys(publicApi.fn).sort()).toEqual([...expectedFnKeys].sort());
     expect(Object.keys(publicApi.fn.table).sort()).toEqual(["call"]);
@@ -252,7 +252,7 @@ describe("ck-orm public api", function describePublicApi() {
 
   it("keeps core schema and query builders available from the package root", function testPublicBuilders() {
     expect("ck" in publicApi).toBe(true);
-    expect("csql" in publicApi).toBe(true);
+    expect("ckSql" in publicApi).toBe(true);
     expect("ckType" in publicApi).toBe(true);
     expect("ckTable" in publicApi).toBe(true);
     expect("clickhouseClient" in publicApi).toBe(true);
@@ -283,21 +283,21 @@ describe("ck-orm public api", function describePublicApi() {
     expect(typeof publicApi.ck.endsWithIgnoreCase).toBe("function");
     expect("escapeLike" in publicApi.ck).toBe(false);
     expect("sql" in publicApi.ck).toBe(false);
-    expect(typeof publicApi.csql).toBe("function");
-    expect(typeof publicApi.csql.identifier).toBe("function");
-    expect(typeof publicApi.csql.join).toBe("function");
-    expect("raw" in publicApi.csql).toBe(false);
+    expect(typeof publicApi.ckSql).toBe("function");
+    expect(typeof publicApi.ckSql.identifier).toBe("function");
+    expect(typeof publicApi.ckSql.join).toBe("function");
+    expect("raw" in publicApi.ckSql).toBe(false);
     expect(typeof publicApi.fn.table.call).toBe("function");
   });
 
-  it("rejects direct csql function calls at runtime", function testCsqlDirectCallGuard() {
-    expect(() => (publicApi.csql as unknown as (query: string) => unknown)("select 1")).toThrow(
-      '[ck-orm] csql only supports tagged-template usage. Use csql`...` instead of csql("...").',
+  it("rejects direct ckSql function calls at runtime", function testCkSqlDirectCallGuard() {
+    expect(() => (publicApi.ckSql as unknown as (query: string) => unknown)("select 1")).toThrow(
+      '[ck-orm] ckSql only supports tagged-template usage. Use ckSql`...` instead of ckSql("...").',
     );
   });
 
-  it("keeps public csql helpers callable from the package root", function testPublicCsqlHelpers() {
-    const built = compileSql(publicApi.csql.join([publicApi.csql.identifier("events"), publicApi.csql`final`], " "));
+  it("keeps public ckSql helpers callable from the package root", function testPublicCkSqlHelpers() {
+    const built = compileSql(publicApi.ckSql.join([publicApi.ckSql.identifier("events"), publicApi.ckSql`final`], " "));
 
     expect(built.query).toBe("`events` final");
   });

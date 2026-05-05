@@ -1,9 +1,9 @@
 import { expect, it } from "bun:test";
-import { csql } from "./ck-orm";
+import { ckSql } from "./ck-orm";
 import { createE2EDb } from "./shared";
 import { describeE2E, expectClickhouseError } from "./test-helpers";
 
-const sleepQuery = csql`SELECT sleep(1) AS slept, 1 AS value`;
+const sleepQuery = ckSql`SELECT sleep(1) AS slept, 1 AS value`;
 
 const createId = (prefix: string) => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -115,7 +115,7 @@ describeE2E("ck-orm e2e session concurrency", function describeSessionConcurrenc
   it("holds the same-session slot until a raw stream is explicitly closed", async function testRawStreamHoldsSessionSlot() {
     const db = createE2EDb();
     const sharedSessionId = createId("stream_lock_session");
-    const stream = db.stream(csql`SELECT number AS value FROM numbers(1000)`, {
+    const stream = db.stream(ckSql`SELECT number AS value FROM numbers(1000)`, {
       query_id: createId("stream_lock_reader"),
       session_id: sharedSessionId,
     });
@@ -127,7 +127,7 @@ describeE2E("ck-orm e2e session concurrency", function describeSessionConcurrenc
 
     let followUpCompleted = false;
     const followUp = db
-      .execute(csql`SELECT 1 AS value`, {
+      .execute(ckSql`SELECT 1 AS value`, {
         query_id: createId("stream_lock_follow_up"),
         session_id: sharedSessionId,
       })

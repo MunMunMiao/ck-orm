@@ -272,7 +272,7 @@ const assertValidUserQueryParams = (queryParams: Record<string, unknown> | undef
     if (key.startsWith(RESERVED_INTERNAL_QUERY_PARAM_PREFIX)) {
       throw createClientValidationError(
         `query_params key "${key}" uses reserved internal prefix "${RESERVED_INTERNAL_QUERY_PARAM_PREFIX}". ` +
-          "This prefix is reserved for csql`...` generated parameters.",
+          "This prefix is reserved for ckSql`...` generated parameters.",
       );
     }
   }

@@ -3,8 +3,8 @@ import {
   type ClickHouseEndpointOptions,
   type ClickHouseORMInstrumentation,
   type ClickHouseORMLogger,
+  ckSql,
   clickhouseClient,
-  csql,
 } from "./ck-orm";
 import { commerceSchema } from "./schema/commerce";
 
@@ -66,19 +66,19 @@ export const runEndpointAndRuntimeMethodsExample = async () => {
 
   await reportDb.ping();
 
-  const rows = await reportDb.execute(csql`SELECT 1 AS one`, {
+  const rows = await reportDb.execute(ckSql`SELECT 1 AS one`, {
     query_id: "runtime_execute_example",
   });
 
   const streamedRows: Record<string, unknown>[] = [];
-  for await (const row of reportDb.stream(csql`SELECT number FROM numbers(3)`, {
+  for await (const row of reportDb.stream(ckSql`SELECT number FROM numbers(3)`, {
     format: "JSONEachRow",
     query_id: "runtime_stream_example",
   })) {
     streamedRows.push(row);
   }
 
-  await reportDb.command(csql`SYSTEM FLUSH LOGS`, {
+  await reportDb.command(ckSql`SYSTEM FLUSH LOGS`, {
     query_id: "runtime_command_example",
   });
 

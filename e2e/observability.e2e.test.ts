@@ -6,7 +6,7 @@ import {
   type ClickHouseORMQueryEvent,
   type ClickHouseORMQueryResultEvent,
   ck,
-  csql,
+  ckSql,
   fn,
 } from "./ck-orm";
 import { createE2EDb, getE2EConfig, users } from "./shared";
@@ -136,13 +136,13 @@ describeE2E("ck-orm e2e observability", function describeObservability() {
       await db
         .select({
           id: users.id,
-          hasMatch: fn.arrayExists(csql`x -> x = ${1}`, [1, 2]).as("has_match"),
+          hasMatch: fn.arrayExists(ckSql`x -> x = ${1}`, [1, 2]).as("has_match"),
         })
         .from(users)
         .where(ck.eq(users.id, 1)),
     ).toEqual([{ id: 1, hasMatch: true }]);
 
-    await expect(db.execute(csql`SELECT * FROM missing_e2e_table`)).rejects.toThrow();
+    await expect(db.execute(ckSql`SELECT * FROM missing_e2e_table`)).rejects.toThrow();
 
     expect(lifecycle).toEqual([
       "custom_start_1",

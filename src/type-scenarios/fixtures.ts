@@ -1,4 +1,4 @@
-import { ckTable, ckType, csql } from "../index";
+import { ckSql, ckTable, ckType } from "../index";
 
 export const logicalMetrics = ckTable(
   "logical_metrics",
@@ -105,7 +105,7 @@ export const pets = ckTable("pets", {
 });
 
 export const tempMetricScope = ckTable("tmp_metric_scope", {
-  userId: ckType.string("user_id").default(csql`'anonymous'`),
+  userId: ckType.string("user_id").default(ckSql`'anonymous'`),
   groupId: ckType.int32("group_id"),
 });
 

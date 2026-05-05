@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { ck, ckTable, ckType, csql } from "./ck-orm";
+import { ck, ckSql, ckTable, ckType } from "./ck-orm";
 import { auditEvents, createE2EDb, createTempTableName } from "./shared";
 import { describeE2E, expectRejectsWithClickhouseError, waitForQueryLogException } from "./test-helpers";
 
@@ -8,7 +8,7 @@ describeE2E("ck-orm e2e error contracts", function describeErrorContracts() {
     const db = createE2EDb();
     const queryId = `e2e_syntax_error_${Date.now()}`;
 
-    await expectRejectsWithClickhouseError(db.execute(csql`SELCT 1`, { query_id: queryId }), {
+    await expectRejectsWithClickhouseError(db.execute(ckSql`SELCT 1`, { query_id: queryId }), {
       kind: "request_failed",
       executionState: "rejected",
       httpStatus: 400,
@@ -28,7 +28,7 @@ describeE2E("ck-orm e2e error contracts", function describeErrorContracts() {
     const queryId = `e2e_unknown_table_${Date.now()}`;
 
     await expectRejectsWithClickhouseError(
-      db.execute(csql`select count() as total from ${csql.identifier("missing_error_contract_table")}`, {
+      db.execute(ckSql`select count() as total from ${ckSql.identifier("missing_error_contract_table")}`, {
         query_id: queryId,
       }),
       {
@@ -62,7 +62,7 @@ describeE2E("ck-orm e2e error contracts", function describeErrorContracts() {
 
     const queryId = `e2e_expired_temp_${Date.now()}`;
     await expectRejectsWithClickhouseError(
-      db.execute(csql`select count() as total from ${csql.identifier(tempTable)}`, {
+      db.execute(ckSql`select count() as total from ${ckSql.identifier(tempTable)}`, {
         query_id: queryId,
         session_id: sessionId,
       }),
@@ -118,7 +118,7 @@ describeE2E("ck-orm e2e error contracts", function describeErrorContracts() {
     const queryId = `e2e_query_param_type_mismatch_${Date.now()}`;
 
     await expectRejectsWithClickhouseError(
-      db.execute(csql`select {bad_id:Int32} as bad_id`, {
+      db.execute(ckSql`select {bad_id:Int32} as bad_id`, {
         query_id: queryId,
         query_params: {
           bad_id: "not-an-int",
@@ -176,7 +176,7 @@ describeE2E("ck-orm e2e error contracts", function describeErrorContracts() {
         },
       );
 
-      expect(await session.execute(csql`select 1 as still_usable`)).toEqual([{ still_usable: 1 }]);
+      expect(await session.execute(ckSql`select 1 as still_usable`)).toEqual([{ still_usable: 1 }]);
     });
 
     const row = await waitForQueryLogException(queryId);

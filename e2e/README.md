@@ -80,11 +80,11 @@ The current E2E suite covers:
   - all column factories
   - `ckTable`
   - `ckAlias`
-  - aliased table interpolation in `` csql`...` ``
+  - aliased table interpolation in `` ckSql`...` ``
 - basic API
-  - `` csql`...` ``
-  - `csql.join`
-  - `csql.identifier`
+  - `` ckSql`...` ``
+  - `ckSql.join`
+  - `ckSql.identifier`
   - `ck.decodeRow`
   - `ck.createSessionId`
 - query and builder behavior
@@ -132,16 +132,16 @@ The current E2E suite covers:
     - `ck.like`, `ck.notLike`, `ck.ilike`, `ck.notIlike`
     - semantic helpers for literal `%`, `_`, and `\`
   - identifier contexts
-    - `csql.identifier('...')`
-    - `csql.identifier({ table, column, as })`
+    - `ckSql.identifier('...')`
+    - `ckSql.identifier({ table, column, as })`
     - `ckAlias(...)`
     - temporary table names
     - `fn.withParams(...)` function names
     - `fn.table.call(...)` function names
   - raw SQL contexts
-    - `` execute(csql`...`) ``
-    - `` command(csql`...`) ``
-    - stacked statements inside `` csql`...` ``
+    - `` execute(ckSql`...`) ``
+    - `` command(ckSql`...`) ``
+    - stacked statements inside `` ckSql`...` ``
     - no-mutation checks after rejected stacked-query attempts
   - transport and trusted-only boundaries
     - `query_params` key validation
@@ -150,7 +150,7 @@ The current E2E suite covers:
     - `query_id` / `session_id` validation
     - per-request `session_timeout` and continued-session `session_check`
     - `createTemporaryTableRaw(name, definition)` single-statement boundary
-    - `csql.join(...)` separator validation
+    - `ckSql.join(...)` separator validation
 - advanced ClickHouse SQL
   - scalar `WITH`
   - `ARRAY JOIN`

@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { ck, ckAlias, ckTable, ckType, csql, fn, type Predicate } from "./ck-orm";
+import { ck, ckAlias, ckSql, ckTable, ckType, fn, type Predicate } from "./ck-orm";
 import { createE2EDb, createTempTableName, pets, rewardEvents, users, webEvents } from "./shared";
 import { describeE2E } from "./test-helpers";
 
@@ -192,7 +192,7 @@ describeE2E("ck-orm e2e count and dynamic filters", function describeCountAndDyn
         .where(
           ck.eq(rewardLog._peerdb_is_deleted, 0),
           fn.arrayExists(
-            csql`(start_id, end_id) -> ${rewardLog.id} >= start_id AND ${rewardLog.id} <= end_id`,
+            ckSql`(start_id, end_id) -> ${rewardLog.id} >= start_id AND ${rewardLog.id} <= end_id`,
             tempScope.start_id_list,
             tempScope.end_id_list,
           ),
@@ -246,7 +246,7 @@ describeE2E("ck-orm e2e count and dynamic filters", function describeCountAndDyn
         .where(
           ck.eq(rewardLog._peerdb_is_deleted, 0),
           fn.arrayExists(
-            csql`(start_id, end_id) -> ${rewardLog.id} >= start_id AND ${rewardLog.id} <= end_id`,
+            ckSql`(start_id, end_id) -> ${rewardLog.id} >= start_id AND ${rewardLog.id} <= end_id`,
             tempScope.start_id_list,
             tempScope.end_id_list,
           ),

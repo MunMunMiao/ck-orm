@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { ck, ckAlias, csql, fn } from "./ck-orm";
+import { ck, ckAlias, ckSql, fn } from "./ck-orm";
 import { createE2EDb, rewardEvents, users, webEvents } from "./shared";
 import { describeE2E } from "./test-helpers";
 
@@ -236,7 +236,7 @@ describeE2E("ck-orm e2e builder analytics", function describeBuilderAnalytics() 
     ]);
   });
 
-  it("preserves Decimal precision via auto-cast aggregates, fn.toDecimal128 and csql.decimal", async function testDecimalPrecisionPaths() {
+  it("preserves Decimal precision via auto-cast aggregates, fn.toDecimal128 and ckSql.decimal", async function testDecimalPrecisionPaths() {
     const db = createE2EDb();
 
     const aggregateRows = await db
@@ -244,7 +244,7 @@ describeE2E("ck-orm e2e builder analytics", function describeBuilderAnalytics() 
         country: webEvents.country,
         autoSum: fn.sum(webEvents.revenue).as("auto_sum"),
         toDecimal: fn.toDecimal128(fn.sum(webEvents.revenue), 2).as("to_decimal"),
-        rawCast: csql.decimal(csql`sum(${webEvents.revenue})`, 18, 2).as("raw_cast"),
+        rawCast: ckSql.decimal(ckSql`sum(${webEvents.revenue})`, 18, 2).as("raw_cast"),
       })
       .from(webEvents)
       .groupBy(webEvents.country)

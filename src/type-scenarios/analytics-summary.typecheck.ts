@@ -1,4 +1,4 @@
-import { ck, ckAlias, clickhouseClient, csql, fn, type InferInsertModel, type InferSelectModel } from "../index";
+import { ck, ckAlias, ckSql, clickhouseClient, fn, type InferInsertModel, type InferSelectModel } from "../index";
 import { activityMetricLog, logicalMetrics, typeScenarioSchema } from "./fixtures";
 import type { Equal, Expect, InferBuilderResult } from "./helpers";
 
@@ -45,7 +45,7 @@ const monthlyMetrics = db.$with("monthly_metrics").as(
       groupId: metricLog.groupId,
       itemId: metricLog.itemId,
       metricValue: metricLog.metricValue,
-      activeFlag: ck.expr<number>(csql`1`, { decoder: (value) => Number(value), sqlType: "UInt8" }).as("active_flag"),
+      activeFlag: ck.expr<number>(ckSql`1`, { decoder: (value) => Number(value), sqlType: "UInt8" }).as("active_flag"),
     })
     .from(metricLog)
     .where(

@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test";
-import { type ClickHouseORMError, ck, csql, isClickHouseORMError, isDecodeError } from "./ck-orm";
+import { type ClickHouseORMError, ck, ckSql, isClickHouseORMError, isDecodeError } from "./ck-orm";
 import { createAdminDb, createE2EDb, datasetCounts, hasE2EEnv, users } from "./shared";
 
 export const describeE2E = hasE2EEnv ? describe : describe.skip;
@@ -153,9 +153,9 @@ export const waitForQueryLogException = async (
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
-    await adminDb.command(csql`SYSTEM FLUSH LOGS`);
+    await adminDb.command(ckSql`SYSTEM FLUSH LOGS`);
 
-    const rows = await adminDb.execute(csql`
+    const rows = await adminDb.execute(ckSql`
       select
         type,
         exception_code,
