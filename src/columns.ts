@@ -79,8 +79,6 @@ type ColumnFactoryConfig<TData, TSqlType extends string> = {
 
 const identity = <TData>(value: TData) => value;
 
-type ColumnName = string;
-type OptionalColumnName = ColumnName | undefined;
 type DecimalConfig = {
   readonly precision: number;
   readonly scale: number;
@@ -106,7 +104,7 @@ type SimpleAggregateFunctionConfig = {
   readonly value: AnyColumn;
 };
 
-const normalizeConfiguredName = (name: OptionalColumnName): OptionalColumnName => {
+const normalizeConfiguredName = (name: string | undefined): string | undefined => {
   if (name === undefined) {
     return undefined;
   }
@@ -488,17 +486,14 @@ const integerStringColumn = <TSqlType extends "Int64" | "UInt64">(
   sqlType: TSqlType,
   name?: string,
   unsigned?: boolean,
-) =>
-  createColumnFactory<string, TSqlType>(
-    withConfiguredName(
-      {
-        sqlType,
-        mapFromDriverValue: (value) => toIntegerString(value, { unsigned }),
-        mapToDriverValue: (value) => toIntegerString(value, { unsigned }),
-      },
-      name,
-    ),
+) => {
+  // The driver-side and JS-side encodings are identical for these widths;
+  // share one closure instead of allocating two.
+  const transform = (value: unknown): string => toIntegerString(value, { unsigned });
+  return createColumnFactory<string, TSqlType>(
+    withConfiguredName({ sqlType, mapFromDriverValue: transform, mapToDriverValue: transform }, name),
   );
+};
 
 const geometryColumn = <TData, TSqlType extends string>(sqlType: TSqlType, name?: string) =>
   createColumnFactory<TData, TSqlType>(
@@ -985,9 +980,12 @@ export function lowCardinality<TInner extends AnyColumn>(
   const { name, value: inner } = parseNamedValue<TInner>("lowCardinality", first, second);
   return createColumnFactory<InferData<TInner>, string>({
     configuredName: name,
+    // `LowCardinality(T)` is a storage hint — the wire shape and JS shape are
+    // identical to `T`, so forward the inner column's encoders directly
+    // instead of wrapping them in passthrough closures.
     sqlType: `LowCardinality(${inner.sqlType})`,
-    mapFromDriverValue: (value) => inner.mapFromDriverValue(value) as InferData<TInner>,
-    mapToDriverValue: (value) => inner.mapToDriverValue(value),
+    mapFromDriverValue: inner.mapFromDriverValue as Decoder<InferData<TInner>>,
+    mapToDriverValue: inner.mapToDriverValue as Encoder<InferData<TInner>>,
     decimalConfig: inner.decimalConfig,
   });
 }

@@ -620,41 +620,30 @@ const buildAuthHeader = (auth: ClickHouseAuth | undefined) => {
   return `Basic ${encoded}`;
 };
 
+// Migration hints for legacy `createClient` keys we no longer accept. The
+// optional `label` exists for keys whose error message reads more naturally
+// with a different noun ("json hooks" rather than just "json"). `log` keeps
+// its own check because its message form ("does not accept native…") differs.
+const DEPRECATED_CLIENT_CONFIG_KEYS: Record<string, { readonly label?: string; readonly hint: string }> = {
+  url: { hint: "use databaseUrl instead" },
+  access_token: { hint: "use databaseUrl or username/password instead" },
+  additional_headers: { hint: "use http_headers instead" },
+  json: { label: "json hooks", hint: "ck-orm uses built-in JSON handling internally" },
+  session_timeout: { hint: "pass it to a single request or runInSession() instead" },
+  session_check: { hint: "pass it to a single request or runInSession() instead" },
+};
+
 export const normalizeClientConfig = (config: ClickHouseFetchConfigOptions): NormalizedClientConfig => {
-  const rawLogConfig = (config as Record<string, unknown>).log;
-  if (rawLogConfig !== undefined) {
+  const rawConfig = config as Record<string, unknown>;
+  if (rawConfig.log !== undefined) {
     throw createClientValidationError(
       "clickhouseClient() does not accept native createClient({ log }) config; use logger and logLevel instead",
     );
   }
-  const rawConfig = config as Record<string, unknown>;
-  if ("url" in rawConfig) {
-    throw createClientValidationError("clickhouseClient() no longer accepts url; use databaseUrl instead");
-  }
-  if ("access_token" in rawConfig) {
-    throw createClientValidationError(
-      "clickhouseClient() no longer accepts access_token; use databaseUrl or username/password instead",
-    );
-  }
-  if ("additional_headers" in rawConfig) {
-    throw createClientValidationError(
-      "clickhouseClient() no longer accepts additional_headers; use http_headers instead",
-    );
-  }
-  if (rawConfig.json !== undefined) {
-    throw createClientValidationError(
-      "clickhouseClient() no longer accepts json hooks; ck-orm uses built-in JSON handling internally",
-    );
-  }
-  if (rawConfig.session_timeout !== undefined) {
-    throw createClientValidationError(
-      "clickhouseClient() no longer accepts session_timeout; pass it to a single request or runInSession() instead",
-    );
-  }
-  if (rawConfig.session_check !== undefined) {
-    throw createClientValidationError(
-      "clickhouseClient() no longer accepts session_check; pass it to a single request or runInSession() instead",
-    );
+  for (const [key, { label, hint }] of Object.entries(DEPRECATED_CLIENT_CONFIG_KEYS)) {
+    if (rawConfig[key] !== undefined) {
+      throw createClientValidationError(`clickhouseClient() no longer accepts ${label ?? key}; ${hint}`);
+    }
   }
   if (
     config.compression &&

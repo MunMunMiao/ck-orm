@@ -584,6 +584,56 @@ const defineFixedWidthDecimalFamily = <TName extends "toDecimal32" | "toDecimal6
   };
 
 /**
+ * Single-method factory for ClickHouse `fromUnixTimestamp64{Scale}()`
+ * builtins — `(value, timezone?) → DateTime64(N)`. Scale is fixed by the
+ * function name; the call signature is identical across all four scales.
+ */
+const defineFromUnixTimestamp64Helper = <TName extends string>(name: TName, sqlType: string) =>
+  ({
+    [name]: (expression: unknown, timezone?: unknown) =>
+      createFunctionExpression(name, withOptional([expression], timezone), { decoder: dateDecoder, sqlType }),
+  }) as {
+    readonly [K in TName]: (expression: unknown, timezone?: unknown) => Selection<Date>;
+  };
+
+/**
+ * Single-method factory for ClickHouse `toUnixTimestamp64{Scale}()` builtins.
+ * Always emits an Int64 (returned as string in JS) — same shape across all
+ * four scales.
+ */
+const defineToUnixTimestamp64Helper = <TName extends string>(name: TName) =>
+  ({
+    [name]: (expression: unknown) => createInt64Expression(name, [expression]),
+  }) as {
+    readonly [K in TName]: (expression: unknown) => Selection<string>;
+  };
+
+/**
+ * Single-method factory for ClickHouse `toInterval{Unit}()` builtins. The
+ * unit is implicit in the function name (no extra arg), so the body is a
+ * trivial wrapper around `createIntervalExpression`.
+ */
+const defineIntervalUnitHelper = <TName extends string>(name: TName) =>
+  ({
+    [name]: (value: unknown) => createIntervalExpression(name, value),
+  }) as {
+    readonly [K in TName]: (value: unknown) => Selection<unknown>;
+  };
+
+/**
+ * Single-method factory for ClickHouse `reinterpretAs{T}()` builtins. Each
+ * helper takes one expression and emits a `reinterpretAs{T}(expr)` call with
+ * the matching decoder/sqlType — one spread per builtin replaces a 3-line
+ * method body.
+ */
+const defineReinterpretHelper = <TName extends string, TData>(name: TName, decoder: Decoder<TData>, sqlType: string) =>
+  ({
+    [name]: (expression: unknown) => createTypedConversionExpression(name, [expression], decoder, sqlType),
+  }) as {
+    readonly [K in TName]: (expression: unknown) => Selection<TData>;
+  };
+
+/**
  * Single-method factory for ClickHouse `emptyArray{T}()` builtins. Each
  * helper takes no arguments and emits a typed empty `Array(...)` literal.
  * Spread the result into the scalar-function table to register one helper.
@@ -748,13 +798,15 @@ const createDateTime64BestEffortExpression = <TData>(
 };
 
 const createIntervalExpression = (name: string, value: unknown, unit?: unknown): Selection<unknown> => {
-  if (unit !== undefined) {
-    createIntervalUnitLiteral(unit);
-  }
+  // Validate-and-render the unit fragment once at builder time so the
+  // compile callback (re-)runs neither the validation nor the fragment
+  // construction. This also surfaces invalid units eagerly instead of
+  // deferring the error to compile time.
+  const unitFragment = unit === undefined ? undefined : createIntervalUnitLiteral(unit);
   return createExpression<unknown>({
     compile: (ctx) => {
       const compiledArgs =
-        unit === undefined ? [compileValue(value, ctx)] : [compileValue(value, ctx), createIntervalUnitLiteral(unit)];
+        unitFragment === undefined ? [compileValue(value, ctx)] : [compileValue(value, ctx), unitFragment];
       return sql`${sql.raw(name)}(${joinSqlParts(compiledArgs, ", ")})`;
     },
     decoder: passThroughDecoder,
@@ -1092,63 +1144,32 @@ const scalarFns = {
   reinterpret<TData = unknown>(expression: unknown, targetType: string): Selection<TData> {
     return createTypeStringFunctionExpression<TData>("reinterpret", expression, targetType);
   },
-  reinterpretAsDate(expression: unknown): Selection<Date> {
-    return createTypedConversionExpression("reinterpretAsDate", [expression], dateDecoder, "Date");
-  },
-  reinterpretAsDateTime(expression: unknown): Selection<Date> {
-    return createTypedConversionExpression("reinterpretAsDateTime", [expression], dateDecoder, "DateTime");
-  },
-  reinterpretAsFixedString(expression: unknown): Selection<string> {
-    return createTypedConversionExpression("reinterpretAsFixedString", [expression], stringDecoder, "FixedString");
-  },
-  reinterpretAsFloat32(expression: unknown): Selection<number> {
-    return createTypedConversionExpression("reinterpretAsFloat32", [expression], numberDecoder, "Float32");
-  },
-  reinterpretAsFloat64(expression: unknown): Selection<number> {
-    return createTypedConversionExpression("reinterpretAsFloat64", [expression], numberDecoder, "Float64");
-  },
-  reinterpretAsInt8(expression: unknown): Selection<number> {
-    return createTypedConversionExpression("reinterpretAsInt8", [expression], int8Decoder, "Int8");
-  },
-  reinterpretAsInt16(expression: unknown): Selection<number> {
-    return createTypedConversionExpression("reinterpretAsInt16", [expression], int16Decoder, "Int16");
-  },
-  reinterpretAsInt32(expression: unknown): Selection<number> {
-    return createTypedConversionExpression("reinterpretAsInt32", [expression], int32Decoder, "Int32");
-  },
-  reinterpretAsInt64(expression: unknown): Selection<string> {
-    return createTypedConversionExpression("reinterpretAsInt64", [expression], intStringDecoder, "Int64");
-  },
-  reinterpretAsInt128(expression: unknown): Selection<string> {
-    return createTypedConversionExpression("reinterpretAsInt128", [expression], intStringDecoder, "Int128");
-  },
-  reinterpretAsInt256(expression: unknown): Selection<string> {
-    return createTypedConversionExpression("reinterpretAsInt256", [expression], intStringDecoder, "Int256");
-  },
-  reinterpretAsString(expression: unknown): Selection<string> {
-    return createTypedConversionExpression("reinterpretAsString", [expression], stringDecoder, "String");
-  },
-  reinterpretAsUInt8(expression: unknown): Selection<number> {
-    return createTypedConversionExpression("reinterpretAsUInt8", [expression], uint8Decoder, "UInt8");
-  },
-  reinterpretAsUInt16(expression: unknown): Selection<number> {
-    return createTypedConversionExpression("reinterpretAsUInt16", [expression], uint16Decoder, "UInt16");
-  },
-  reinterpretAsUInt32(expression: unknown): Selection<number> {
-    return createTypedConversionExpression("reinterpretAsUInt32", [expression], uint32Decoder, "UInt32");
-  },
-  reinterpretAsUInt64(expression: unknown): Selection<string> {
-    return createTypedConversionExpression("reinterpretAsUInt64", [expression], uintStringDecoder, "UInt64");
-  },
-  reinterpretAsUInt128(expression: unknown): Selection<string> {
-    return createTypedConversionExpression("reinterpretAsUInt128", [expression], uintStringDecoder, "UInt128");
-  },
-  reinterpretAsUInt256(expression: unknown): Selection<string> {
-    return createTypedConversionExpression("reinterpretAsUInt256", [expression], uintStringDecoder, "UInt256");
-  },
-  reinterpretAsUUID(expression: unknown): Selection<string> {
-    return createTypedConversionExpression("reinterpretAsUUID", [expression], stringDecoder, "UUID");
-  },
+  // 19 `reinterpretAs{T}()` builtins fan out from `defineReinterpretHelper`
+  // — same shape as the conversion-family spread, one line per ClickHouse
+  // type instead of three.
+  ...defineReinterpretHelper<"reinterpretAsDate", Date>("reinterpretAsDate", dateDecoder, "Date"),
+  ...defineReinterpretHelper<"reinterpretAsDateTime", Date>("reinterpretAsDateTime", dateDecoder, "DateTime"),
+  ...defineReinterpretHelper<"reinterpretAsFixedString", string>(
+    "reinterpretAsFixedString",
+    stringDecoder,
+    "FixedString",
+  ),
+  ...defineReinterpretHelper<"reinterpretAsFloat32", number>("reinterpretAsFloat32", numberDecoder, "Float32"),
+  ...defineReinterpretHelper<"reinterpretAsFloat64", number>("reinterpretAsFloat64", numberDecoder, "Float64"),
+  ...defineReinterpretHelper<"reinterpretAsInt8", number>("reinterpretAsInt8", int8Decoder, "Int8"),
+  ...defineReinterpretHelper<"reinterpretAsInt16", number>("reinterpretAsInt16", int16Decoder, "Int16"),
+  ...defineReinterpretHelper<"reinterpretAsInt32", number>("reinterpretAsInt32", int32Decoder, "Int32"),
+  ...defineReinterpretHelper<"reinterpretAsInt64", string>("reinterpretAsInt64", intStringDecoder, "Int64"),
+  ...defineReinterpretHelper<"reinterpretAsInt128", string>("reinterpretAsInt128", intStringDecoder, "Int128"),
+  ...defineReinterpretHelper<"reinterpretAsInt256", string>("reinterpretAsInt256", intStringDecoder, "Int256"),
+  ...defineReinterpretHelper<"reinterpretAsString", string>("reinterpretAsString", stringDecoder, "String"),
+  ...defineReinterpretHelper<"reinterpretAsUInt8", number>("reinterpretAsUInt8", uint8Decoder, "UInt8"),
+  ...defineReinterpretHelper<"reinterpretAsUInt16", number>("reinterpretAsUInt16", uint16Decoder, "UInt16"),
+  ...defineReinterpretHelper<"reinterpretAsUInt32", number>("reinterpretAsUInt32", uint32Decoder, "UInt32"),
+  ...defineReinterpretHelper<"reinterpretAsUInt64", string>("reinterpretAsUInt64", uintStringDecoder, "UInt64"),
+  ...defineReinterpretHelper<"reinterpretAsUInt128", string>("reinterpretAsUInt128", uintStringDecoder, "UInt128"),
+  ...defineReinterpretHelper<"reinterpretAsUInt256", string>("reinterpretAsUInt256", uintStringDecoder, "UInt256"),
+  ...defineReinterpretHelper<"reinterpretAsUUID", string>("reinterpretAsUUID", stringDecoder, "UUID"),
   toString(expression: unknown, timezone?: unknown): Selection<string> {
     const args = timezone === undefined ? [expression] : [expression, timezone];
     return createFunctionExpression("toString", args, {
@@ -1281,30 +1302,10 @@ const scalarFns = {
     );
   },
   fromUnixTimestamp: createFromUnixTimestampExpression,
-  fromUnixTimestamp64Second(expression: unknown, timezone?: unknown): Selection<Date> {
-    return createFunctionExpression("fromUnixTimestamp64Second", withOptional([expression], timezone), {
-      decoder: dateDecoder,
-      sqlType: "DateTime64(0)",
-    });
-  },
-  fromUnixTimestamp64Milli(expression: unknown, timezone?: unknown): Selection<Date> {
-    return createFunctionExpression("fromUnixTimestamp64Milli", withOptional([expression], timezone), {
-      decoder: dateDecoder,
-      sqlType: "DateTime64(3)",
-    });
-  },
-  fromUnixTimestamp64Micro(expression: unknown, timezone?: unknown): Selection<Date> {
-    return createFunctionExpression("fromUnixTimestamp64Micro", withOptional([expression], timezone), {
-      decoder: dateDecoder,
-      sqlType: "DateTime64(6)",
-    });
-  },
-  fromUnixTimestamp64Nano(expression: unknown, timezone?: unknown): Selection<Date> {
-    return createFunctionExpression("fromUnixTimestamp64Nano", withOptional([expression], timezone), {
-      decoder: dateDecoder,
-      sqlType: "DateTime64(9)",
-    });
-  },
+  ...defineFromUnixTimestamp64Helper("fromUnixTimestamp64Second", "DateTime64(0)"),
+  ...defineFromUnixTimestamp64Helper("fromUnixTimestamp64Milli", "DateTime64(3)"),
+  ...defineFromUnixTimestamp64Helper("fromUnixTimestamp64Micro", "DateTime64(6)"),
+  ...defineFromUnixTimestamp64Helper("fromUnixTimestamp64Nano", "DateTime64(9)"),
   toStartOfMonth(expression: unknown): Selection<Date> {
     return createFunctionExpression("toStartOfMonth", [expression], {
       decoder: dateDecoder,
@@ -1314,18 +1315,10 @@ const scalarFns = {
   toUnixTimestamp(expression: unknown, timezone?: unknown): Selection<number> {
     return createUInt32Expression("toUnixTimestamp", withOptional([expression], timezone));
   },
-  toUnixTimestamp64Second(expression: unknown): Selection<string> {
-    return createInt64Expression("toUnixTimestamp64Second", [expression]);
-  },
-  toUnixTimestamp64Milli(expression: unknown): Selection<string> {
-    return createInt64Expression("toUnixTimestamp64Milli", [expression]);
-  },
-  toUnixTimestamp64Micro(expression: unknown): Selection<string> {
-    return createInt64Expression("toUnixTimestamp64Micro", [expression]);
-  },
-  toUnixTimestamp64Nano(expression: unknown): Selection<string> {
-    return createInt64Expression("toUnixTimestamp64Nano", [expression]);
-  },
+  ...defineToUnixTimestamp64Helper("toUnixTimestamp64Second"),
+  ...defineToUnixTimestamp64Helper("toUnixTimestamp64Milli"),
+  ...defineToUnixTimestamp64Helper("toUnixTimestamp64Micro"),
+  ...defineToUnixTimestamp64Helper("toUnixTimestamp64Nano"),
   toLowCardinality<TData = unknown>(expression: unknown): Selection<TData> {
     return createTypedConversionExpression<TData>(
       "toLowCardinality",
@@ -1360,39 +1353,19 @@ const scalarFns = {
   toInterval(value: unknown, unit: string): Selection<unknown> {
     return createIntervalExpression("toInterval", value, unit);
   },
-  toIntervalNanosecond(value: unknown): Selection<unknown> {
-    return createIntervalExpression("toIntervalNanosecond", value);
-  },
-  toIntervalMicrosecond(value: unknown): Selection<unknown> {
-    return createIntervalExpression("toIntervalMicrosecond", value);
-  },
-  toIntervalMillisecond(value: unknown): Selection<unknown> {
-    return createIntervalExpression("toIntervalMillisecond", value);
-  },
-  toIntervalSecond(value: unknown): Selection<unknown> {
-    return createIntervalExpression("toIntervalSecond", value);
-  },
-  toIntervalMinute(value: unknown): Selection<unknown> {
-    return createIntervalExpression("toIntervalMinute", value);
-  },
-  toIntervalHour(value: unknown): Selection<unknown> {
-    return createIntervalExpression("toIntervalHour", value);
-  },
-  toIntervalDay(value: unknown): Selection<unknown> {
-    return createIntervalExpression("toIntervalDay", value);
-  },
-  toIntervalWeek(value: unknown): Selection<unknown> {
-    return createIntervalExpression("toIntervalWeek", value);
-  },
-  toIntervalMonth(value: unknown): Selection<unknown> {
-    return createIntervalExpression("toIntervalMonth", value);
-  },
-  toIntervalQuarter(value: unknown): Selection<unknown> {
-    return createIntervalExpression("toIntervalQuarter", value);
-  },
-  toIntervalYear(value: unknown): Selection<unknown> {
-    return createIntervalExpression("toIntervalYear", value);
-  },
+  // The 11 unit-suffixed `toInterval{Unit}` builtins all delegate to the same
+  // `createIntervalExpression` and only differ in the function name.
+  ...defineIntervalUnitHelper("toIntervalNanosecond"),
+  ...defineIntervalUnitHelper("toIntervalMicrosecond"),
+  ...defineIntervalUnitHelper("toIntervalMillisecond"),
+  ...defineIntervalUnitHelper("toIntervalSecond"),
+  ...defineIntervalUnitHelper("toIntervalMinute"),
+  ...defineIntervalUnitHelper("toIntervalHour"),
+  ...defineIntervalUnitHelper("toIntervalDay"),
+  ...defineIntervalUnitHelper("toIntervalWeek"),
+  ...defineIntervalUnitHelper("toIntervalMonth"),
+  ...defineIntervalUnitHelper("toIntervalQuarter"),
+  ...defineIntervalUnitHelper("toIntervalYear"),
   toUUID(expression: unknown): Selection<string> {
     return createTypedConversionExpression("toUUID", [expression], stringDecoder, "UUID");
   },

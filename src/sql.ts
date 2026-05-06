@@ -2,6 +2,7 @@ import { toStringValue } from "./coercion";
 import { createClientValidationError } from "./errors";
 import { assertDecimalParams, formatDecimalSqlType } from "./internal/decimal";
 import { assertValidSqlIdentifier } from "./internal/identifier";
+import { isRecord } from "./internal/predicates";
 
 const sqlBrand = Symbol("clickhouseORMSqlBrand");
 const compileSqlSymbol = Symbol("clickhouseORMCompileSql");
@@ -230,6 +231,11 @@ const renderIdentifier = (value: IdentifierValue) => {
   return rendered;
 };
 
+// Default decoder for fragments that don't supply one — typed as the
+// fragment's TData via cast at the call site so we don't allocate one new
+// closure per fragment construction.
+const sqlFragmentPassthroughDecoder = (value: unknown): unknown => value;
+
 const createSqlFragment = <TData = unknown>(config: {
   chunks: readonly SqlChunk[];
   decoder?: (value: unknown) => TData;
@@ -238,7 +244,7 @@ const createSqlFragment = <TData = unknown>(config: {
   const fragment: CompilableSqlFragment<TData> = {
     [sqlBrand]: true,
     chunks: config.chunks,
-    decoder: (config.decoder ?? ((value: unknown) => value as TData)) as (value: unknown) => TData,
+    decoder: (config.decoder ?? sqlFragmentPassthroughDecoder) as (value: unknown) => TData,
     outputAlias: config.outputAlias,
     as<TAlias extends string>(alias: TAlias) {
       return createSqlFragment<TData>({
@@ -323,39 +329,24 @@ const isCompilableSqlFragment = (value: SQLFragment<unknown>): value is Compilab
 };
 
 export const isSqlFragment = (value: unknown): value is SQLFragment<unknown> => {
-  return typeof value === "object" && value !== null && sqlBrand in value;
+  return isRecord(value) && sqlBrand in value;
 };
 
-const isCompilableExpression = (value: unknown): value is CompilableExpression => {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    trustedExpressionObjects.has(value) &&
-    "compile" in value &&
-    typeof value.compile === "function"
-  );
-};
+const isCompilableExpression = (value: unknown): value is CompilableExpression =>
+  isRecord(value) && trustedExpressionObjects.has(value) && "compile" in value && typeof value.compile === "function";
 
-const isCompilableSource = (value: unknown): value is CompilableSource => {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    trustedSourceObjects.has(value) &&
-    "compileSource" in value &&
-    typeof value.compileSource === "function"
-  );
-};
+const isCompilableSource = (value: unknown): value is CompilableSource =>
+  isRecord(value) &&
+  trustedSourceObjects.has(value) &&
+  "compileSource" in value &&
+  typeof value.compileSource === "function";
 
-const isTableLike = (value: unknown): value is TableLike => {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "kind" in value &&
-    value.kind === "table" &&
-    "originalName" in value &&
-    typeof value.originalName === "string"
-  );
-};
+const isTableLike = (value: unknown): value is TableLike =>
+  isRecord(value) &&
+  "kind" in value &&
+  value.kind === "table" &&
+  "originalName" in value &&
+  typeof value.originalName === "string";
 
 const normalizeTemplateValue = (value: unknown): SQLFragment<unknown> => {
   if (isSqlFragment(value)) {

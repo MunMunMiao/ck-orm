@@ -145,10 +145,7 @@ export const createFetchClickHouseTransport = (config: NormalizedClientConfig): 
       auth,
     });
 
-    const { signal, cleanup } = createAbortController(config.request_timeout, mergedOptions.abort_signal);
-    const finalize = () => {
-      cleanup();
-    };
+    const { signal, cleanup: finalize } = createAbortController(config.request_timeout, mergedOptions.abort_signal);
 
     try {
       const init: RequestInit & { duplex?: "half" } = {

@@ -361,13 +361,33 @@ const renderInsertColumnIdentifier = (entry: InsertColumnEntry): SQLFragment => 
   return sql.identifier(entry.name);
 };
 
-const createInsertColumnEntries = (table: AnyTable): InsertColumnEntry[] => {
+type InsertTableMetadata = {
+  readonly entries: readonly InsertColumnEntry[];
+  readonly knownColumnKeys: ReadonlySet<string>;
+  readonly generatedColumnKeys: readonly string[];
+};
+
+// Tables are immutable, so the schema-derived insert metadata
+// (column entries + known schema keys + generated-column keys) only needs to
+// be computed once per table object. WeakMap-keyed cache means dropped tables
+// do not leak.
+const insertTableMetadataCache = new WeakMap<AnyTable, InsertTableMetadata>();
+
+const getInsertTableMetadata = (table: AnyTable): InsertTableMetadata => {
+  const cached = insertTableMetadataCache.get(table);
+  if (cached) return cached;
+
   const entries: InsertColumnEntry[] = [];
+  const knownColumnKeys = new Set<string>();
+  const generatedColumnKeys: string[] = [];
+
   for (const [schemaKey, column] of Object.entries(table.columns)) {
+    knownColumnKeys.add(schemaKey);
+    const key = column.key ?? schemaKey;
     if (column.ddl?.materialized !== undefined || column.ddl?.aliasExpr !== undefined) {
+      generatedColumnKeys.push(key);
       continue;
     }
-    const key = column.key ?? schemaKey;
     const name = column.name ?? schemaKey;
     if (column.nestedShape) {
       for (const [fieldKey, fieldColumn] of Object.entries(column.nestedShape)) {
@@ -390,8 +410,14 @@ const createInsertColumnEntries = (table: AnyTable): InsertColumnEntry[] => {
       sqlType: column.sqlType,
     });
   }
-  return entries;
+
+  const metadata: InsertTableMetadata = { entries, knownColumnKeys, generatedColumnKeys };
+  insertTableMetadataCache.set(table, metadata);
+  return metadata;
 };
+
+const createInsertColumnEntries = (table: AnyTable): readonly InsertColumnEntry[] =>
+  getInsertTableMetadata(table).entries;
 
 const compileNestedInsertFieldValue = (
   row: Record<string, unknown>,
@@ -449,22 +475,22 @@ const normalizeInsertRows = <TTable extends AnyTable>(
     );
   }
 
-  const knownColumns = new Set(Object.keys(table.columns));
-  const generatedColumns = Object.entries(table.columns)
-    .filter(([, column]) => column.ddl?.materialized !== undefined || column.ddl?.aliasExpr !== undefined)
-    .map(([schemaKey, column]) => column.key ?? schemaKey);
+  // Both validations consult the same per-table metadata that
+  // `createInsertColumnEntries` already builds — share the cached copy
+  // instead of rebuilding two parallel sets/arrays per `.values()` call.
+  const { knownColumnKeys, generatedColumnKeys } = getInsertTableMetadata(table);
   for (const [index, row] of rows.entries()) {
     if (!isPlainObject(row)) {
       throw createClientValidationError(`insert().values() row ${index + 1} must be an object`);
     }
 
-    const unknownColumns = Object.keys(row).filter((columnName) => !knownColumns.has(columnName));
+    const unknownColumns = Object.keys(row).filter((columnName) => !knownColumnKeys.has(columnName));
     if (unknownColumns.length > 0) {
       throw createClientValidationError(
         `insert().values() row ${index + 1} contains unknown columns: ${unknownColumns.join(", ")}`,
       );
     }
-    const explicitGeneratedColumns = generatedColumns.filter((columnName) =>
+    const explicitGeneratedColumns = generatedColumnKeys.filter((columnName) =>
       Object.hasOwn(row as Record<string, unknown>, columnName),
     );
     if (explicitGeneratedColumns.length > 0) {
@@ -1828,9 +1854,12 @@ const HELPER_NAME_BY_OPERATOR: Readonly<Record<string, string>> = {
 const createBinaryExpression = (operator: string, left: unknown, right: unknown): Predicate => {
   assertPredicateValue(right, HELPER_NAME_BY_OPERATOR[operator] ?? operator);
   const leftExpression = ensureComparableExpression(left);
+  // The operator string is closed over and never changes — build the SQL
+  // fragment once at builder time and reuse it every compile.
+  const operatorFragment = sql.raw(` ${operator} `);
   return createExpression<boolean>({
     compile: (ctx) =>
-      sql`${leftExpression.compile(ctx)}${sql.raw(` ${operator} `)}${compilePredicateValue(
+      sql`${leftExpression.compile(ctx)}${operatorFragment}${compilePredicateValue(
         left,
         right,
         ctx,
@@ -2028,56 +2057,31 @@ export const has = (haystack: unknown, needle: unknown): Predicate => {
   });
 };
 
-export const hasAll = (set: unknown, subset: unknown): Predicate => {
-  assertPredicateValue(subset, "hasAll");
-  if (Array.isArray(subset)) {
-    assertPredicateValueArray(subset, "hasAll");
-  }
-  const setExpression = ensureComparableExpression(set);
-  return createExpression<boolean>({
-    compile: (ctx) =>
-      compilePredicateFunction("hasAll", [
-        setExpression.compile(ctx),
-        compileArrayFunctionArg(set, subset, ctx, setExpression, "hasAll"),
-      ]),
-    decoder: booleanCastDecoder,
-    sqlType: "Bool",
-  });
-};
+// `hasAll` / `hasAny` / `hasSubstr` differ only in the ClickHouse function
+// name they emit — same validation, same encoding path. One factory keeps
+// future array-containment helpers (e.g. `hasAnyExcept`) cheap to add.
+const makeArrayContainmentPredicate =
+  (helperName: string) =>
+  (left: unknown, right: unknown): Predicate => {
+    assertPredicateValue(right, helperName);
+    if (Array.isArray(right)) {
+      assertPredicateValueArray(right, helperName);
+    }
+    const leftExpression = ensureComparableExpression(left);
+    return createExpression<boolean>({
+      compile: (ctx) =>
+        compilePredicateFunction(helperName, [
+          leftExpression.compile(ctx),
+          compileArrayFunctionArg(left, right, ctx, leftExpression, helperName),
+        ]),
+      decoder: booleanCastDecoder,
+      sqlType: "Bool",
+    });
+  };
 
-export const hasAny = (arrX: unknown, arrY: unknown): Predicate => {
-  assertPredicateValue(arrY, "hasAny");
-  if (Array.isArray(arrY)) {
-    assertPredicateValueArray(arrY, "hasAny");
-  }
-  const arrXExpression = ensureComparableExpression(arrX);
-  return createExpression<boolean>({
-    compile: (ctx) =>
-      compilePredicateFunction("hasAny", [
-        arrXExpression.compile(ctx),
-        compileArrayFunctionArg(arrX, arrY, ctx, arrXExpression, "hasAny"),
-      ]),
-    decoder: booleanCastDecoder,
-    sqlType: "Bool",
-  });
-};
-
-export const hasSubstr = (array: unknown, needle: unknown): Predicate => {
-  assertPredicateValue(needle, "hasSubstr");
-  if (Array.isArray(needle)) {
-    assertPredicateValueArray(needle, "hasSubstr");
-  }
-  const arrayExpression = ensureComparableExpression(array);
-  return createExpression<boolean>({
-    compile: (ctx) =>
-      compilePredicateFunction("hasSubstr", [
-        arrayExpression.compile(ctx),
-        compileArrayFunctionArg(array, needle, ctx, arrayExpression, "hasSubstr"),
-      ]),
-    decoder: booleanCastDecoder,
-    sqlType: "Bool",
-  });
-};
+export const hasAll = makeArrayContainmentPredicate("hasAll");
+export const hasAny = makeArrayContainmentPredicate("hasAny");
+export const hasSubstr = makeArrayContainmentPredicate("hasSubstr");
 
 const createInExpression = (
   negate: boolean,
