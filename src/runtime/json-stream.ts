@@ -12,6 +12,11 @@ export type JsonHandling = {
   readonly stringify: (value: unknown) => string;
 };
 
+// `TextEncoder` is stateless and safe to share. Each `createLineStream` call
+// keeps its own `TextDecoder` because the streaming decoder buffers partial
+// multi-byte sequences across `decode(chunk, { stream: true })` calls.
+const sharedUtf8Encoder = new TextEncoder();
+
 export type JsonEachRowRequestBody = {
   body: string | ReadableStream<Uint8Array>;
   duplex?: "half";
@@ -167,9 +172,14 @@ export const createLineStream = async function* (response: Response) {
     return;
   }
 
+  // Append-and-mark via `start` index instead of `buffer = buffer.slice(...)` per
+  // line, then occasionally compact. The naive `+= chunk; = slice()` form falls
+  // off V8's fast path for cons-strings on multi-MB JSONEachRow responses.
+  const compactionThreshold = 64 * 1024;
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let start = 0;
 
   try {
     while (true) {
@@ -178,18 +188,22 @@ export const createLineStream = async function* (response: Response) {
         break;
       }
       buffer += decoder.decode(value, { stream: true });
-      let newlineIndex = buffer.indexOf("\n");
+      let newlineIndex = buffer.indexOf("\n", start);
       while (newlineIndex >= 0) {
-        const line = buffer.slice(0, newlineIndex).trim();
-        buffer = buffer.slice(newlineIndex + 1);
+        const line = buffer.slice(start, newlineIndex).trim();
+        start = newlineIndex + 1;
         if (line) {
           yield line;
         }
-        newlineIndex = buffer.indexOf("\n");
+        newlineIndex = buffer.indexOf("\n", start);
+      }
+      if (start >= compactionThreshold) {
+        buffer = buffer.slice(start);
+        start = 0;
       }
     }
 
-    const finalLine = buffer.trim();
+    const finalLine = buffer.slice(start).trim();
     if (finalLine) {
       yield finalLine;
     }
@@ -219,7 +233,6 @@ export const createJsonEachRowBody = (
     );
   }
 
-  const encoder = new TextEncoder();
   const iterator = (rows as AsyncIterable<Record<string, unknown>>)[Symbol.asyncIterator]();
   let closing: Promise<unknown> | undefined;
 
@@ -238,7 +251,7 @@ export const createJsonEachRowBody = (
             controller.close();
             return;
           }
-          controller.enqueue(encoder.encode(`${json.stringify(result.value)}\n`));
+          controller.enqueue(sharedUtf8Encoder.encode(`${json.stringify(result.value)}\n`));
         } catch (error) {
           try {
             await closeIterator();

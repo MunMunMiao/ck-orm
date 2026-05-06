@@ -1,7 +1,7 @@
 import { createClientValidationError, normalizeTransportError } from "../errors";
 import type { ClickHouseORMQueryStatistics } from "../observability";
 import { createUuid } from "../platform";
-import { compileSql, type QueryParamTypes, sql } from "../sql";
+import { type QueryParamTypes, quoteIdentifier } from "../sql";
 import { createAbortController } from "./abort";
 import {
   assertValidQueryId,
@@ -280,7 +280,7 @@ export const createFetchClickHouseTransport = (config: NormalizedClientConfig): 
       options?: ClickHouseBaseQueryOptions,
     ) {
       const requestBody = await createJsonEachRowBody(rows, config.json);
-      const tableIdentifier = compileSql(sql.identifier({ table: tableName })).query;
+      const tableIdentifier = quoteIdentifier({ table: tableName });
       const statement = `INSERT INTO ${tableIdentifier} FORMAT JSONEachRow`;
       const request = await send({
         statement,

@@ -145,15 +145,17 @@ const removeCharactersAtPositions = (input: string, positions: readonly number[]
     return input;
   }
 
-  const positionSet = new Set(positions);
-  let next = "";
-  for (let index = 0; index < input.length; index += 1) {
-    if (positionSet.has(index)) {
-      continue;
-    }
-    next += input[index];
+  // `positions` is already in ascending order (produced left-to-right by the
+  // top-level scanner), so this is a single-pass slice/join — no Set lookup,
+  // no `next += ch` cons-string degradation on long SQL.
+  const parts: string[] = [];
+  let cursor = 0;
+  for (const position of positions) {
+    parts.push(input.slice(cursor, position));
+    cursor = position + 1;
   }
-  return next;
+  parts.push(input.slice(cursor));
+  return parts.join("");
 };
 
 export const normalizeSingleStatementSql = (statement: string, inlineSemicolonMessage: string) => {

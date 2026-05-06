@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import {
+  _resetStreamRequestBodyModeForTest,
   base64EncodeUtf8,
   canSetUserAgentHeader,
   createUuid,
@@ -30,6 +31,7 @@ afterEach(function restorePlatformGlobals() {
   setGlobal("Request", originalRequest);
   setGlobal("ReadableStream", originalReadableStream);
   setGlobal("Uint8Array", originalUint8Array);
+  _resetStreamRequestBodyModeForTest();
 });
 
 describe("ck-orm platform", function describeClickHouseORMPlatform() {
@@ -75,6 +77,7 @@ describe("ck-orm platform", function describeClickHouseORMPlatform() {
 
   it("covers Request-based capability probes", function testRequestProbes() {
     setGlobal("Request", undefined);
+    _resetStreamRequestBodyModeForTest();
     expect(canSetUserAgentHeader()).toBe(false);
     expect(resolveStreamRequestBodyMode()).toBe("buffered");
 
@@ -85,6 +88,7 @@ describe("ck-orm platform", function describeClickHouseORMPlatform() {
     }
 
     setGlobal("Request", ThrowingRequest);
+    _resetStreamRequestBodyModeForTest();
     expect(canSetUserAgentHeader()).toBe(false);
     expect(resolveStreamRequestBodyMode()).toBe("buffered");
 
@@ -97,6 +101,7 @@ describe("ck-orm platform", function describeClickHouseORMPlatform() {
     }
 
     setGlobal("Request", PlainRequest);
+    _resetStreamRequestBodyModeForTest();
     expect(canSetUserAgentHeader()).toBe(true);
     expect(resolveStreamRequestBodyMode()).toBe("plain");
 
@@ -109,6 +114,7 @@ describe("ck-orm platform", function describeClickHouseORMPlatform() {
     }
 
     setGlobal("Request", DuplexOnlyRequest);
+    _resetStreamRequestBodyModeForTest();
     expect(resolveStreamRequestBodyMode()).toBe("duplex-half");
   });
 });

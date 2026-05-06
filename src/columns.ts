@@ -799,11 +799,16 @@ export function enum16<TData extends string = string>(
     mapFromDriverValue: toStringValue as Decoder<TData>,
   });
 }
+// ClickHouse rejects `Nullable(Array|Map|Tuple)` outright — the rule is
+// stable, so cache the regex at module load instead of paying the literal
+// cost on every `nullable(...)` factory call.
+const NULLABLE_FORBIDDEN_INNER_PATTERN = /^(Array|Map|Tuple)\(/;
+
 export function nullable<TInner extends AnyColumn>(inner: TInner): Nullable<TInner>;
 export function nullable<TInner extends AnyColumn>(name: string, inner: TInner): Nullable<TInner>;
 export function nullable<TInner extends AnyColumn>(first: string | TInner, second?: TInner): Nullable<TInner> {
   const { name, value: inner } = parseNamedValue<TInner>("nullable", first, second);
-  if (/^(Array|Map|Tuple)\(/.test(inner.sqlType)) {
+  if (NULLABLE_FORBIDDEN_INNER_PATTERN.test(inner.sqlType)) {
     throw createClientValidationError(
       `Nullable(${inner.sqlType}) is not supported by ClickHouse; wrap Nullable around fields inside the composite type instead`,
     );
@@ -986,14 +991,19 @@ export function nested<TShape extends Record<string, AnyColumn>>(
   second?: TShape,
 ): NestedColumn<TShape> {
   const { name, value: shape } = parseNamedValue<TShape>("nested", first, second);
+  // `shape` is fixed for the lifetime of this column. Captures the entries
+  // here so the encode/decode hot loops never re-walk `Object.entries(shape)`
+  // per row — for a wide nested column over millions of rows that is the
+  // difference between O(rows × fields) entries calls and a single one.
+  const shapeEntries = Object.entries(shape) as [string, AnyColumn][];
+  for (const [key] of shapeEntries) {
+    assertValidSqlIdentifier(key, "nested column");
+  }
+  const sqlType = `Nested(${shapeEntries.map(([key, value]) => `${key} ${value.sqlType}`).join(", ")})`;
+
   return createColumnFactory<{ [K in keyof TShape]: InferData<TShape[K]> }[], string>({
     configuredName: name,
-    sqlType: `Nested(${Object.entries(shape)
-      .map(([key, value]) => {
-        assertValidSqlIdentifier(key, "nested column");
-        return `${key} ${value.sqlType}`;
-      })
-      .join(", ")})`,
+    sqlType,
     nestedShape: shape,
     mapFromDriverValue: (value) => {
       if (!Array.isArray(value)) {
@@ -1005,17 +1015,16 @@ export function nested<TShape extends Record<string, AnyColumn>>(
             path: `[${index}]`,
           });
         }
-        const record = {} as { [K in keyof TShape]: InferData<TShape[K]> };
-        for (const [key, column] of Object.entries(shape)) {
+        const itemRecord = item as Record<string, unknown>;
+        const record = {} as Record<string, unknown>;
+        for (const [key, column] of shapeEntries) {
           try {
-            (record as Record<string, unknown>)[key] = (column as AnyColumn).mapFromDriverValue(
-              (item as Record<string, unknown>)[key],
-            );
+            record[key] = column.mapFromDriverValue(itemRecord[key]);
           } catch (error) {
-            throw rethrowDecodeWithPath(error, `[${index}].${key}`, (item as Record<string, unknown>)[key]);
+            throw rethrowDecodeWithPath(error, `[${index}].${key}`, itemRecord[key]);
           }
         }
-        return record;
+        return record as { [K in keyof TShape]: InferData<TShape[K]> };
       });
     },
     mapToDriverValue: (value) =>
@@ -1023,12 +1032,13 @@ export function nested<TShape extends Record<string, AnyColumn>>(
         if (typeof item !== "object" || item === null) {
           throw createClientValidationError(`Cannot convert nested item: ${String(item)}`);
         }
+        const itemRecord = item as Record<string, unknown>;
         const record: Record<string, unknown> = {};
-        for (const [key, column] of Object.entries(shape)) {
-          if (!Object.hasOwn(item as Record<string, unknown>, key)) {
+        for (const [key, column] of shapeEntries) {
+          if (!Object.hasOwn(itemRecord, key)) {
             throw createClientValidationError(`Nested item is missing required field "${key}"`);
           }
-          record[key] = (column as AnyColumn).mapToDriverValue((item as Record<string, unknown>)[key]);
+          record[key] = column.mapToDriverValue(itemRecord[key]);
         }
         return record;
       }),

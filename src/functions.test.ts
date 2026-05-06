@@ -308,6 +308,7 @@ const typeConversionFunctionNames = [
 
 const createContext = () => ({
   params: {} as Record<string, unknown>,
+  paramTypes: {} as Record<string, string>,
   nextParamIndex: 0,
 });
 

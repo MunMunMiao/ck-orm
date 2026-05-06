@@ -3,7 +3,7 @@ import { createClientValidationError } from "./errors";
 import { assertValidSqlIdentifier } from "./internal/identifier";
 import { normalizeSingleStatementSql } from "./runtime/sql-scan";
 import { type AnyTable, type ClickHouseTableEngine, mergeTreeTableEngines, type TableOptions } from "./schema";
-import { compileSql, type SQLFragment, sql } from "./sql";
+import { compileSql, quoteIdentifier, type SQLFragment } from "./sql";
 
 export type CreateTemporaryTableMode = "create" | "if_not_exists" | "or_replace";
 
@@ -21,7 +21,7 @@ const renderColumnName = (column: AnyColumn) => {
   if (!column.name) {
     throw createClientValidationError(`Expected bound column name for ${column.sqlType}`);
   }
-  return compileSql(sql.identifier(column.name)).query;
+  return quoteIdentifier(column.name);
 };
 
 const compileDdlFragment = (value: DdlFragmentInput | SQLFragment<unknown>, label: string) => {
@@ -186,7 +186,7 @@ const validateCreateTableTarget = (table: AnyTable) => {
   if (table.alias) {
     throw createClientValidationError("Schema DDL requires a base table, not an aliased table");
   }
-  compileSql(sql.identifier({ table: table.originalName })).query;
+  quoteIdentifier({ table: table.originalName });
 };
 
 const validateTemporaryTable = (table: AnyTable, engineName: string | undefined) => {
@@ -261,7 +261,7 @@ export const buildCreateTableStatement = (table: AnyTable) => {
   const { text: engineText, engineName } = resolveEngineClause(table.options.engine, table.options, false);
 
   return `
-CREATE TABLE ${compileSql(sql.identifier({ table: table.originalName })).query}
+CREATE TABLE ${quoteIdentifier({ table: table.originalName })}
 (
 ${renderColumns(table)}
 )
@@ -277,7 +277,7 @@ export const buildCreateTemporaryTableStatement = (table: AnyTable, mode: Create
   const existenceClause = mode === "if_not_exists" ? "IF NOT EXISTS " : "";
 
   return `
-CREATE ${modePrefix}TEMPORARY TABLE ${existenceClause}${compileSql(sql.identifier({ table: table.originalName })).query}
+CREATE ${modePrefix}TEMPORARY TABLE ${existenceClause}${quoteIdentifier({ table: table.originalName })}
 (
 ${renderColumns(table)}
 )
@@ -286,5 +286,5 @@ ${renderCreateTableClauses(table, engineText, engineName, true)}
 };
 
 export const buildDropTableStatement = (tableName: string) => {
-  return `DROP TABLE IF EXISTS ${compileSql(sql.identifier({ table: tableName })).query}`;
+  return `DROP TABLE IF EXISTS ${quoteIdentifier({ table: tableName })}`;
 };

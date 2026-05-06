@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { decimal, int32, string } from "./columns";
 import { isClickHouseORMError } from "./errors";
+import { _resetStreamRequestBodyModeForTest } from "./platform";
 import { expr } from "./query";
 import { clickhouseClient } from "./runtime";
 import { createClickHouseORMClient } from "./runtime/client";
@@ -78,6 +79,7 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
   afterEach(function teardownMocks() {
     globalThis.fetch = originalFetch;
     globalThis.Request = originalRequest;
+    _resetStreamRequestBodyModeForTest();
     mock.restore();
   });
 
@@ -459,6 +461,7 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
     }
 
     globalThis.Request = NoStreamUploadRequest as unknown as typeof Request;
+    _resetStreamRequestBodyModeForTest();
 
     const fetchSpy = mock(async () => {
       return new Response("", { status: 200 });
@@ -1372,6 +1375,7 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
     }
 
     globalThis.Request = StreamUploadRequest as unknown as typeof Request;
+    _resetStreamRequestBodyModeForTest();
     globalThis.fetch = mock(async (_input: string | URL | Request, _init?: RequestInit) => {
       return new Response("", { status: 200 });
     }) as unknown as typeof fetch;

@@ -8,7 +8,7 @@ import {
 } from "./coercion";
 import type { AnyColumn } from "./columns";
 import { createClientValidationError, createDecodeError } from "./errors";
-import { normalizeClickHouseTypeLiteral } from "./internal/clickhouse-type";
+import { normalizeClickHouseTypeLiteral, unwrapNullableLowCardinalityType } from "./internal/clickhouse-type";
 import {
   type CountMode,
   type CountModeResult,
@@ -80,27 +80,10 @@ const createParameterizedFunctionExpression = <TData>(
   });
 };
 
-const unwrapNullableOrLowCardinalitySqlType = (sqlType?: string): string | undefined => {
-  let current = sqlType?.trim();
-  while (current) {
-    const nullableMatch = current.match(/^Nullable\((.*)\)$/);
-    if (nullableMatch) {
-      current = nullableMatch[1].trim();
-      continue;
-    }
-    const lowCardinalityMatch = current.match(/^LowCardinality\((.*)\)$/);
-    if (lowCardinalityMatch) {
-      current = lowCardinalityMatch[1].trim();
-      continue;
-    }
-    return current;
-  }
-  return current;
-};
-
 const isFloatingSqlType = (sqlType?: string) => {
-  const unwrapped = unwrapNullableOrLowCardinalitySqlType(sqlType);
-  return unwrapped?.startsWith("Float") || unwrapped?.startsWith("BFloat");
+  if (!sqlType) return false;
+  const unwrapped = unwrapNullableLowCardinalityType(sqlType);
+  return unwrapped.startsWith("Float") || unwrapped.startsWith("BFloat");
 };
 
 const isSafeIntegerNumber = (value: unknown): value is number => {
@@ -122,12 +105,12 @@ const resolveCoalesceFallbackSqlType = (firstSqlType: string | undefined, fallba
     return undefined;
   }
 
-  const unwrapped = unwrapNullableOrLowCardinalitySqlType(firstSqlType);
-  if (!unwrapped) {
+  if (!firstSqlType) {
     return undefined;
   }
+  const unwrapped = unwrapNullableLowCardinalityType(firstSqlType);
 
-  if (isFloatingSqlType(unwrapped) && isSafeIntegerNumber(fallbackValue)) {
+  if ((unwrapped.startsWith("Float") || unwrapped.startsWith("BFloat")) && isSafeIntegerNumber(fallbackValue)) {
     return unwrapped;
   }
 
@@ -535,6 +518,106 @@ const createNullableTypedConversionExpression = <TData>(
     sqlType ? `Nullable(${sqlType})` : undefined,
   );
 };
+
+/**
+ * Build a 4-variant ClickHouse conversion family — `to${T}`,
+ * `to${T}OrDefault`, `to${T}OrNull`, `to${T}OrZero` — bound to a single
+ * `(decoder, sqlType)` pair. Spread the result into a scalar-function table to
+ * register all four variants in one line.
+ *
+ * The mapped-type return shape preserves precise call signatures on each
+ * generated method (so `fn.toInt8` still types as
+ * `(expression: unknown) => Selection<number>`), while the runtime body
+ * collapses 16 lines of template into one.
+ */
+const defineConversionFamily = <TName extends string, TData>(name: TName, decoder: Decoder<TData>, sqlType: string) =>
+  ({
+    [name]: (expression: unknown) => createTypedConversionExpression(name, [expression], decoder, sqlType),
+    [`${name}OrDefault`]: (expression: unknown, defaultValue?: unknown) =>
+      createTypedConversionExpression(`${name}OrDefault`, withOptional([expression], defaultValue), decoder, sqlType),
+    [`${name}OrNull`]: (expression: unknown) =>
+      createNullableTypedConversionExpression(`${name}OrNull`, [expression], decoder, sqlType),
+    [`${name}OrZero`]: (expression: unknown) =>
+      createTypedConversionExpression(`${name}OrZero`, [expression], decoder, sqlType),
+  }) as {
+    readonly [K in TName]: (expression: unknown) => Selection<TData>;
+  } & {
+    readonly [K in `${TName}OrDefault`]: (expression: unknown, defaultValue?: unknown) => Selection<TData>;
+  } & {
+    readonly [K in `${TName}OrNull`]: (expression: unknown) => Selection<TData | null>;
+  } & {
+    readonly [K in `${TName}OrZero`]: (expression: unknown) => Selection<TData>;
+  };
+
+/**
+ * 4-variant family for the `toDecimal{32,64,128,256}` precision-fixed decimal
+ * casts, which take an extra `scale` argument and route through
+ * {@link createFixedWidthDecimalCast}.
+ */
+const defineFixedWidthDecimalFamily = <TName extends "toDecimal32" | "toDecimal64" | "toDecimal128" | "toDecimal256">(
+  name: TName,
+) =>
+  ({
+    [name]: (expression: unknown, scale: number) =>
+      createFixedWidthDecimalCast(name as FixedWidthDecimalName, expression, scale),
+    [`${name}OrDefault`]: (expression: unknown, scale: number, defaultValue?: unknown) =>
+      createFixedWidthDecimalCast(`${name}OrDefault` as FixedWidthDecimalName, expression, scale, {
+        extraArgs: defaultValue === undefined ? [] : [defaultValue],
+      }),
+    [`${name}OrNull`]: (expression: unknown, scale: number) =>
+      createFixedWidthDecimalCast(`${name}OrNull` as FixedWidthDecimalName, expression, scale, {
+        decoder: nullableDecoder(stringDecoder),
+      }),
+    [`${name}OrZero`]: (expression: unknown, scale: number) =>
+      createFixedWidthDecimalCast(`${name}OrZero` as FixedWidthDecimalName, expression, scale),
+  }) as {
+    readonly [K in TName]: (expression: unknown, scale: number) => Selection<string>;
+  } & {
+    readonly [K in `${TName}OrDefault`]: (
+      expression: unknown,
+      scale: number,
+      defaultValue?: unknown,
+    ) => Selection<string>;
+  } & {
+    readonly [K in `${TName}OrNull`]: (expression: unknown, scale: number) => Selection<string | null>;
+  } & {
+    readonly [K in `${TName}OrZero`]: (expression: unknown, scale: number) => Selection<string>;
+  };
+
+/**
+ * Single-method factory for ClickHouse `emptyArray{T}()` builtins. Each
+ * helper takes no arguments and emits a typed empty `Array(...)` literal.
+ * Spread the result into the scalar-function table to register one helper.
+ */
+const defineEmptyArrayHelper = <TName extends string, TData>(name: TName, sqlType: string) =>
+  ({
+    [name]: () => createArrayExpression<TData>(name, [], sqlType),
+  }) as {
+    readonly [K in TName]: () => Selection<TData[]>;
+  };
+
+/**
+ * 3-variant sibling of {@link defineConversionFamily} for ClickHouse types
+ * that don't ship an `…OrDefault` variant (e.g. `BFloat16`, `Time`).
+ */
+const defineConversionFamilyNoDefault = <TName extends string, TData>(
+  name: TName,
+  decoder: Decoder<TData>,
+  sqlType: string,
+) =>
+  ({
+    [name]: (expression: unknown) => createTypedConversionExpression(name, [expression], decoder, sqlType),
+    [`${name}OrNull`]: (expression: unknown) =>
+      createNullableTypedConversionExpression(`${name}OrNull`, [expression], decoder, sqlType),
+    [`${name}OrZero`]: (expression: unknown) =>
+      createTypedConversionExpression(`${name}OrZero`, [expression], decoder, sqlType),
+  }) as {
+    readonly [K in TName]: (expression: unknown) => Selection<TData>;
+  } & {
+    readonly [K in `${TName}OrNull`]: (expression: unknown) => Selection<TData | null>;
+  } & {
+    readonly [K in `${TName}OrZero`]: (expression: unknown) => Selection<TData>;
+  };
 
 const createCastExpression = <TData>(
   expression: unknown,
@@ -1077,320 +1160,32 @@ const scalarFns = {
   toStringCutToZero(expression: unknown): Selection<string> {
     return createTypedConversionExpression("toStringCutToZero", [expression], stringDecoder, "String");
   },
-  toBFloat16(expression: unknown): Selection<number> {
-    return createTypedConversionExpression("toBFloat16", [expression], numberDecoder, "BFloat16");
-  },
-  toBFloat16OrNull(expression: unknown): Selection<number | null> {
-    return createNullableTypedConversionExpression("toBFloat16OrNull", [expression], numberDecoder, "BFloat16");
-  },
-  toBFloat16OrZero(expression: unknown): Selection<number> {
-    return createTypedConversionExpression("toBFloat16OrZero", [expression], numberDecoder, "BFloat16");
-  },
+  ...defineConversionFamilyNoDefault<"toBFloat16", number>("toBFloat16", numberDecoder, "BFloat16"),
   toBool(expression: unknown): Selection<boolean> {
     return createTypedConversionExpression("toBool", [expression], booleanDecoder, "Bool");
   },
-  toInt8(expression: unknown): Selection<number> {
-    return createTypedConversionExpression("toInt8", [expression], int8Decoder, "Int8");
-  },
-  toInt8OrDefault(expression: unknown, defaultValue?: unknown): Selection<number> {
-    return createTypedConversionExpression(
-      "toInt8OrDefault",
-      withOptional([expression], defaultValue),
-      int8Decoder,
-      "Int8",
-    );
-  },
-  toInt8OrNull(expression: unknown): Selection<number | null> {
-    return createNullableTypedConversionExpression("toInt8OrNull", [expression], int8Decoder, "Int8");
-  },
-  toInt8OrZero(expression: unknown): Selection<number> {
-    return createTypedConversionExpression("toInt8OrZero", [expression], int8Decoder, "Int8");
-  },
-  toInt16(expression: unknown): Selection<number> {
-    return createTypedConversionExpression("toInt16", [expression], int16Decoder, "Int16");
-  },
-  toInt16OrDefault(expression: unknown, defaultValue?: unknown): Selection<number> {
-    return createTypedConversionExpression(
-      "toInt16OrDefault",
-      withOptional([expression], defaultValue),
-      int16Decoder,
-      "Int16",
-    );
-  },
-  toInt16OrNull(expression: unknown): Selection<number | null> {
-    return createNullableTypedConversionExpression("toInt16OrNull", [expression], int16Decoder, "Int16");
-  },
-  toInt16OrZero(expression: unknown): Selection<number> {
-    return createTypedConversionExpression("toInt16OrZero", [expression], int16Decoder, "Int16");
-  },
-  toInt32(expression: unknown): Selection<number> {
-    return createTypedConversionExpression("toInt32", [expression], int32Decoder, "Int32");
-  },
-  toInt32OrDefault(expression: unknown, defaultValue?: unknown): Selection<number> {
-    return createTypedConversionExpression(
-      "toInt32OrDefault",
-      withOptional([expression], defaultValue),
-      int32Decoder,
-      "Int32",
-    );
-  },
-  toInt32OrNull(expression: unknown): Selection<number | null> {
-    return createNullableTypedConversionExpression("toInt32OrNull", [expression], int32Decoder, "Int32");
-  },
-  toInt32OrZero(expression: unknown): Selection<number> {
-    return createTypedConversionExpression("toInt32OrZero", [expression], int32Decoder, "Int32");
-  },
-  toInt64(expression: unknown): Selection<string> {
-    return createTypedConversionExpression("toInt64", [expression], intStringDecoder, "Int64");
-  },
-  toInt64OrDefault(expression: unknown, defaultValue?: unknown): Selection<string> {
-    return createTypedConversionExpression(
-      "toInt64OrDefault",
-      withOptional([expression], defaultValue),
-      intStringDecoder,
-      "Int64",
-    );
-  },
-  toInt64OrNull(expression: unknown): Selection<string | null> {
-    return createNullableTypedConversionExpression("toInt64OrNull", [expression], intStringDecoder, "Int64");
-  },
-  toInt64OrZero(expression: unknown): Selection<string> {
-    return createTypedConversionExpression("toInt64OrZero", [expression], intStringDecoder, "Int64");
-  },
-  toInt128(expression: unknown): Selection<string> {
-    return createTypedConversionExpression("toInt128", [expression], intStringDecoder, "Int128");
-  },
-  toInt128OrDefault(expression: unknown, defaultValue?: unknown): Selection<string> {
-    return createTypedConversionExpression(
-      "toInt128OrDefault",
-      withOptional([expression], defaultValue),
-      intStringDecoder,
-      "Int128",
-    );
-  },
-  toInt128OrNull(expression: unknown): Selection<string | null> {
-    return createNullableTypedConversionExpression("toInt128OrNull", [expression], intStringDecoder, "Int128");
-  },
-  toInt128OrZero(expression: unknown): Selection<string> {
-    return createTypedConversionExpression("toInt128OrZero", [expression], intStringDecoder, "Int128");
-  },
-  toInt256(expression: unknown): Selection<string> {
-    return createTypedConversionExpression("toInt256", [expression], intStringDecoder, "Int256");
-  },
-  toInt256OrDefault(expression: unknown, defaultValue?: unknown): Selection<string> {
-    return createTypedConversionExpression(
-      "toInt256OrDefault",
-      withOptional([expression], defaultValue),
-      intStringDecoder,
-      "Int256",
-    );
-  },
-  toInt256OrNull(expression: unknown): Selection<string | null> {
-    return createNullableTypedConversionExpression("toInt256OrNull", [expression], intStringDecoder, "Int256");
-  },
-  toInt256OrZero(expression: unknown): Selection<string> {
-    return createTypedConversionExpression("toInt256OrZero", [expression], intStringDecoder, "Int256");
-  },
-  toUInt8(expression: unknown): Selection<number> {
-    return createTypedConversionExpression("toUInt8", [expression], uint8Decoder, "UInt8");
-  },
-  toUInt8OrDefault(expression: unknown, defaultValue?: unknown): Selection<number> {
-    return createTypedConversionExpression(
-      "toUInt8OrDefault",
-      withOptional([expression], defaultValue),
-      uint8Decoder,
-      "UInt8",
-    );
-  },
-  toUInt8OrNull(expression: unknown): Selection<number | null> {
-    return createNullableTypedConversionExpression("toUInt8OrNull", [expression], uint8Decoder, "UInt8");
-  },
-  toUInt8OrZero(expression: unknown): Selection<number> {
-    return createTypedConversionExpression("toUInt8OrZero", [expression], uint8Decoder, "UInt8");
-  },
-  toUInt16(expression: unknown): Selection<number> {
-    return createTypedConversionExpression("toUInt16", [expression], uint16Decoder, "UInt16");
-  },
-  toUInt16OrDefault(expression: unknown, defaultValue?: unknown): Selection<number> {
-    return createTypedConversionExpression(
-      "toUInt16OrDefault",
-      withOptional([expression], defaultValue),
-      uint16Decoder,
-      "UInt16",
-    );
-  },
-  toUInt16OrNull(expression: unknown): Selection<number | null> {
-    return createNullableTypedConversionExpression("toUInt16OrNull", [expression], uint16Decoder, "UInt16");
-  },
-  toUInt16OrZero(expression: unknown): Selection<number> {
-    return createTypedConversionExpression("toUInt16OrZero", [expression], uint16Decoder, "UInt16");
-  },
-  toUInt32(expression: unknown): Selection<number> {
-    return createTypedConversionExpression("toUInt32", [expression], uint32Decoder, "UInt32");
-  },
-  toUInt32OrDefault(expression: unknown, defaultValue?: unknown): Selection<number> {
-    return createTypedConversionExpression(
-      "toUInt32OrDefault",
-      withOptional([expression], defaultValue),
-      uint32Decoder,
-      "UInt32",
-    );
-  },
-  toUInt32OrNull(expression: unknown): Selection<number | null> {
-    return createNullableTypedConversionExpression("toUInt32OrNull", [expression], uint32Decoder, "UInt32");
-  },
-  toUInt32OrZero(expression: unknown): Selection<number> {
-    return createTypedConversionExpression("toUInt32OrZero", [expression], uint32Decoder, "UInt32");
-  },
-  toUInt64(expression: unknown): Selection<string> {
-    return createTypedConversionExpression("toUInt64", [expression], uintStringDecoder, "UInt64");
-  },
-  toUInt64OrDefault(expression: unknown, defaultValue?: unknown): Selection<string> {
-    return createTypedConversionExpression(
-      "toUInt64OrDefault",
-      withOptional([expression], defaultValue),
-      uintStringDecoder,
-      "UInt64",
-    );
-  },
-  toUInt64OrNull(expression: unknown): Selection<string | null> {
-    return createNullableTypedConversionExpression("toUInt64OrNull", [expression], uintStringDecoder, "UInt64");
-  },
-  toUInt64OrZero(expression: unknown): Selection<string> {
-    return createTypedConversionExpression("toUInt64OrZero", [expression], uintStringDecoder, "UInt64");
-  },
-  toUInt128(expression: unknown): Selection<string> {
-    return createTypedConversionExpression("toUInt128", [expression], uintStringDecoder, "UInt128");
-  },
-  toUInt128OrDefault(expression: unknown, defaultValue?: unknown): Selection<string> {
-    return createTypedConversionExpression(
-      "toUInt128OrDefault",
-      withOptional([expression], defaultValue),
-      uintStringDecoder,
-      "UInt128",
-    );
-  },
-  toUInt128OrNull(expression: unknown): Selection<string | null> {
-    return createNullableTypedConversionExpression("toUInt128OrNull", [expression], uintStringDecoder, "UInt128");
-  },
-  toUInt128OrZero(expression: unknown): Selection<string> {
-    return createTypedConversionExpression("toUInt128OrZero", [expression], uintStringDecoder, "UInt128");
-  },
-  toUInt256(expression: unknown): Selection<string> {
-    return createTypedConversionExpression("toUInt256", [expression], uintStringDecoder, "UInt256");
-  },
-  toUInt256OrDefault(expression: unknown, defaultValue?: unknown): Selection<string> {
-    return createTypedConversionExpression(
-      "toUInt256OrDefault",
-      withOptional([expression], defaultValue),
-      uintStringDecoder,
-      "UInt256",
-    );
-  },
-  toUInt256OrNull(expression: unknown): Selection<string | null> {
-    return createNullableTypedConversionExpression("toUInt256OrNull", [expression], uintStringDecoder, "UInt256");
-  },
-  toUInt256OrZero(expression: unknown): Selection<string> {
-    return createTypedConversionExpression("toUInt256OrZero", [expression], uintStringDecoder, "UInt256");
-  },
-  toFloat32(expression: unknown): Selection<number> {
-    return createTypedConversionExpression("toFloat32", [expression], numberDecoder, "Float32");
-  },
-  toFloat32OrDefault(expression: unknown, defaultValue?: unknown): Selection<number> {
-    return createTypedConversionExpression(
-      "toFloat32OrDefault",
-      withOptional([expression], defaultValue),
-      numberDecoder,
-      "Float32",
-    );
-  },
-  toFloat32OrNull(expression: unknown): Selection<number | null> {
-    return createNullableTypedConversionExpression("toFloat32OrNull", [expression], numberDecoder, "Float32");
-  },
-  toFloat32OrZero(expression: unknown): Selection<number> {
-    return createTypedConversionExpression("toFloat32OrZero", [expression], numberDecoder, "Float32");
-  },
-  toFloat64(expression: unknown): Selection<number> {
-    return createTypedConversionExpression("toFloat64", [expression], numberDecoder, "Float64");
-  },
-  toFloat64OrDefault(expression: unknown, defaultValue?: unknown): Selection<number> {
-    return createTypedConversionExpression(
-      "toFloat64OrDefault",
-      withOptional([expression], defaultValue),
-      numberDecoder,
-      "Float64",
-    );
-  },
-  toFloat64OrNull(expression: unknown): Selection<number | null> {
-    return createNullableTypedConversionExpression("toFloat64OrNull", [expression], numberDecoder, "Float64");
-  },
-  toFloat64OrZero(expression: unknown): Selection<number> {
-    return createTypedConversionExpression("toFloat64OrZero", [expression], numberDecoder, "Float64");
-  },
-  toDecimal32(expression: unknown, scale: number): Selection<string> {
-    return createFixedWidthDecimalCast("toDecimal32", expression, scale);
-  },
-  toDecimal64(expression: unknown, scale: number): Selection<string> {
-    return createFixedWidthDecimalCast("toDecimal64", expression, scale);
-  },
-  toDecimal128(expression: unknown, scale: number): Selection<string> {
-    return createFixedWidthDecimalCast("toDecimal128", expression, scale);
-  },
-  toDecimal256(expression: unknown, scale: number): Selection<string> {
-    return createFixedWidthDecimalCast("toDecimal256", expression, scale);
-  },
-  toDecimal32OrDefault(expression: unknown, scale: number, defaultValue?: unknown): Selection<string> {
-    return createFixedWidthDecimalCast("toDecimal32OrDefault", expression, scale, {
-      extraArgs: defaultValue === undefined ? [] : [defaultValue],
-    });
-  },
-  toDecimal64OrDefault(expression: unknown, scale: number, defaultValue?: unknown): Selection<string> {
-    return createFixedWidthDecimalCast("toDecimal64OrDefault", expression, scale, {
-      extraArgs: defaultValue === undefined ? [] : [defaultValue],
-    });
-  },
-  toDecimal128OrDefault(expression: unknown, scale: number, defaultValue?: unknown): Selection<string> {
-    return createFixedWidthDecimalCast("toDecimal128OrDefault", expression, scale, {
-      extraArgs: defaultValue === undefined ? [] : [defaultValue],
-    });
-  },
-  toDecimal256OrDefault(expression: unknown, scale: number, defaultValue?: unknown): Selection<string> {
-    return createFixedWidthDecimalCast("toDecimal256OrDefault", expression, scale, {
-      extraArgs: defaultValue === undefined ? [] : [defaultValue],
-    });
-  },
-  toDecimal32OrNull(expression: unknown, scale: number): Selection<string | null> {
-    return createFixedWidthDecimalCast("toDecimal32OrNull", expression, scale, {
-      decoder: nullableDecoder(stringDecoder),
-    });
-  },
-  toDecimal64OrNull(expression: unknown, scale: number): Selection<string | null> {
-    return createFixedWidthDecimalCast("toDecimal64OrNull", expression, scale, {
-      decoder: nullableDecoder(stringDecoder),
-    });
-  },
-  toDecimal128OrNull(expression: unknown, scale: number): Selection<string | null> {
-    return createFixedWidthDecimalCast("toDecimal128OrNull", expression, scale, {
-      decoder: nullableDecoder(stringDecoder),
-    });
-  },
-  toDecimal256OrNull(expression: unknown, scale: number): Selection<string | null> {
-    return createFixedWidthDecimalCast("toDecimal256OrNull", expression, scale, {
-      decoder: nullableDecoder(stringDecoder),
-    });
-  },
-  toDecimal32OrZero(expression: unknown, scale: number): Selection<string> {
-    return createFixedWidthDecimalCast("toDecimal32OrZero", expression, scale);
-  },
-  toDecimal64OrZero(expression: unknown, scale: number): Selection<string> {
-    return createFixedWidthDecimalCast("toDecimal64OrZero", expression, scale);
-  },
-  toDecimal128OrZero(expression: unknown, scale: number): Selection<string> {
-    return createFixedWidthDecimalCast("toDecimal128OrZero", expression, scale);
-  },
-  toDecimal256OrZero(expression: unknown, scale: number): Selection<string> {
-    return createFixedWidthDecimalCast("toDecimal256OrZero", expression, scale);
-  },
+  // Numeric/temporal conversion families: each spread expands to four methods
+  // (`to${T}`, `to${T}OrDefault`, `to${T}OrNull`, `to${T}OrZero`) bound to a
+  // (decoder, sqlType) pair via `defineConversionFamily`. Adding a new fixed-
+  // width type is now a one-liner.
+  ...defineConversionFamily<"toInt8", number>("toInt8", int8Decoder, "Int8"),
+  ...defineConversionFamily<"toInt16", number>("toInt16", int16Decoder, "Int16"),
+  ...defineConversionFamily<"toInt32", number>("toInt32", int32Decoder, "Int32"),
+  ...defineConversionFamily<"toInt64", string>("toInt64", intStringDecoder, "Int64"),
+  ...defineConversionFamily<"toInt128", string>("toInt128", intStringDecoder, "Int128"),
+  ...defineConversionFamily<"toInt256", string>("toInt256", intStringDecoder, "Int256"),
+  ...defineConversionFamily<"toUInt8", number>("toUInt8", uint8Decoder, "UInt8"),
+  ...defineConversionFamily<"toUInt16", number>("toUInt16", uint16Decoder, "UInt16"),
+  ...defineConversionFamily<"toUInt32", number>("toUInt32", uint32Decoder, "UInt32"),
+  ...defineConversionFamily<"toUInt64", string>("toUInt64", uintStringDecoder, "UInt64"),
+  ...defineConversionFamily<"toUInt128", string>("toUInt128", uintStringDecoder, "UInt128"),
+  ...defineConversionFamily<"toUInt256", string>("toUInt256", uintStringDecoder, "UInt256"),
+  ...defineConversionFamily<"toFloat32", number>("toFloat32", numberDecoder, "Float32"),
+  ...defineConversionFamily<"toFloat64", number>("toFloat64", numberDecoder, "Float64"),
+  ...defineFixedWidthDecimalFamily("toDecimal32"),
+  ...defineFixedWidthDecimalFamily("toDecimal64"),
+  ...defineFixedWidthDecimalFamily("toDecimal128"),
+  ...defineFixedWidthDecimalFamily("toDecimal256"),
   toDecimalString(expression: unknown, scale: number): Selection<string> {
     assertNonNegativeInteger("toDecimalString scale", scale);
     return createExpression<string>({
@@ -1405,46 +1200,8 @@ const scalarFns = {
   toFixedString(expression: unknown, length: number): Selection<string> {
     return createFixedStringExpression(expression, length);
   },
-  toDate(expression: unknown): Selection<Date> {
-    return createFunctionExpression("toDate", [expression], {
-      decoder: dateDecoder,
-      sqlType: "Date",
-    });
-  },
-  toDateOrDefault(expression: unknown, defaultValue?: unknown): Selection<Date> {
-    return createTypedConversionExpression(
-      "toDateOrDefault",
-      withOptional([expression], defaultValue),
-      dateDecoder,
-      "Date",
-    );
-  },
-  toDateOrNull(expression: unknown): Selection<Date | null> {
-    return createNullableTypedConversionExpression("toDateOrNull", [expression], dateDecoder, "Date");
-  },
-  toDateOrZero(expression: unknown): Selection<Date> {
-    return createTypedConversionExpression("toDateOrZero", [expression], dateDecoder, "Date");
-  },
-  toDate32(expression: unknown): Selection<Date> {
-    return createFunctionExpression("toDate32", [expression], {
-      decoder: dateDecoder,
-      sqlType: "Date32",
-    });
-  },
-  toDate32OrDefault(expression: unknown, defaultValue?: unknown): Selection<Date> {
-    return createTypedConversionExpression(
-      "toDate32OrDefault",
-      withOptional([expression], defaultValue),
-      dateDecoder,
-      "Date32",
-    );
-  },
-  toDate32OrNull(expression: unknown): Selection<Date | null> {
-    return createNullableTypedConversionExpression("toDate32OrNull", [expression], dateDecoder, "Date32");
-  },
-  toDate32OrZero(expression: unknown): Selection<Date> {
-    return createTypedConversionExpression("toDate32OrZero", [expression], dateDecoder, "Date32");
-  },
+  ...defineConversionFamily<"toDate", Date>("toDate", dateDecoder, "Date"),
+  ...defineConversionFamily<"toDate32", Date>("toDate32", dateDecoder, "Date32"),
   toDateTime(expression: unknown, timezone?: unknown): Selection<Date> {
     const args = timezone === undefined ? [expression] : [expression, timezone];
     return createFunctionExpression("toDateTime", args, {
@@ -1586,22 +1343,12 @@ const scalarFns = {
       "Nullable",
     );
   },
-  /**
-   * `toTime(DateTime)` is actually `toTimeWithFixedDate`: it pins the date to
-   * 1970-01-02 while preserving the time-of-day, returning a `DateTime` (not
-   * the new `Time` data type). The decoder reflects that — callers receive a
-   * JS `Date`. For the `Time` data type, use `toTime64(value, 0)` or read a
-   * `Time` column directly (those return strings).
-   */
-  toTime(expression: unknown): Selection<Date> {
-    return createTypedConversionExpression("toTime", [expression], dateDecoder, "DateTime");
-  },
-  toTimeOrNull(expression: unknown): Selection<Date | null> {
-    return createNullableTypedConversionExpression("toTimeOrNull", [expression], dateDecoder, "DateTime");
-  },
-  toTimeOrZero(expression: unknown): Selection<Date> {
-    return createTypedConversionExpression("toTimeOrZero", [expression], dateDecoder, "DateTime");
-  },
+  // `toTime(DateTime)` is actually `toTimeWithFixedDate`: it pins the date to
+  // 1970-01-02 while preserving the time-of-day, returning a `DateTime` (not
+  // the new `Time` data type). The decoder reflects that — callers receive a
+  // JS `Date`. For the `Time` data type, use `toTime64(value, 0)` or read a
+  // `Time` column directly (those return strings).
+  ...defineConversionFamilyNoDefault<"toTime", Date>("toTime", dateDecoder, "DateTime"),
   toTime64(expression: unknown, precision: number): Selection<string> {
     return createTime64Expression("toTime64", expression, precision, timeStringDecoder);
   },
@@ -2003,47 +1750,24 @@ const scalarFns = {
   empty(value: unknown): Selection<boolean> {
     return createBooleanExpression("empty", [value]);
   },
-  emptyArrayDate(): Selection<Date[]> {
-    return createArrayExpression<Date>("emptyArrayDate", [], "Array(Date)");
-  },
-  emptyArrayDateTime(): Selection<Date[]> {
-    return createArrayExpression<Date>("emptyArrayDateTime", [], "Array(DateTime)");
-  },
-  emptyArrayFloat32(): Selection<number[]> {
-    return createArrayExpression<number>("emptyArrayFloat32", [], "Array(Float32)");
-  },
-  emptyArrayFloat64(): Selection<number[]> {
-    return createArrayExpression<number>("emptyArrayFloat64", [], "Array(Float64)");
-  },
-  emptyArrayInt16(): Selection<number[]> {
-    return createArrayExpression<number>("emptyArrayInt16", [], "Array(Int16)");
-  },
-  emptyArrayInt32(): Selection<number[]> {
-    return createArrayExpression<number>("emptyArrayInt32", [], "Array(Int32)");
-  },
-  emptyArrayInt64(): Selection<string[]> {
-    return createArrayExpression<string>("emptyArrayInt64", [], "Array(Int64)");
-  },
-  emptyArrayInt8(): Selection<number[]> {
-    return createArrayExpression<number>("emptyArrayInt8", [], "Array(Int8)");
-  },
-  emptyArrayString(): Selection<string[]> {
-    return createArrayExpression<string>("emptyArrayString", [], "Array(String)");
-  },
+  // Each `emptyArray{T}()` builtin is a zero-arg helper that emits an
+  // `Array({T})` literal. Spread one factory call per type instead of writing
+  // 13 near-identical 3-line method bodies.
+  ...defineEmptyArrayHelper<"emptyArrayDate", Date>("emptyArrayDate", "Array(Date)"),
+  ...defineEmptyArrayHelper<"emptyArrayDateTime", Date>("emptyArrayDateTime", "Array(DateTime)"),
+  ...defineEmptyArrayHelper<"emptyArrayFloat32", number>("emptyArrayFloat32", "Array(Float32)"),
+  ...defineEmptyArrayHelper<"emptyArrayFloat64", number>("emptyArrayFloat64", "Array(Float64)"),
+  ...defineEmptyArrayHelper<"emptyArrayInt8", number>("emptyArrayInt8", "Array(Int8)"),
+  ...defineEmptyArrayHelper<"emptyArrayInt16", number>("emptyArrayInt16", "Array(Int16)"),
+  ...defineEmptyArrayHelper<"emptyArrayInt32", number>("emptyArrayInt32", "Array(Int32)"),
+  ...defineEmptyArrayHelper<"emptyArrayInt64", string>("emptyArrayInt64", "Array(Int64)"),
+  ...defineEmptyArrayHelper<"emptyArrayString", string>("emptyArrayString", "Array(String)"),
+  ...defineEmptyArrayHelper<"emptyArrayUInt8", number>("emptyArrayUInt8", "Array(UInt8)"),
+  ...defineEmptyArrayHelper<"emptyArrayUInt16", number>("emptyArrayUInt16", "Array(UInt16)"),
+  ...defineEmptyArrayHelper<"emptyArrayUInt32", number>("emptyArrayUInt32", "Array(UInt32)"),
+  ...defineEmptyArrayHelper<"emptyArrayUInt64", string>("emptyArrayUInt64", "Array(UInt64)"),
   emptyArrayToSingle<TData = unknown>(array: unknown): Selection<TData[]> {
     return createArrayExpression<TData>("emptyArrayToSingle", [array]);
-  },
-  emptyArrayUInt16(): Selection<number[]> {
-    return createArrayExpression<number>("emptyArrayUInt16", [], "Array(UInt16)");
-  },
-  emptyArrayUInt32(): Selection<number[]> {
-    return createArrayExpression<number>("emptyArrayUInt32", [], "Array(UInt32)");
-  },
-  emptyArrayUInt64(): Selection<string[]> {
-    return createArrayExpression<string>("emptyArrayUInt64", [], "Array(UInt64)");
-  },
-  emptyArrayUInt8(): Selection<number[]> {
-    return createArrayExpression<number>("emptyArrayUInt8", [], "Array(UInt8)");
   },
   has(haystack: unknown, needle: unknown): Selection<boolean> {
     return createBooleanExpression("has", [haystack, needle]);

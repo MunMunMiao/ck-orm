@@ -241,12 +241,8 @@ export const ckTable = <TName extends string, TColumns extends Record<string, An
   };
   const tableWithColumns = Object.assign(tableBase, boundColumns);
   const resolvedOptions = typeof options === "function" ? options(tableWithColumns) : (options ?? {});
-  const table = {
-    ...tableWithColumns,
-    options: resolvedOptions,
-  };
-
-  return Object.assign(table, boundColumns);
+  tableWithColumns.options = resolvedOptions;
+  return tableWithColumns;
 };
 
 export const ckAlias = <TTable extends AnyTable, TAlias extends string>(

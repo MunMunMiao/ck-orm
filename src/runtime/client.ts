@@ -18,7 +18,7 @@ import { createQueryClient, createSessionId, decodeRow } from "../query";
 import type { QueryParams } from "../query-shared";
 import type { AnyTable } from "../schema";
 import { buildCreateTemporaryTableStatement } from "../schema-ddl";
-import { compileSql, sql } from "../sql";
+import { quoteIdentifier, sql } from "../sql";
 import {
   buildQueryParams,
   type ClickHouseBaseQueryOptions,
@@ -90,12 +90,50 @@ const createSessionController = (sessionId: string, ancestorSessionIds: readonly
       return [...tempTables].reverse();
     },
     createChildSessionController(childSessionId: string): SessionController {
-      if ([sessionId, ...ancestorSessionIds].includes(childSessionId)) {
+      if (childSessionId === sessionId || ancestorSessionIds.includes(childSessionId)) {
         throw createSessionError("Nested runInSession() cannot reuse an existing session_id");
       }
       return createSessionController(childSessionId, [sessionId, ...ancestorSessionIds]);
     },
   };
+};
+
+type JsonEachRowColumnEntry = {
+  readonly logicalKey: string;
+  readonly physicalName: string;
+  readonly mapToDriverValue: (value: unknown) => unknown;
+};
+
+type JsonEachRowMapping = {
+  readonly columnEntries: readonly JsonEachRowColumnEntry[];
+  readonly schemaKeys: ReadonlySet<string>;
+};
+
+// Tables are immutable, so each table's logical-to-physical projection only
+// needs to be derived once. WeakMap keeps the cache alive only as long as the
+// table is, so dropped table objects don't leak.
+const jsonEachRowMappingCache = new WeakMap<AnyTable, JsonEachRowMapping>();
+
+const getJsonEachRowMapping = (table: AnyTable): JsonEachRowMapping => {
+  const cached = jsonEachRowMappingCache.get(table);
+  if (cached) return cached;
+
+  // Run every value through the column's `mapToDriverValue` so JSONEachRow
+  // sees ClickHouse-acceptable literals (e.g. Date → `'YYYY-MM-DD HH:MM:SS'`
+  // rather than `JSON.stringify` ISO 8601 with `Z`). Logical-to-physical
+  // key rename is folded into the same pass.
+  const columnEntries: JsonEachRowColumnEntry[] = [];
+  const schemaKeys = new Set<string>();
+  for (const [schemaKey, column] of Object.entries(table.columns)) {
+    const logicalKey = column.key ?? schemaKey;
+    const physicalName = column.name ?? schemaKey;
+    columnEntries.push({ logicalKey, physicalName, mapToDriverValue: column.mapToDriverValue });
+    schemaKeys.add(logicalKey);
+    schemaKeys.add(physicalName);
+  }
+  const mapping: JsonEachRowMapping = { columnEntries, schemaKeys };
+  jsonEachRowMappingCache.set(table, mapping);
+  return mapping;
 };
 
 export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
@@ -388,7 +426,7 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
   };
 
   const renderTempTableIdentifier = (name: string) => {
-    return compileSql(sql.identifier({ table: name })).query;
+    return quoteIdentifier({ table: name });
   };
 
   const registerValidatedTempTable = (name: string) => {
@@ -403,16 +441,7 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
       return rows;
     }
 
-    // Run every value through the column's `mapToDriverValue` so JSONEachRow
-    // sees ClickHouse-acceptable literals (e.g. Date → `'YYYY-MM-DD HH:MM:SS'`
-    // rather than `JSON.stringify` ISO 8601 with `Z`). Logical-to-physical
-    // key rename is folded into the same pass.
-    const columnEntries = Object.entries(table.columns).map(([schemaKey, column]) => ({
-      logicalKey: column.key ?? schemaKey,
-      physicalName: column.name ?? schemaKey,
-      mapToDriverValue: column.mapToDriverValue,
-    }));
-    const schemaKeys = new Set(columnEntries.flatMap((e) => [e.logicalKey, e.physicalName]));
+    const { columnEntries, schemaKeys } = getJsonEachRowMapping(table);
 
     const mapRow = (row: Record<string, unknown>): Record<string, unknown> => {
       const mapped: Record<string, unknown> = {};
@@ -614,7 +643,7 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
         },
       };
       const tableName = toClickHouseTableName(table);
-      const tableIdentifier = compileSql(sql.identifier({ table: tableName })).query;
+      const tableIdentifier = quoteIdentifier({ table: tableName });
       const mappedRows = mapLogicalJsonEachRowKeys(table, rows);
       const arrayRowCount = Array.isArray(rows) ? rows.length : undefined;
       return runSerial(mergedOptions, async () => {

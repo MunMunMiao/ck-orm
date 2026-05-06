@@ -468,18 +468,21 @@ export const formatQueryParamValue = (
       .join(",")}]`;
   }
   if (value instanceof Map) {
-    return `{${[...value.entries()]
-      .map(([key, entryValue]) => {
-        return `${formatQueryParamValue(key, nestedOptions)}:${formatQueryParamValue(entryValue, nestedOptions)}`;
-      })
-      .join(",")}}`;
+    // Iterate the Map directly instead of `[...value.entries()].map(...)` —
+    // skips the materialised intermediate array.
+    const parts: string[] = [];
+    for (const [key, entryValue] of value) {
+      parts.push(`${formatQueryParamValue(key, nestedOptions)}:${formatQueryParamValue(entryValue, nestedOptions)}`);
+    }
+    return `{${parts.join(",")}}`;
   }
-  if (typeof value === "object")
-    return `{${Object.entries(value)
-      .map(([key, entryValue]) => {
-        return `${formatQueryParamValue(key, nestedOptions)}:${formatQueryParamValue(entryValue, nestedOptions)}`;
-      })
-      .join(",")}}`;
+  if (typeof value === "object") {
+    const parts: string[] = [];
+    for (const [key, entryValue] of Object.entries(value)) {
+      parts.push(`${formatQueryParamValue(key, nestedOptions)}:${formatQueryParamValue(entryValue, nestedOptions)}`);
+    }
+    return `{${parts.join(",")}}`;
+  }
 
   throw createClientValidationError(`Unsupported query parameter value: ${String(value)}`);
 };

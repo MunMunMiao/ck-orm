@@ -26,7 +26,15 @@ import type { ClickHouseBaseQueryOptions } from "./runtime";
 import type { ClickHouseSettings, ClickHouseSettingValue } from "./runtime/settings";
 import type { AnyTable, Table } from "./schema";
 import { renderTableIdentifier } from "./schema";
-import { compileSql, isSqlFragment, type QueryParamTypes, type SQLFragment, sql, trustSqlSourceObject } from "./sql";
+import {
+  compileSql,
+  isSqlFragment,
+  type QueryParamTypes,
+  quoteIdentifier,
+  type SQLFragment,
+  sql,
+  trustSqlSourceObject,
+} from "./sql";
 
 type QuerySource = AnyTable | AnySubquery | AnyCte | TableFunctionSource;
 type KnownQuerySource = AnyTable | AnySubquery | AnyCte;
@@ -158,13 +166,11 @@ export interface TableFunctionSource {
   as<TAlias extends string>(alias: TAlias): TableFunctionSource;
 }
 
-interface SelectionItem {
-  readonly key: string;
-  readonly sqlAlias: string;
+// SelectionItem **is** a SelectionMeta with the live expression attached for
+// the compile pass — once compiled, it is structurally compatible with the
+// SelectionMeta array embedded in CompiledQuery, so no remapping is needed.
+interface SelectionItem extends SelectionMeta {
   readonly expression: SqlSelection<unknown>;
-  readonly path: readonly [string] | readonly [string, string];
-  readonly nullable?: boolean;
-  readonly groupNullable?: boolean;
 }
 
 interface JoinClause {
@@ -350,11 +356,9 @@ type InsertColumnEntry =
       readonly sqlType: string;
     };
 
-const renderIdentifierPart = (name: string): string => compileSql(sql.identifier(name)).query;
-
 const renderInsertColumnIdentifier = (entry: InsertColumnEntry): SQLFragment => {
   if (entry.kind === "nested-field") {
-    return sql.raw(`${renderIdentifierPart(entry.name)}.${renderIdentifierPart(entry.fieldKey)}`);
+    return sql.raw(`${quoteIdentifier(entry.name)}.${quoteIdentifier(entry.fieldKey)}`);
   }
   return sql.identifier(entry.name);
 };
@@ -622,6 +626,7 @@ const normalizeSelectionRecord = (
       key,
       sqlAlias,
       expression,
+      decoder: expression.decoder,
       path: [key],
       nullable: sourceKey ? nullableSources.has(sourceKey) : false,
     });
@@ -808,6 +813,7 @@ const createCountQuery = <TMode extends CountMode = "unsafe">(config: {
     const runner = ensureRunner(config.runner, "count");
     const ctx: BuildContext = {
       params: {},
+      paramTypes: {},
       nextParamIndex: 0,
     };
     const { result: compiledResult, forcedSettings } = withCompileState(ctx, () => {
@@ -1119,10 +1125,12 @@ export const createSelectBuilder = <
     const appendSourceColumns = (sourceKey: string, sourceColumns: SourceColumns, groupNullable: boolean) => {
       for (const [fieldKey, expression] of Object.entries(sourceColumns)) {
         nextIndex += 1;
+        const expressionAsSql = expression as SqlSelection<unknown>;
         selectionItems.push({
           key: fieldKey,
           sqlAlias: hasJoins ? `__orm_${nextIndex}` : fieldKey,
-          expression: expression as SqlSelection<unknown>,
+          expression: expressionAsSql,
+          decoder: expressionAsSql.decoder,
           path: hasJoins ? [sourceKey, fieldKey] : [fieldKey],
           nullable: groupNullable,
           groupNullable: hasJoins ? groupNullable : false,
@@ -1402,14 +1410,9 @@ export const createSelectBuilder = <
 
         const statement = sql`${joinSqlParts(queryParts, " ")}`;
         const compiled = compileSql(statement, ctx);
-        const selection = selectionItems.map((item) => ({
-          key: item.key,
-          sqlAlias: item.sqlAlias,
-          decoder: item.expression.decoder,
-          path: item.path,
-          nullable: item.nullable,
-          groupNullable: item.groupNullable,
-        }));
+        // SelectionItem extends SelectionMeta; the embedded `expression` field
+        // is harmless extra data on the wire-serialised metadata.
+        const selection: readonly SelectionMeta[] = selectionItems;
 
         const localForcedSettings =
           isNullableJoinEnabled() && state.joins.some((join) => join.type === "left")
@@ -1453,6 +1456,7 @@ export const createSelectBuilder = <
     [compileQuerySymbol](): CompiledQuery<TResult> {
       return builder[compileWithContextSymbol]({
         params: {},
+        paramTypes: {},
         nextParamIndex: 0,
       });
     },
@@ -1526,6 +1530,7 @@ export const createInsertBuilder = <TTable extends AnyTable>(
       const columnEntries = createInsertColumnEntries(table);
       const ctx: BuildContext = {
         params: {},
+        paramTypes: {},
         nextParamIndex: 0,
       };
       const valueRows = rows.map(
@@ -1811,16 +1816,17 @@ export const isNull = (expression: unknown): Predicate => createNullPredicateExp
 
 export const isNotNull = (expression: unknown): Predicate => createNullPredicateExpression("is not null", expression);
 
+const HELPER_NAME_BY_OPERATOR: Readonly<Record<string, string>> = {
+  "=": "eq",
+  "!=": "ne",
+  ">": "gt",
+  ">=": "gte",
+  "<": "lt",
+  "<=": "lte",
+};
+
 const createBinaryExpression = (operator: string, left: unknown, right: unknown): Predicate => {
-  const helperNameByOperator: Record<string, string> = {
-    "=": "eq",
-    "!=": "ne",
-    ">": "gt",
-    ">=": "gte",
-    "<": "lt",
-    "<=": "lte",
-  };
-  assertPredicateValue(right, helperNameByOperator[operator] ?? operator);
+  assertPredicateValue(right, HELPER_NAME_BY_OPERATOR[operator] ?? operator);
   const leftExpression = ensureComparableExpression(left);
   return createExpression<boolean>({
     compile: (ctx) =>
@@ -2231,7 +2237,10 @@ export const decodeRow = <TRow extends Record<string, unknown>>(
   selection: readonly SelectionMeta[],
 ): TRow => {
   const decodedRow = {} as TRow;
-  const nestedGroups = new Map<string, NestedGroupAccumulator>();
+  // Most selections are flat — defer the Map allocation until the first
+  // nested-path entry. For a million-row, no-nested-column result this saves
+  // a million Map constructions.
+  let nestedGroups: Map<string, NestedGroupAccumulator> | undefined;
 
   for (const item of selection) {
     const rawValue = row[item.sqlAlias];
@@ -2241,11 +2250,14 @@ export const decodeRow = <TRow extends Record<string, unknown>>(
       continue;
     }
 
+    nestedGroups ??= new Map();
     applyNestedField(nestedGroups, item, rawValue);
   }
 
-  for (const [groupKey, group] of nestedGroups) {
-    decodedRow[groupKey as keyof TRow] = finalizeNestedGroup(group) as TRow[keyof TRow];
+  if (nestedGroups) {
+    for (const [groupKey, group] of nestedGroups) {
+      decodedRow[groupKey as keyof TRow] = finalizeNestedGroup(group) as TRow[keyof TRow];
+    }
   }
 
   return decodedRow;

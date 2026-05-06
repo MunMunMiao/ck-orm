@@ -61,12 +61,11 @@ const createBaseError = <TError extends ClickHouseORMError | DecodeError>(
 };
 
 const cloneError = <TError extends ClickHouseORMError>(error: TError): TError => {
-  const cloned = new Error(error.message) as TError;
+  // `Error.prototype.stack` is not enumerable-own, so `Object.assign` skips
+  // it; copy it explicitly after merging the rest of the fields.
+  const cloned = Object.assign(new Error(error.message), error) as TError;
   cloned.name = error.name;
-  if (error.stack) {
-    cloned.stack = error.stack;
-  }
-  Object.assign(cloned, error);
+  cloned.stack ??= error.stack;
   return cloned;
 };
 

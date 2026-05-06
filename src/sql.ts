@@ -5,6 +5,11 @@ import { assertValidSqlIdentifier } from "./internal/identifier";
 
 const sqlBrand = Symbol("clickhouseORMSqlBrand");
 const compileSqlSymbol = Symbol("clickhouseORMCompileSql");
+
+// Allow-lists distinguishing framework-built compilable objects from arbitrary
+// user-supplied values. Anything looking-like a `compile`/`compileSource`
+// callable still has to pass through these `WeakSet`s before its compile path
+// runs — otherwise a hostile literal could ship its own SQL into the wire.
 const trustedExpressionObjects = new WeakSet<object>();
 const trustedSourceObjects = new WeakSet<object>();
 
@@ -13,7 +18,7 @@ export type QueryParamTypes = Record<string, string>;
 
 export interface BuildContext {
   params: QueryParams;
-  paramTypes?: QueryParamTypes;
+  paramTypes: QueryParamTypes;
   nextParamIndex: number;
 }
 
@@ -91,8 +96,8 @@ const inferArrayType = (values: readonly unknown[], seen: WeakSet<object>): stri
   }
 
   const elementType = inferPrimitiveTypeWithSeen(values[0], seen);
-  for (const value of values.slice(1)) {
-    if (inferPrimitiveTypeWithSeen(value, seen) !== elementType) {
+  for (let index = 1; index < values.length; index += 1) {
+    if (inferPrimitiveTypeWithSeen(values[index], seen) !== elementType) {
       return "Array(String)";
     }
   }
@@ -105,8 +110,8 @@ const inferMapValueType = (values: readonly unknown[], seen: WeakSet<object>): s
   }
 
   const firstType = inferPrimitiveTypeWithSeen(values[0], seen);
-  for (const value of values.slice(1)) {
-    if (inferPrimitiveTypeWithSeen(value, seen) !== firstType) return "String";
+  for (let index = 1; index < values.length; index += 1) {
+    if (inferPrimitiveTypeWithSeen(values[index], seen) !== firstType) return "String";
   }
   return firstType;
 };
@@ -152,11 +157,6 @@ const inferPrimitiveTypeWithSeen = (value: unknown, seen: WeakSet<object>): stri
 
 export const inferPrimitiveType = (value: unknown): string => inferPrimitiveTypeWithSeen(value, new WeakSet());
 
-const ensureParamTypes = (ctx: BuildContext): QueryParamTypes => {
-  ctx.paramTypes ??= {};
-  return ctx.paramTypes;
-};
-
 // Whitespace and grouping punctuation only. Keyword/operator separators must
 // be passed as `SQLFragment` (e.g. `sql.join(parts, sql\` OR \`)`) so the
 // raw-SQL intent is explicit at the call site.
@@ -176,6 +176,20 @@ const escapeIdentifier = (value: string) => {
   assertValidSqlIdentifier(value);
   return `\`${value.replaceAll("`", "``")}\``;
 };
+
+/**
+ * Render a ClickHouse identifier to its escaped, backtick-quoted SQL form
+ * without going through the `compileSql(sql.identifier(...)).query` pipeline.
+ *
+ * Use this from contexts that already produce raw SQL strings (DDL builders,
+ * temp-table hooks, transport scaffolding) — the parameter channel never sees
+ * the identifier, so the full fragment compiler is dead weight.
+ *
+ * For composing identifiers inside a `sql\`...\`` template, keep using
+ * `sql.identifier(...)` — that path lazy-resolves and lets the fragment carry
+ * the correct kind through `compileChunk`.
+ */
+export const quoteIdentifier = (value: IdentifierValue): string => renderIdentifier(value);
 
 const renderIdentifier = (value: IdentifierValue) => {
   if (typeof value === "string") {
@@ -267,7 +281,7 @@ export const allocParam = (ctx: BuildContext, value: unknown, sqlType?: string):
   const paramName = `orm_param${ctx.nextParamIndex}`;
   const resolvedType = sqlType ?? inferPrimitiveType(value);
   ctx.params[paramName] = value;
-  ensureParamTypes(ctx)[paramName] = resolvedType;
+  ctx.paramTypes[paramName] = resolvedType;
   return `{${paramName}:${resolvedType}}`;
 };
 
@@ -508,7 +522,7 @@ export const compileSql = (statement: SQLFragment<unknown>, initialContext?: Par
   return {
     query,
     params: ctx.params,
-    paramTypes: ctx.paramTypes ?? {},
+    paramTypes: ctx.paramTypes,
     nextParamIndex: ctx.nextParamIndex,
   };
 };

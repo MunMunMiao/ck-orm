@@ -82,11 +82,13 @@ export const toStringValue = (value: unknown): string => {
   throw createDecodeError(`Cannot convert value to string: ${String(value)}`, value);
 };
 
-const NAIVE_DATETIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?)$/;
+// Date-only forms (`YYYY-MM-DD`) intentionally fall through to the native
+// Date parser; only timezone-less datetimes are pinned to UTC here.
+const NAIVE_DATETIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?$/;
 
 const parseNaiveDateTimeAsUtc = (value: string): Date | null | undefined => {
   const match = NAIVE_DATETIME_PATTERN.exec(value);
-  if (!match || !value.includes(":")) {
+  if (!match) {
     return undefined;
   }
   const [, yearRaw, monthRaw, dayRaw, hourRaw, minuteRaw, secondRaw, fractionalRaw] = match;

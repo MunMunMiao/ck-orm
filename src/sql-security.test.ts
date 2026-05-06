@@ -73,7 +73,7 @@ describe("ck-orm sql security", function describeSqlSecurity() {
   });
 
   it("rejects invalid function names", function testFunctionNameWhitelist() {
-    const buildCtx = () => ({ params: {}, nextParamIndex: 0 });
+    const buildCtx = () => ({ params: {}, paramTypes: {}, nextParamIndex: 0 });
     expect(() => fn.call("; DROP TABLE users; --", []).compile(buildCtx())).toThrow(
       "Invalid function name: ; DROP TABLE users; --",
     );
@@ -87,7 +87,7 @@ describe("ck-orm sql security", function describeSqlSecurity() {
   });
 
   it("allows valid function names", function testValidFunctionNames() {
-    const buildCtx = () => ({ params: {}, nextParamIndex: 0 });
+    const buildCtx = () => ({ params: {}, paramTypes: {}, nextParamIndex: 0 });
     expect(() => fn.call("sum", []).compile(buildCtx())).not.toThrow();
     expect(() => fn.call("_sum", []).compile(buildCtx())).not.toThrow();
     expect(() => fn.call("avgIf", []).compile(buildCtx())).not.toThrow();
@@ -215,9 +215,13 @@ describe("ck-orm sql security", function describeSqlSecurity() {
 
   it("rejects invalid table function names at compile time", function testTableFunctionNameValidation() {
     const badFn = tableFn.call("; DROP TABLE", 100);
-    expect(() => compileSql(badFn.compileSource({ params: {}, nextParamIndex: 0 }))).toThrow("Invalid function name");
+    expect(() => compileSql(badFn.compileSource({ params: {}, paramTypes: {}, nextParamIndex: 0 }))).toThrow(
+      "Invalid function name",
+    );
     const badFn2 = tableFn.call("numbers`evil", 100);
-    expect(() => compileSql(badFn2.compileSource({ params: {}, nextParamIndex: 0 }))).toThrow("Invalid function name");
+    expect(() => compileSql(badFn2.compileSource({ params: {}, paramTypes: {}, nextParamIndex: 0 }))).toThrow(
+      "Invalid function name",
+    );
   });
 
   it("rejects null and undefined parameters", function testNullUndefinedParameters() {

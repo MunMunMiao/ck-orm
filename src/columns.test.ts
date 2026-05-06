@@ -49,7 +49,8 @@ import { type DecodeError, isDecodeError } from "./errors";
 import { compileSql, sql } from "./sql";
 
 const buildContext = () => ({
-  params: {},
+  params: {} as Record<string, unknown>,
+  paramTypes: {} as Record<string, string>,
   nextParamIndex: 0,
 });
 

@@ -4,6 +4,11 @@ const fnvPrime = 0x01000193;
 const fnvOffsetBasis = 0x811c9dc5;
 const base64Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
+// `TextEncoder` is stateless — caching one at module load lets every
+// `base64EncodeUtf8` (per Auth header) and `hashString` (per query event)
+// skip the constructor.
+const utf8Encoder = new TextEncoder();
+
 const getCryptoApi = () => {
   if (typeof globalThis.crypto === "undefined") {
     throw new Error("ck-orm requires Web Crypto support in the current runtime");
@@ -40,7 +45,7 @@ export const createUuid = () => {
 };
 
 export const base64EncodeUtf8 = (value: string) => {
-  const bytes = new TextEncoder().encode(value);
+  const bytes = utf8Encoder.encode(value);
   let encoded = "";
 
   for (let index = 0; index < bytes.length; index += 3) {
@@ -59,7 +64,7 @@ export const base64EncodeUtf8 = (value: string) => {
 };
 
 export const hashString = (value: string) => {
-  const bytes = new TextEncoder().encode(value);
+  const bytes = utf8Encoder.encode(value);
   let hash = fnvOffsetBasis;
 
   for (const byte of bytes) {
@@ -97,9 +102,30 @@ const createProbeStream = () => {
   });
 };
 
+// The runtime's stream-body capability is fixed for the lifetime of the
+// process; probing once is enough. Lazy so that environments without
+// `Request` (used at module-load by `canSetUserAgentHeader`) don't pay the
+// cost unless an `insertJsonEachRow(asyncIterable)` actually fires.
+let cachedStreamRequestBodyMode: StreamRequestBodyMode | undefined;
+
+/**
+ * Test-only reset for the stream-body probe cache. Production code never
+ * needs to invalidate the cache because runtime capabilities are stable for
+ * the process lifetime; tests that swap `globalThis.Request` between
+ * scenarios call this to force a re-probe.
+ */
+export const _resetStreamRequestBodyModeForTest = () => {
+  cachedStreamRequestBodyMode = undefined;
+};
+
 export const resolveStreamRequestBodyMode = (): StreamRequestBodyMode => {
+  if (cachedStreamRequestBodyMode !== undefined) {
+    return cachedStreamRequestBodyMode;
+  }
+
   if (typeof Request === "undefined" || typeof ReadableStream === "undefined") {
-    return "buffered";
+    cachedStreamRequestBodyMode = "buffered";
+    return cachedStreamRequestBodyMode;
   }
 
   try {
@@ -107,7 +133,8 @@ export const resolveStreamRequestBodyMode = (): StreamRequestBodyMode => {
       method: "POST",
       body: createProbeStream(),
     });
-    return "plain";
+    cachedStreamRequestBodyMode = "plain";
+    return cachedStreamRequestBodyMode;
   } catch {
     try {
       new Request("http://localhost/", {
@@ -115,9 +142,11 @@ export const resolveStreamRequestBodyMode = (): StreamRequestBodyMode => {
         body: createProbeStream(),
         duplex: "half",
       } as RequestInit & { duplex: "half" });
-      return "duplex-half";
+      cachedStreamRequestBodyMode = "duplex-half";
+      return cachedStreamRequestBodyMode;
     } catch {
-      return "buffered";
+      cachedStreamRequestBodyMode = "buffered";
+      return cachedStreamRequestBodyMode;
     }
   }
 };

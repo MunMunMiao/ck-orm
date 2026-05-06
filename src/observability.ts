@@ -35,6 +35,14 @@ export interface ClickHouseORMQueryEvent {
   readonly mode: ClickHouseORMQueryMode;
   readonly queryKind: ClickHouseORMQueryKind;
   readonly statement: string;
+  /**
+   * Pre-computed `compactStatement(statement)` — same SQL with runs of
+   * whitespace collapsed to a single space. Stable for the lifetime of the
+   * event; emitted at the source so tracing exporters that expose both
+   * `db.statement` and `db.query.text` (and the hash that backs them) don't
+   * have to re-normalise.
+   */
+  readonly compactStatement: string;
   readonly statementHash: string;
   readonly querySummary: string;
   readonly operation: string;
@@ -105,16 +113,28 @@ export const resolveSafeClickHouseDestination = (url: string | undefined): strin
 };
 
 export const createQueryEvent = (
-  event: Omit<ClickHouseORMQueryEvent, "executionId" | "system" | "statementHash" | "querySummary">,
+  event: Omit<
+    ClickHouseORMQueryEvent,
+    "executionId" | "system" | "statementHash" | "querySummary" | "compactStatement"
+  >,
 ): ClickHouseORMQueryEvent => {
+  // Normalise once at the source; downstream consumers (logger, tracer)
+  // share the same string instead of re-running the regex per emit.
+  const compactedStatement = compactStatement(event.statement);
   return {
     executionId: createUuid(),
     system: "clickhouse",
-    statementHash: hashStatement(event.statement),
+    compactStatement: compactedStatement,
+    statementHash: hashString(compactedStatement),
     querySummary: buildQuerySummary(event.operation, event.tableName),
     ...event,
   };
 };
+
+// Local writable view of a `readonly` event shape — used only inside the
+// builder, never escapes. Lets us populate optional fields in place instead of
+// spreading half a dozen throwaway objects per emit.
+type Writable<T> = { -readonly [K in keyof T]: T[K] };
 
 export const createQuerySuccessEvent = (
   event: ClickHouseORMQueryEvent,
@@ -122,18 +142,15 @@ export const createQuerySuccessEvent = (
   rowCount?: number,
   statistics?: ClickHouseORMQueryStatistics,
 ): ClickHouseORMQueryResultEvent => {
-  return {
-    ...event,
-    durationMs,
-    ...(rowCount === undefined ? {} : { rowCount }),
-    ...(statistics?.serverElapsedMs === undefined ? {} : { serverElapsedMs: statistics.serverElapsedMs }),
-    ...(statistics?.readRows === undefined ? {} : { readRows: statistics.readRows }),
-    ...(statistics?.readBytes === undefined ? {} : { readBytes: statistics.readBytes }),
-    ...(statistics?.resultRows === undefined ? {} : { resultRows: statistics.resultRows }),
-    ...(statistics?.rowsBeforeLimitAtLeast === undefined
-      ? {}
-      : { rowsBeforeLimitAtLeast: statistics.rowsBeforeLimitAtLeast }),
-  };
+  const result: Writable<ClickHouseORMQueryResultEvent> = { ...event, durationMs };
+  if (rowCount !== undefined) result.rowCount = rowCount;
+  if (statistics?.serverElapsedMs !== undefined) result.serverElapsedMs = statistics.serverElapsedMs;
+  if (statistics?.readRows !== undefined) result.readRows = statistics.readRows;
+  if (statistics?.readBytes !== undefined) result.readBytes = statistics.readBytes;
+  if (statistics?.resultRows !== undefined) result.resultRows = statistics.resultRows;
+  if (statistics?.rowsBeforeLimitAtLeast !== undefined)
+    result.rowsBeforeLimitAtLeast = statistics.rowsBeforeLimitAtLeast;
+  return result;
 };
 
 export const createQueryErrorEvent = (
@@ -142,12 +159,12 @@ export const createQueryErrorEvent = (
   durationMs: number,
   partialRowCount?: number,
 ): ClickHouseORMQueryErrorEvent => {
-  return {
-    ...event,
-    durationMs,
-    error,
-    ...(partialRowCount === undefined ? {} : { rowCount: partialRowCount, partialRowCount }),
-  };
+  const result: Writable<ClickHouseORMQueryErrorEvent> = { ...event, durationMs, error };
+  if (partialRowCount !== undefined) {
+    result.rowCount = partialRowCount;
+    result.partialRowCount = partialRowCount;
+  }
+  return result;
 };
 
 export const emitQueryStart = async (
@@ -166,7 +183,8 @@ export const emitQuerySuccess = async (
   instrumentations: readonly ClickHouseORMInstrumentation[],
   event: ClickHouseORMQueryResultEvent,
 ): Promise<void> => {
-  for (const instrumentation of [...instrumentations].reverse()) {
+  for (let index = instrumentations.length - 1; index >= 0; index -= 1) {
+    const instrumentation = instrumentations[index];
     if (!instrumentation.onQuerySuccess) {
       continue;
     }
@@ -178,7 +196,8 @@ export const emitQueryError = async (
   instrumentations: readonly ClickHouseORMInstrumentation[],
   event: ClickHouseORMQueryErrorEvent,
 ): Promise<void> => {
-  for (const instrumentation of [...instrumentations].reverse()) {
+  for (let index = instrumentations.length - 1; index >= 0; index -= 1) {
+    const instrumentation = instrumentations[index];
     if (!instrumentation.onQueryError) {
       continue;
     }
@@ -392,9 +411,8 @@ const buildSpanAttributes = (
     includeStatement: boolean;
   },
 ) => {
-  const customAttributes = filterCustomTracingAttributes(options.attributes);
   const attributes: Record<string, string | number | boolean> = {
-    ...customAttributes,
+    ...filterCustomTracingAttributes(options.attributes),
     "db.system": "clickhouse",
     "db.system.name": "clickhouse",
     "db.operation": event.operation,
@@ -407,22 +425,35 @@ const buildSpanAttributes = (
     "ck_orm.query.kind": event.queryKind,
     "ck_orm.query.mode": event.mode,
     "ck_orm.statement.hash": event.statementHash,
-    ...(event.databaseName === undefined ? {} : { "db.name": event.databaseName, "db.namespace": event.databaseName }),
-    ...(event.queryId === undefined ? {} : { "db.query.id": event.queryId }),
-    ...(event.queryId === undefined ? {} : { "ck_orm.query_id": event.queryId }),
-    ...(event.sessionId === undefined ? {} : { "db.session.id": event.sessionId }),
-    ...(event.sessionId === undefined ? {} : { "ck_orm.session_id": event.sessionId }),
-    ...(event.tableName === undefined ? {} : { "db.table": event.tableName, "db.collection.name": event.tableName }),
-    ...(event.format === undefined ? {} : { "db.response.format": event.format }),
-    ...(event.format === undefined ? {} : { "ck_orm.format": event.format }),
-    ...(event.serverAddress === undefined ? {} : { "server.address": event.serverAddress }),
-    ...(event.serverPort === undefined ? {} : { "server.port": event.serverPort }),
-    ...(event.requestTimeoutMs === undefined ? {} : { "ck_orm.request_timeout_ms": event.requestTimeoutMs }),
   };
 
+  if (event.databaseName !== undefined) {
+    attributes["db.name"] = event.databaseName;
+    attributes["db.namespace"] = event.databaseName;
+  }
+  if (event.queryId !== undefined) {
+    attributes["db.query.id"] = event.queryId;
+    attributes["ck_orm.query_id"] = event.queryId;
+  }
+  if (event.sessionId !== undefined) {
+    attributes["db.session.id"] = event.sessionId;
+    attributes["ck_orm.session_id"] = event.sessionId;
+  }
+  if (event.tableName !== undefined) {
+    attributes["db.table"] = event.tableName;
+    attributes["db.collection.name"] = event.tableName;
+  }
+  if (event.format !== undefined) {
+    attributes["db.response.format"] = event.format;
+    attributes["ck_orm.format"] = event.format;
+  }
+  if (event.serverAddress !== undefined) attributes["server.address"] = event.serverAddress;
+  if (event.serverPort !== undefined) attributes["server.port"] = event.serverPort;
+  if (event.requestTimeoutMs !== undefined) attributes["ck_orm.request_timeout_ms"] = event.requestTimeoutMs;
+
   if (options.includeStatement) {
-    attributes["db.statement"] = compactStatement(event.statement);
-    attributes["db.query.text"] = compactStatement(event.statement);
+    attributes["db.statement"] = event.compactStatement;
+    attributes["db.query.text"] = event.compactStatement;
   }
 
   return attributes;
@@ -457,39 +488,38 @@ export const hashStatement = (statement: string): string => {
   return hashString(normalized);
 };
 
+const LEADING_KEYWORD_PATTERN = /^[A-Z]+/;
+// Match the first DML keyword that is *not* nested inside a CTE body — both
+// sides must be whitespace or string boundary, so `(SELECT` from an inner CTE
+// like `with t as (select 1) insert ...` is skipped while the trailing
+// `INSERT` wins.
+const WITH_INNER_DML_PATTERN = /(?:^|\s)(SELECT|INSERT|UPDATE|DELETE)(?=\s|$)/;
+const KNOWN_LEADING_OPERATIONS = new Set([
+  "SELECT",
+  "INSERT",
+  "UPDATE",
+  "DELETE",
+  "MERGE",
+  "CALL",
+  "CREATE",
+  "ALTER",
+  "DROP",
+  "TRUNCATE",
+]);
+
 export const resolveSqlOperation = (statement: string): string => {
   const normalized = compactStatement(stripLeadingSqlComments(statement)).toUpperCase();
   if (!normalized) {
     return "QUERY";
   }
 
-  const tokens = normalized.split(/\s+/);
-  const firstToken = tokens[0] ?? normalized;
-
+  const firstToken = LEADING_KEYWORD_PATTERN.exec(normalized)?.[0] ?? "";
   if (firstToken === "WITH") {
-    for (const token of tokens) {
-      if (token === "SELECT" || token === "INSERT" || token === "UPDATE" || token === "DELETE") {
-        return token;
-      }
-    }
-    return "QUERY";
+    // Only WITH-prefixed queries need a deeper scan to find the inner DML; the
+    // common path skips the full-statement split entirely.
+    return WITH_INNER_DML_PATTERN.exec(normalized)?.[1] ?? "QUERY";
   }
-
-  switch (firstToken) {
-    case "SELECT":
-    case "INSERT":
-    case "UPDATE":
-    case "DELETE":
-    case "MERGE":
-    case "CALL":
-    case "CREATE":
-    case "ALTER":
-    case "DROP":
-    case "TRUNCATE":
-      return firstToken;
-    default:
-      return "QUERY";
-  }
+  return KNOWN_LEADING_OPERATIONS.has(firstToken) ? firstToken : "QUERY";
 };
 
 const buildClickHouseSpanName = (operation: string): string => {

@@ -924,6 +924,7 @@ describe("ck-orm query extras", function describeClickHouseORMQueryExtras() {
       [compileQuerySymbol]() {
         return nestedQuery[compileWithContextSymbol]({
           params: {},
+          paramTypes: {},
           nextParamIndex: 0,
         });
       },
@@ -933,6 +934,7 @@ describe("ck-orm query extras", function describeClickHouseORMQueryExtras() {
     expect(() =>
       existsPredicate.compile({
         params: {},
+        paramTypes: {},
         nextParamIndex: 0,
       }),
     ).toThrow("Missing active compile state while collecting forced settings");
@@ -948,6 +950,7 @@ describe("ck-orm query extras", function describeClickHouseORMQueryExtras() {
       .leftJoin(taggedOrders, expr(sql.raw("1"), { sqlType: "Bool", decoder: (value) => Boolean(value) }))
       [compileWithContextSymbol]({
         params: {},
+        paramTypes: {},
         nextParamIndex: 0,
       });
     expect(joinOnlyCompiled.metadata).toEqual({

@@ -75,9 +75,13 @@ const ensureSafeTypeCharacters = (value: string, label = "ClickHouse type litera
   }
 };
 
-const readSqlSingleQuotedLiteral = (value: string, start = 0): number => {
+// Returns the index just past the closing quote, or -1 if `value` does not
+// start at `start` with a complete quoted literal. Used in two modes: as a
+// scanner (callers throw when -1) and as a probe (callers branch on -1).
+// Exception-as-control-flow is hostile to V8 optimisation — keep this -1.
+const tryReadSqlSingleQuotedLiteral = (value: string, start = 0): number => {
   if (value[start] !== "'") {
-    throw createClientValidationError(`Invalid ClickHouse type literal: ${value}`);
+    return -1;
   }
 
   for (let index = start + 1; index < value.length; index += 1) {
@@ -85,7 +89,7 @@ const readSqlSingleQuotedLiteral = (value: string, start = 0): number => {
     if (char === "\\") {
       index += 1;
       if (index >= value.length) {
-        throw createClientValidationError(`Invalid ClickHouse type literal: ${value}`);
+        return -1;
       }
       continue;
     }
@@ -94,7 +98,15 @@ const readSqlSingleQuotedLiteral = (value: string, start = 0): number => {
     }
   }
 
-  throw createClientValidationError(`Invalid ClickHouse type literal: ${value}`);
+  return -1;
+};
+
+const readSqlSingleQuotedLiteral = (value: string, start = 0): number => {
+  const end = tryReadSqlSingleQuotedLiteral(value, start);
+  if (end < 0) {
+    throw createClientValidationError(`Invalid ClickHouse type literal: ${value}`);
+  }
+  return end;
 };
 
 export const splitTopLevelTypeList = (value: string): string[] => {
@@ -247,12 +259,7 @@ const isAggregateParameterLiteral = (value: string): boolean => {
   if (NUMERIC_LITERAL.test(trimmed)) {
     return true;
   }
-  try {
-    requireSingleQuotedLiteral(trimmed);
-    return true;
-  } catch {
-    return false;
-  }
+  return tryReadSqlSingleQuotedLiteral(trimmed) === trimmed.length;
 };
 
 const validateAggregateFunctionSignature = (value: string): void => {
@@ -310,16 +317,16 @@ const validateAggregateFunctionArgs = (name: string, args: readonly string[], de
 };
 
 const validateTupleElement = (value: string, depth: number): void => {
-  try {
-    validateType(value, depth);
-    return;
-  } catch {
-    const named = splitTopLevelWhitespace(value);
-    if (!named || !isValidIdentifier(named.left)) {
-      throw createClientValidationError(`Invalid ClickHouse tuple element type: ${value}`);
-    }
+  // `Tuple(name Type)` is valid ClickHouse syntax — peel a leading identifier
+  // before validating. We probe `splitTopLevelWhitespace` first instead of
+  // try/catching `validateType`, since exception-as-control-flow is hostile
+  // to V8 optimisation on the hot validation path.
+  const named = splitTopLevelWhitespace(value);
+  if (named && isValidIdentifier(named.left)) {
     validateType(named.right, depth);
+    return;
   }
+  validateType(value, depth);
 };
 
 const validateNestedElement = (value: string, depth: number): void => {
@@ -358,8 +365,9 @@ const validateType = (value: string, depth = 0): void => {
   }
 
   if (name === "Tuple" || name === "Variant") {
+    const validateElement = name === "Tuple" ? validateTupleElement : validateType;
     for (const part of parts) {
-      name === "Tuple" ? validateTupleElement(part, nextDepth) : validateType(part, nextDepth);
+      validateElement(part, nextDepth);
     }
     return;
   }

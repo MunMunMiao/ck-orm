@@ -13,22 +13,27 @@ import {
 export type { DecodeError } from "./errors";
 export type { BuildContext, QueryParams } from "./sql";
 
-const dataTypeSymbol = Symbol("clickhouseORMDataType");
-const sourceKeySymbol = Symbol("clickhouseORMSourceKey");
+// Phantom brand symbols — declared as unique compile-time symbols, never
+// materialised at runtime. They make `TData` / `TSourceKey` reachable for
+// `InferData` and source-key inference without paying for a per-expression
+// property slot. Marked optional so the runtime objects don't need to define
+// them; TypeScript still infers the parameter through the brand position.
+declare const dataTypeBrand: unique symbol;
+declare const sourceKeyBrand: unique symbol;
 
 export type Decoder<TData> = (value: unknown) => TData;
 
 export type Encoder<TData> = (value: TData) => unknown;
 
 export interface TypedValue<TData> {
-  readonly [dataTypeSymbol]: TData;
+  readonly [dataTypeBrand]?: TData;
 }
 
 export type InferData<TValue> = TValue extends TypedValue<infer TData> ? TData : never;
 
 export interface Selection<TData = unknown, TSourceKey extends string | undefined = string | undefined>
   extends TypedValue<TData> {
-  readonly [sourceKeySymbol]: TSourceKey;
+  readonly [sourceKeyBrand]?: TSourceKey;
   as<TAlias extends string>(alias: TAlias): AliasedSelection<TData, TAlias, TSourceKey>;
   mapWith<TNext>(decoder: Decoder<TNext>): Selection<TNext, TSourceKey>;
 }
@@ -75,8 +80,6 @@ export const createExpression = <TData, TSourceKey extends string | undefined = 
   sourceKey?: TSourceKey;
 }): SqlExpression<TData, TSourceKey> => {
   const expression = {
-    [dataTypeSymbol]: undefined as TData,
-    [sourceKeySymbol]: undefined as TSourceKey,
     kind: "expression" as const,
     sqlType: config.sqlType,
     decoder: config.decoder,

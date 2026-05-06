@@ -5,7 +5,11 @@ type SessionQueueEntry = {
   waiters: SessionWaiter[];
 };
 
+// `cancelled` waiters are tombstones drained on the next `releaseSlot`. We
+// favour O(1) marking over O(n) `splice` removal so abort storms on a
+// busy session don't degrade to quadratic shifting.
 type SessionWaiter = {
+  cancelled: boolean;
   resume(): void;
 };
 
@@ -46,7 +50,11 @@ export const createSessionConcurrencyController = (maxConcurrentRequests: number
     entry.activeCount -= 1;
 
     while (entry.activeCount < maxConcurrentRequests && entry.waiters.length > 0) {
-      entry.waiters.shift()?.resume();
+      const waiter = entry.waiters.shift();
+      // Skip tombstones from cancelled waiters; do not consume a slot for them.
+      if (waiter && !waiter.cancelled) {
+        waiter.resume();
+      }
     }
 
     if (entry.activeCount === 0 && entry.waiters.length === 0) {
@@ -88,23 +96,18 @@ export const createSessionConcurrencyController = (maxConcurrentRequests: number
       const cleanup = () => {
         signal?.removeEventListener("abort", onAbort);
       };
-      const removeWaiter = () => {
-        const index = entry.waiters.indexOf(waiter);
-        if (index >= 0) {
-          entry.waiters.splice(index, 1);
-        }
-        if (entry.activeCount === 0 && entry.waiters.length === 0) {
-          sessions.delete(sessionId);
-        }
-      };
       const onAbort = () => {
         if (settled) return;
         settled = true;
         cleanup();
-        removeWaiter();
+        // Tombstone the waiter; releaseSlot will skip it. We can't drop the
+        // session entry here (live waiters may exist behind us) — releaseSlot
+        // already collapses it once the queue is empty.
+        waiter.cancelled = true;
         reject(signal ? createQueuedAbortError(signal) : createAbortedError());
       };
       const waiter: SessionWaiter = {
+        cancelled: false,
         resume() {
           if (settled) return;
           settled = true;

@@ -14,6 +14,7 @@ import { compileSql, sql } from "./sql";
 
 const createContext = () => ({
   params: {} as Record<string, unknown>,
+  paramTypes: {} as Record<string, string>,
   nextParamIndex: 0,
 });
 
@@ -93,7 +94,11 @@ describe("ck-orm query shared helpers", function describeClickHouseORMQueryShare
     const joined = compileSql(joinSqlParts([sql.raw("a"), sql.raw("b"), sql.raw("c")], ", "));
     expect(joined.query).toBe("a, b, c");
 
-    const directContext = { params: {} as Record<string, unknown>, nextParamIndex: 0 };
+    const directContext = {
+      params: {} as Record<string, unknown>,
+      paramTypes: {} as Record<string, string>,
+      nextParamIndex: 0,
+    };
     compileValue("kept", directContext, "String");
     expect(directContext.params.orm_param1).toBe("kept");
     expect(directContext.nextParamIndex).toBe(1);
