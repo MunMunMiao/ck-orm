@@ -56,7 +56,7 @@ const buildContext = () => ({
 const normalizeSql = (value: string) => value.replace(/\s+/g, " ").trim();
 
 describe("ck-orm columns", function describeClickHouseORMColumns() {
-  it("converts scalar values, binds columns, and rejects invalid inputs", function testScalarColumns() {
+  it("decodes integer columns including range and type-mismatch rejection", function testIntegerColumns() {
     const intColumn = int32();
     expect(intColumn.mapFromDriverValue(1)).toBe(1);
     expect(intColumn.mapFromDriverValue("2")).toBe(2);
@@ -87,14 +87,18 @@ describe("ck-orm columns", function describeClickHouseORMColumns() {
       "Cannot convert value to integer string",
     );
     expect(() => uint64Column.mapFromDriverValue("-1")).toThrow("Cannot convert value to integer string");
+  });
 
+  it("decodes string columns including type coercion and rejection", function testStringColumns() {
     const stringColumn = string();
     expect(stringColumn.mapFromDriverValue("plain")).toBe("plain");
     expect(stringColumn.mapFromDriverValue(6)).toBe("6");
     expect(stringColumn.mapFromDriverValue(true)).toBe("true");
     expect(stringColumn.mapFromDriverValue(new Date("2026-04-21T00:00:00.000Z"))).toBe("2026-04-21T00:00:00.000Z");
     expect(() => stringColumn.mapFromDriverValue({})).toThrow("Cannot convert value to string");
+  });
 
+  it("decodes date/time columns and rejects malformed temporal inputs", function testTemporalDecoders() {
     const dateColumn = dateTime64({ precision: 3, timezone: "UTC" });
     const originalDate = new Date("2026-04-21T00:00:00.000Z");
     expect(dateColumn.mapFromDriverValue(originalDate)).toBe(originalDate);
@@ -106,46 +110,61 @@ describe("ck-orm columns", function describeClickHouseORMColumns() {
     expect(() => dateColumn.mapFromDriverValue("not-a-date")).toThrow("Cannot convert value to valid Date");
     expect(() => dateTime().mapFromDriverValue("2026-02-30 01:02:03")).toThrow("Cannot convert value to valid Date");
 
-    expect(date({ encode: "utc" }).mapToDriverValue(new Date("2026-06-15T23:59:00.000Z"))).toBe("2026-06-15");
-    expect(
-      date32("business_day", { encode: (value) => value.toISOString().slice(0, 10) }).mapToDriverValue(
-        new Date("2026-06-16T01:00:00.000Z"),
-      ),
-    ).toBe("2026-06-16");
-    expect(date({ encode: "local" }).mapToDriverValue(new Date("2026-06-15T23:59:00.000Z"))).toMatch(
-      /^\d{4}-\d{2}-\d{2}$/,
+    // Time/Time64 映射为 string——ClickHouse Time 可负、可超 24h，
+    // JS Date 无法表达。读 / 写都用 'HH:MM:SS[.fff]' 字符串。
+    expect(time().mapFromDriverValue("12:34:56")).toBe("12:34:56");
+    expect(time().mapFromDriverValue("-01:30:00")).toBe("-01:30:00");
+    expect(time().mapFromDriverValue("999:59:59")).toBe("999:59:59");
+    expect(time64({ precision: 3 }).mapFromDriverValue("12:34:56.789")).toBe("12:34:56.789");
+    expect(time64({ precision: 6 }).mapFromDriverValue("12:34:56.789123")).toBe("12:34:56.789123");
+    expect(time64({ precision: 9 }).mapFromDriverValue("12:34:56.789123456")).toBe("12:34:56.789123456");
+    // Time/Time64 mapToDriverValue 接受字符串和数字直通；拒 Date
+    expect(time().mapToDriverValue("12:34:56")).toBe("12:34:56");
+    expect(time().mapToDriverValue(5400 as never)).toBe(5400);
+    expect(() => time().mapToDriverValue(new Date() as never)).toThrow(
+      /Time column values must be a 'HH:MM:SS' string or integer; JS Date is not appropriate/,
     );
+    expect(() => time64({ precision: 3 }).mapToDriverValue(new Date() as never)).toThrow(
+      /Time64 column values must be a 'HH:MM:SS' string or integer/,
+    );
+  });
+
+  it("encodes Date/Date32 columns by extracting UTC YYYY-MM-DD from Date inputs", function testDateEncoders() {
+    // Date 直通：UTC 抽 YYYY-MM-DD（与 toISOString() 第一段一致）
+    expect(date().mapToDriverValue(new Date("2026-06-15T23:59:00.000Z"))).toBe("2026-06-15");
+    expect(date32().mapToDriverValue(new Date("2026-06-16T01:00:00.000Z"))).toBe("2026-06-16");
+    // 字符串/数字直通（库不再做客户端格式校验，交给 ClickHouse 服务端）
     expect(date().mapToDriverValue("2026-06-17" as never)).toBe("2026-06-17");
-    expect(() => date().mapToDriverValue(new Date("2026-06-15T00:00:00.000Z"))).toThrow(
-      'Date column values passed as JavaScript Date require ckType.date({ encode: "utc" | "local" | fn })',
+    expect(date32().mapToDriverValue(0 as never)).toBe(0);
+    // 拒绝其他类型
+    expect(() => date().mapToDriverValue({} as never)).toThrow("Date column values must be a Date, string, or number");
+    expect(() => date32().mapToDriverValue(true as never)).toThrow(
+      "Date32 column values must be a Date, string, or number",
     );
-    expect(() => date({ encode: "utc" }).mapToDriverValue("20260617" as never)).toThrow(
-      "Date column values must use YYYY-MM-DD format",
+    // 拒绝 Invalid Date
+    expect(() => date().mapToDriverValue(new Date("not-a-date"))).toThrow(
+      "Date column values must be a Date, string, or number",
     );
-    expect(() => date({ encode: "utc" }).mapToDriverValue("2026-99-17" as never)).toThrow(
-      "Date column values must use a valid YYYY-MM-DD date",
-    );
-    expect(() => date({ encode: "utc" }).mapToDriverValue(new Date("not-a-date"))).toThrow(
-      "Date column values must be a valid Date or YYYY-MM-DD string",
-    );
+  });
 
-    const parsedTime = time().mapFromDriverValue("12:34:56");
-    expect(parsedTime).toBeInstanceOf(Date);
-    expect(parsedTime.getUTCHours()).toBe(12);
-    expect(parsedTime.getUTCMinutes()).toBe(34);
-    expect(parsedTime.getUTCSeconds()).toBe(56);
-
-    const parsedTime64 = time64({ precision: 6 }).mapFromDriverValue("12:34:56.789123");
-    expect(parsedTime64).toBeInstanceOf(Date);
-    expect(parsedTime64.getUTCMilliseconds()).toBe(789);
-    expect(() => time().mapFromDriverValue("12:99:56")).toThrow("Cannot convert value to valid Date");
-
+  it("decodes boolean columns strictly, rejecting NaN/Infinity/object", function testBooleanDecoder() {
     const booleanColumn = bool();
     expect(booleanColumn.mapFromDriverValue(true)).toBe(true);
     expect(booleanColumn.mapFromDriverValue(0)).toBe(false);
     expect(booleanColumn.mapFromDriverValue("TRUE")).toBe(true);
     expect(() => booleanColumn.mapFromDriverValue({})).toThrow("Cannot convert value to boolean");
+    // Non-finite numbers should be rejected rather than silently coerced to true.
+    expect(() => booleanColumn.mapFromDriverValue(Number.NaN)).toThrow("Cannot convert non-finite number to boolean");
+    expect(() => booleanColumn.mapFromDriverValue(Number.POSITIVE_INFINITY)).toThrow(
+      "Cannot convert non-finite number to boolean",
+    );
+    expect(() => booleanColumn.mapFromDriverValue(Number.NEGATIVE_INFINITY)).toThrow(
+      "Cannot convert non-finite number to boolean",
+    );
+  });
 
+  it("compiles bound columns with table and alias prefixes", function testColumnBinding() {
+    const intColumn = int32();
     expect(() => intColumn.compile(buildContext())).toThrow("Unbound column cannot be compiled: Int32");
 
     const bound = intColumn.bind({
@@ -186,6 +205,28 @@ describe("ck-orm columns", function describeClickHouseORMColumns() {
     expect(dateTime().sqlType).toBe("DateTime");
     expect(dateTime64({ precision: 6 }).sqlType).toBe("DateTime64(6)");
     expect(dateTime64({ precision: 6, timezone: "Asia/Shanghai" }).sqlType).toBe("DateTime64(6, 'Asia/Shanghai')");
+
+    // dateTime/dateTime64 mapToDriverValue passes Date through unchanged.
+    // Each transport path serialises it natively: JSONEachRow uses JSON.stringify
+    // (→ ISO 8601 with Z, accepted via auto-enabled best_effort) while SQL
+    // parameter binding uses formatQueryParamValue (→ Unix seconds, timezone-agnostic).
+    // Strings/numbers pass through verbatim; other types are rejected.
+    const driverDate = new Date("2026-04-21T12:34:56.789Z");
+    expect(dateTime().mapToDriverValue(driverDate)).toBe(driverDate);
+    expect(dateTime64({ precision: 3 }).mapToDriverValue(driverDate)).toBe(driverDate);
+    expect(dateTime64({ precision: 6 }).mapToDriverValue(driverDate)).toBe(driverDate);
+    expect(dateTime().mapToDriverValue("2026-04-21 12:34:56" as never)).toBe("2026-04-21 12:34:56");
+    expect(dateTime64({ precision: 3 }).mapToDriverValue(1_700_000_000 as never)).toBe(1_700_000_000);
+    expect(() => dateTime().mapToDriverValue({} as never)).toThrow(
+      "DateTime column values must be a Date, string, or number",
+    );
+    expect(() => dateTime64({ precision: 3 }).mapToDriverValue(true as never)).toThrow(
+      "DateTime64 column values must be a Date, string, or number",
+    );
+    // Invalid Date is rejected with the same error path.
+    expect(() => dateTime().mapToDriverValue(new Date(Number.NaN))).toThrow(
+      "DateTime column values must be a Date, string, or number",
+    );
     expect(uuid().sqlType).toBe("UUID");
     expect(ipv4().sqlType).toBe("IPv4");
     expect(ipv6().sqlType).toBe("IPv6");
@@ -207,7 +248,14 @@ describe("ck-orm columns", function describeClickHouseORMColumns() {
     );
 
     expect(decimal({ precision: 18, scale: 5 }).mapToDriverValue("12.50000")).toBe("12.50000");
-    expect(decimal({ precision: 18, scale: 5 }).mapToDriverValue(12.5 as never)).toBe("12.5");
+    // JS number is rejected to prevent silent precision loss (e.g. `0.1 + 0.2`
+    // would become `"0.30000000000000004"`, and `1e30` becomes `"1e+30"` which
+    // ClickHouse cannot parse as Decimal).
+    expect(() => decimal({ precision: 18, scale: 5 }).mapToDriverValue(12.5 as never)).toThrow(
+      /requires a string or bigint value to preserve precision/,
+    );
+    // BigInt is accepted (it has exact decimal representation in JS for ints).
+    expect(decimal({ precision: 18, scale: 5 }).mapToDriverValue(BigInt(123) as never)).toBe("123");
 
     const amount = decimal({ precision: 18, scale: 5 });
     expect(amount.decimalConfig).toEqual({ precision: 18, scale: 5 });
@@ -252,7 +300,6 @@ describe("ck-orm columns", function describeClickHouseORMColumns() {
     expect(() => string("bad-name")).toThrow("Invalid SQL identifier: bad-name");
     expect(() => decimal("reward_points" as never)).toThrow("decimal() requires a config object after the column name");
     expect(() => decimal(20 as never)).toThrow("decimal() requires a config object");
-    expect(() => date("business_day", "bad" as never)).toThrow("date() config must be an object when provided");
   });
 
   it("covers enum, nullable, array, tuple, map, variant and nested types", function testCompositeColumns() {
@@ -267,7 +314,11 @@ describe("ck-orm columns", function describeClickHouseORMColumns() {
 
     const nullableString = nullable(string());
     expect(nullableString.mapFromDriverValue(null)).toBeNull();
-    expect(nullableString.mapFromDriverValue(undefined)).toBeNull();
+    // `undefined` is rejected because ClickHouse JSON never emits it.
+    // Treating it as null would mask driver bugs.
+    expect(() => nullableString.mapFromDriverValue(undefined)).toThrow(
+      "Nullable column received undefined from the driver",
+    );
     expect(nullableString.mapFromDriverValue(7)).toBe("7");
     expect(nullableString.mapToDriverValue(null)).toBeNull();
     expect(nullableString.mapToDriverValue("ok")).toBe("ok");
@@ -290,7 +341,11 @@ describe("ck-orm columns", function describeClickHouseORMColumns() {
     expect(namedStringArray.sqlType).toBe("Array(String)");
     const nullableStringArray = array(nullable(string()));
     expect(nullableStringArray.sqlType).toBe("Array(Nullable(String))");
-    expect(nullableStringArray.mapFromDriverValue(["a", null, undefined])).toEqual(["a", null, null]);
+    // ClickHouse never emits undefined; the array passes through nulls but
+    // wraps any stray undefined element as a decode error with a clear path.
+    expect(() => nullableStringArray.mapFromDriverValue(["a", null, undefined])).toThrow(
+      /Nullable column received undefined from the driver/,
+    );
 
     const tupleColumn = tuple(string(), int32());
     expect(tupleColumn.sqlType).toBe("Tuple(String, Int32)");

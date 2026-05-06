@@ -288,7 +288,14 @@ export const normalizeAggregateFunctionSignature = (value: unknown): string => {
   return trimmed;
 };
 
-const validateAggregateFunctionArgs = (name: string, args: readonly string[]): void => {
+// Maximum recursion depth for parameterised type literals. Real ClickHouse
+// types (e.g. `Array(Map(String, Tuple(Int64, Array(String))))`) rarely
+// exceed 5 levels; 100 is a generous safety net that prevents pathological
+// input (`Array(Array(Array(... 50000 levels ...)))`) from blowing the call
+// stack via deep recursion.
+const MAX_TYPE_NESTING_DEPTH = 100;
+
+const validateAggregateFunctionArgs = (name: string, args: readonly string[], depth: number): void => {
   if (args.length < 2) {
     throw createClientValidationError(`Invalid ClickHouse ${name} type literal`);
   }
@@ -298,32 +305,35 @@ const validateAggregateFunctionArgs = (name: string, args: readonly string[]): v
     throw createClientValidationError(`Invalid ClickHouse ${name} type literal`);
   }
   for (const arg of args.slice(1)) {
-    validateType(arg);
+    validateType(arg, depth);
   }
 };
 
-const validateTupleElement = (value: string): void => {
+const validateTupleElement = (value: string, depth: number): void => {
   try {
-    validateType(value);
+    validateType(value, depth);
     return;
   } catch {
     const named = splitTopLevelWhitespace(value);
     if (!named || !isValidIdentifier(named.left)) {
       throw createClientValidationError(`Invalid ClickHouse tuple element type: ${value}`);
     }
-    validateType(named.right);
+    validateType(named.right, depth);
   }
 };
 
-const validateNestedElement = (value: string): void => {
+const validateNestedElement = (value: string, depth: number): void => {
   const named = splitTopLevelWhitespace(value);
   if (!named || !isValidIdentifier(named.left)) {
     throw createClientValidationError(`Invalid ClickHouse Nested field type: ${value}`);
   }
-  validateType(named.right);
+  validateType(named.right, depth);
 };
 
-const validateType = (value: string): void => {
+const validateType = (value: string, depth = 0): void => {
+  if (depth > MAX_TYPE_NESTING_DEPTH) {
+    throw createClientValidationError(`ClickHouse type literal nested deeper than ${MAX_TYPE_NESTING_DEPTH} levels`);
+  }
   const trimmed = value.trim();
   const { name, args } = splitTypeCall(trimmed);
   if (!isValidIdentifier(name)) {
@@ -337,25 +347,26 @@ const validateType = (value: string): void => {
     return;
   }
 
+  const nextDepth = depth + 1;
   const parts = splitTopLevelTypeList(args);
   if (name === "Nullable" || name === "Array" || name === "LowCardinality") {
     if (parts.length !== 1) {
       throw createClientValidationError(`ClickHouse ${name} type expects exactly one argument`);
     }
-    validateType(parts[0]);
+    validateType(parts[0], nextDepth);
     return;
   }
 
   if (name === "Tuple" || name === "Variant") {
     for (const part of parts) {
-      name === "Tuple" ? validateTupleElement(part) : validateType(part);
+      name === "Tuple" ? validateTupleElement(part, nextDepth) : validateType(part, nextDepth);
     }
     return;
   }
 
   if (name === "Nested") {
     for (const part of parts) {
-      validateNestedElement(part);
+      validateNestedElement(part, nextDepth);
     }
     return;
   }
@@ -364,8 +375,8 @@ const validateType = (value: string): void => {
     if (parts.length !== 2) {
       throw createClientValidationError("ClickHouse Map type expects exactly two arguments");
     }
-    validateType(parts[0]);
-    validateType(parts[1]);
+    validateType(parts[0], nextDepth);
+    validateType(parts[1], nextDepth);
     return;
   }
 
@@ -432,7 +443,7 @@ const validateType = (value: string): void => {
   }
 
   if (name === "AggregateFunction" || name === "SimpleAggregateFunction") {
-    validateAggregateFunctionArgs(name, parts);
+    validateAggregateFunctionArgs(name, parts, nextDepth);
     return;
   }
 
@@ -448,7 +459,7 @@ const validateType = (value: string): void => {
     if (parts.length !== 2) {
       throw createClientValidationError("ClickHouse QBit type expects element type and dimensions");
     }
-    validateType(parts[0]);
+    validateType(parts[0], nextDepth);
     requireUnsignedInteger(parts[1], "QBit dimensions");
     return;
   }

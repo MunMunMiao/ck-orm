@@ -7,8 +7,6 @@ import {
   type InferSelectSchema,
 } from "../ck-orm";
 
-const encodeUtcDate = (date: Date) => date.toISOString().slice(0, 10);
-
 export const probeTelemetry = ckTable(
   "probe_telemetry",
   {
@@ -18,8 +16,8 @@ export const probeTelemetry = ckTable(
     sampleId: ckType.int64("sample_id"),
     signalStrength: ckType.decimal("signal_strength", { precision: 20, scale: 5 }),
     status: ckType.int16(),
-    observedDay: ckType.date("observed_day", { encode: "utc" }),
-    missionDay: ckType.date32("mission_day", { encode: encodeUtcDate }),
+    observedDay: ckType.date("observed_day"),
+    missionDay: ckType.date32("mission_day"),
     createdAt: ckType.dateTime64("created_at", { precision: 3, timezone: "UTC" }),
     deletedAt: ckType.nullable("deleted_at", ckType.dateTime64({ precision: 3, timezone: "UTC" })),
     tags: ckType.array(ckType.string()),
@@ -56,7 +54,7 @@ export const probeSignalRollup = ckTable(
   {
     probeId: ckType.string("probe_id"),
     bucketStart: ckType.dateTime64("bucket_start", { precision: 3, timezone: "UTC" }),
-    bucketDay: ckType.date("bucket_day", { encode: "utc" }),
+    bucketDay: ckType.date("bucket_day"),
     totalSignalStrength: ckType.decimal("total_signal_strength", { precision: 38, scale: 5 }),
     sampleCount: ckType.uint64("sample_count"),
     updatedAt: ckType.dateTime64("updated_at", { precision: 3, timezone: "UTC" }),

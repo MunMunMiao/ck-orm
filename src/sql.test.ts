@@ -149,6 +149,42 @@ describe("ck-orm sql", function describeClickHouseORMSql() {
     );
   });
 
+  it("infers BigInt parameter types based on value range, not always Int64", function testBigIntInference() {
+    // Within Int64 range
+    expect(compileSql(sql`select ${0n}`).paramTypes).toEqual({ orm_param1: "Int64" });
+    expect(compileSql(sql`select ${(1n << 63n) - 1n}`).paramTypes).toEqual({ orm_param1: "Int64" });
+    expect(compileSql(sql`select ${-(1n << 63n)}`).paramTypes).toEqual({ orm_param1: "Int64" });
+
+    // Above Int64 max but within UInt64 range
+    expect(compileSql(sql`select ${1n << 63n}`).paramTypes).toEqual({ orm_param1: "UInt64" });
+    expect(compileSql(sql`select ${(1n << 64n) - 1n}`).paramTypes).toEqual({ orm_param1: "UInt64" });
+
+    // Negative beyond Int64 falls into Int128
+    expect(compileSql(sql`select ${-(1n << 63n) - 1n}`).paramTypes).toEqual({ orm_param1: "Int128" });
+
+    // Above UInt64 max — needs Int128 / UInt128 / Int256 / UInt256
+    expect(compileSql(sql`select ${1n << 64n}`).paramTypes).toEqual({ orm_param1: "Int128" });
+    expect(compileSql(sql`select ${1n << 128n}`).paramTypes).toEqual({ orm_param1: "Int256" });
+    expect(compileSql(sql`select ${1n << 255n}`).paramTypes).toEqual({ orm_param1: "UInt256" });
+
+    // Truly out of range — explicit error rather than silent mod 2^64 truncation.
+    expect(() => compileSql(sql`select ${1n << 256n}`)).toThrow("out of all ClickHouse integer ranges");
+  });
+
+  it("rejects circular references in object/array/map params instead of overflowing the stack", function testCyclicRejection() {
+    const cyclicObj: Record<string, unknown> = { a: 1 };
+    cyclicObj.self = cyclicObj;
+    expect(() => compileSql(sql`select ${cyclicObj}`)).toThrow(/circular reference/);
+
+    const cyclicArr: unknown[] = [1];
+    cyclicArr.push(cyclicArr);
+    expect(() => compileSql(sql`select ${cyclicArr}`)).toThrow(/circular reference/);
+
+    const cyclicMap = new Map<string, unknown>();
+    cyclicMap.set("self", cyclicMap);
+    expect(() => compileSql(sql`select ${cyclicMap}`)).toThrow(/circular reference/);
+  });
+
   it("supports sql.decimal helper for Decimal precision casts", function testSqlDecimalHelper() {
     const cast = sql.decimal(sql`sum(${users.id})`, 20, 5);
     expect(compileSql(cast).query).toBe("CAST(sum(`users`.`id`) AS Decimal(20, 5))");

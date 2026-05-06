@@ -82,8 +82,8 @@ const typedEvents = ckTable(
   "typed_events",
   {
     id: int32(),
-    businessDay: date({ encode: "utc" }),
-    localDay: date32("local_day", { encode: (value) => value.toISOString().slice(0, 10) }),
+    businessDay: date(),
+    localDay: date32("local_day"),
     optionalNote: nullable(string()),
     pair: tuple(string(), int32()),
     entries: nested({
@@ -102,8 +102,8 @@ const arrayEvents = ckTable(
   {
     id: int32(),
     active: bool(),
-    businessDays: array(date({ encode: "utc" })),
-    localDays: array(date32({ encode: (value) => value.toISOString().slice(0, 10) })),
+    businessDays: array(date()),
+    localDays: array(date32()),
     decimalValues: array(decimal({ precision: 10, scale: 2 })),
   },
   (table) => ({

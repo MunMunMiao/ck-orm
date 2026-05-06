@@ -5,7 +5,6 @@ import {
   toIntegerString as toIntegerStringCoercion,
   toNumber as toNumberCoercion,
   toStringValue as toStringCoercion,
-  toTimeDate as toTimeDateCoercion,
 } from "./coercion";
 import type { AnyColumn } from "./columns";
 import { createClientValidationError, createDecodeError } from "./errors";
@@ -147,7 +146,7 @@ const resolveCoalesceFallbackSqlType = (firstSqlType: string | undefined, fallba
 const numberDecoder: Decoder<number> = toNumberCoercion;
 const stringDecoder: Decoder<string> = toStringCoercion;
 const dateDecoder: Decoder<Date> = toDateCoercion;
-const timeDecoder: Decoder<Date> = toTimeDateCoercion;
+const timeStringDecoder: Decoder<string> = toStringCoercion;
 const booleanDecoder: Decoder<boolean> = toBooleanCoercion;
 
 const nullableDecoder =
@@ -1587,23 +1586,30 @@ const scalarFns = {
       "Nullable",
     );
   },
+  /**
+   * `toTime(DateTime)` is actually `toTimeWithFixedDate`: it pins the date to
+   * 1970-01-02 while preserving the time-of-day, returning a `DateTime` (not
+   * the new `Time` data type). The decoder reflects that — callers receive a
+   * JS `Date`. For the `Time` data type, use `toTime64(value, 0)` or read a
+   * `Time` column directly (those return strings).
+   */
   toTime(expression: unknown): Selection<Date> {
-    return createTypedConversionExpression("toTime", [expression], timeDecoder, "Time");
+    return createTypedConversionExpression("toTime", [expression], dateDecoder, "DateTime");
   },
   toTimeOrNull(expression: unknown): Selection<Date | null> {
-    return createNullableTypedConversionExpression("toTimeOrNull", [expression], timeDecoder, "Time");
+    return createNullableTypedConversionExpression("toTimeOrNull", [expression], dateDecoder, "DateTime");
   },
   toTimeOrZero(expression: unknown): Selection<Date> {
-    return createTypedConversionExpression("toTimeOrZero", [expression], timeDecoder, "Time");
+    return createTypedConversionExpression("toTimeOrZero", [expression], dateDecoder, "DateTime");
   },
-  toTime64(expression: unknown, precision: number): Selection<Date> {
-    return createTime64Expression("toTime64", expression, precision, timeDecoder);
+  toTime64(expression: unknown, precision: number): Selection<string> {
+    return createTime64Expression("toTime64", expression, precision, timeStringDecoder);
   },
-  toTime64OrNull(expression: unknown, precision: number): Selection<Date | null> {
-    return createTime64Expression("toTime64OrNull", expression, precision, nullableDecoder(timeDecoder));
+  toTime64OrNull(expression: unknown, precision: number): Selection<string | null> {
+    return createTime64Expression("toTime64OrNull", expression, precision, nullableDecoder(timeStringDecoder));
   },
-  toTime64OrZero(expression: unknown, precision: number): Selection<Date> {
-    return createTime64Expression("toTime64OrZero", expression, precision, timeDecoder);
+  toTime64OrZero(expression: unknown, precision: number): Selection<string> {
+    return createTime64Expression("toTime64OrZero", expression, precision, timeStringDecoder);
   },
   toInterval(value: unknown, unit: string): Selection<unknown> {
     return createIntervalExpression("toInterval", value, unit);

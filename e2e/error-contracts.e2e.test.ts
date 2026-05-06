@@ -91,7 +91,12 @@ describeE2E("ck-orm e2e error contracts", function describeErrorContracts() {
         auditEvents,
         [
           {
-            id: "bad-id",
+            // `id` is intentionally valid so client-side schema-aware
+            // encoding lets the row reach the server. The malformed
+            // `created_at` string is passed through unchanged (the dateTime64
+            // encoder accepts pre-formatted strings) and triggers the
+            // ClickHouse-side parsing error this test wants to classify.
+            id: 1,
             user_id: 1,
             event_name: "broken_insert",
             created_at: "not-a-datetime",
@@ -159,7 +164,10 @@ describeE2E("ck-orm e2e error contracts", function describeErrorContracts() {
               created_at: "2026-04-24 01:02:03.456",
             },
             {
-              id: "bad-id",
+              // Same as the previous test: keep the typed numeric field valid
+              // so client-side encoding lets the row reach ClickHouse, where
+              // the malformed `created_at` string is rejected.
+              id: 2,
               label: "invalid-row",
               created_at: "not-a-date",
             } as unknown as Record<string, unknown>,

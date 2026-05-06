@@ -238,7 +238,7 @@ describeE2E("ck-orm e2e write paths", function describeWritePaths() {
     const tempTable = createTempTableName("tmp_builder_date_tuple_nested");
     const scope = ckTable(tempTable, {
       id: ckType.int32(),
-      businessDay: ckType.date("business_day", { encode: "utc" }),
+      businessDay: ckType.date("business_day"),
       optionalNote: ckType.nullable("optional_note", ckType.string()),
       pair: ckType.tuple(ckType.string(), ckType.int32()),
       items: ckType.nested({

@@ -105,10 +105,10 @@ export const getCountDecoder = <TMode extends CountMode>(mode: TMode): Decoder<C
 export const wrapCountSql = (inner: SQLFragment, mode: CountMode): SQLFragment => {
   switch (mode) {
     case "safe":
-      return sql`${sql.raw("toString(")}${inner}${sql.raw(")")}`;
+      return sql`toString(${inner})`;
     case "mixed":
-      return sql`${sql.raw("toUInt64(")}${inner}${sql.raw(")")}`;
+      return sql`toUInt64(${inner})`;
     case "unsafe":
-      return sql`${sql.raw("toFloat64(")}${inner}${sql.raw(")")}`;
+      return sql`toFloat64(${inner})`;
   }
 };

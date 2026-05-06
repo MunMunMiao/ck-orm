@@ -173,8 +173,8 @@ describeE2E("ck-orm e2e operators", function describeOperators() {
     const scope = ckTable(tempTable, {
       id: ckType.int32(),
       active: ckType.bool(),
-      business_days: ckType.array(ckType.date({ encode: "utc" })),
-      local_days: ckType.array(ckType.date32({ encode: (value) => value.toISOString().slice(0, 10) })),
+      business_days: ckType.array(ckType.date()),
+      local_days: ckType.array(ckType.date32()),
     });
 
     await db.runInSession(async (session) => {

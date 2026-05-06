@@ -35,5 +35,9 @@ if [[ "$healthy" != "1" ]]; then
 fi
 
 docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" run --rm --build seed
+# `seed` and `e2e` services share the same Dockerfile + build context, so the
+# second `--build` is effectively a cache hit but it ensures the e2e image
+# picks up any test file added since the last cached build. The third run
+# reuses the already-fresh image.
 docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" run --rm --no-deps --build e2e bun test e2e/dataset-smoke.e2e.test.ts
-docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" run --rm --no-deps --build e2e
+docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" run --rm --no-deps e2e

@@ -221,8 +221,8 @@ type _ChTypeDataMatrix = Expect<
       readonly ring: readonly [number, number][];
       readonly simpleAggregateFunction: number;
       readonly string: string;
-      readonly time: Date;
-      readonly time64: Date;
+      readonly time: string;
+      readonly time64: string;
       readonly tuple: readonly [number, string];
       readonly uint8: number;
       readonly uint16: number;

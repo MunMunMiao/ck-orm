@@ -458,9 +458,6 @@ describe("ck-orm runtime/config validation", function describeConfigValidation()
   it("formats special query params and search params for transport helpers", function testQueryParamFormatting() {
     const wholeSecond = new Date("2026-04-21T00:00:00.000Z");
     const fractionalSecond = new Date("2026-04-21T00:00:00.123Z");
-    const expectedWholeSecond = Math.floor(wholeSecond.getTime() / 1000)
-      .toString()
-      .padStart(10, "0");
 
     expect(mergeQueryParams(undefined, undefined)).toEqual({});
     expect(formatQueryParamValue(Number.NaN)).toBe("nan");
@@ -468,8 +465,8 @@ describe("ck-orm runtime/config validation", function describeConfigValidation()
     expect(formatQueryParamValue(Number.NEGATIVE_INFINITY)).toBe("-inf");
     expect(formatQueryParamValue(true)).toBe("1");
     expect(formatQueryParamValue(false, { nested: true })).toBe("FALSE");
-    expect(formatQueryParamValue(wholeSecond)).toBe(expectedWholeSecond);
-    expect(formatQueryParamValue(fractionalSecond)).toBe(`${expectedWholeSecond}.123`);
+    expect(formatQueryParamValue(wholeSecond)).toBe("2026-04-21 00:00:00");
+    expect(formatQueryParamValue(fractionalSecond)).toBe("2026-04-21 00:00:00.123");
     expect(formatQueryParamValue(["vip", null, false])).toBe("['vip',NULL,FALSE]");
     expect(formatQueryParamValue(["login", 42], "Tuple(String, Int32)")).toBe("('login',42)");
     expect(formatQueryParamValue([["login", 42]], "Array(Tuple(String, Int32))")).toBe("[('login',42)]");
@@ -530,6 +527,27 @@ describe("ck-orm runtime/config validation", function describeConfigValidation()
         }),
       ).toThrow("conflicts with a reserved ClickHouse HTTP parameter");
     }
+  });
+
+  it("formats Date params using ClickHouse SQL date format including pre-epoch values", function testFormatDatePreEpoch() {
+    // Pre-epoch dates that previously got mangled by `padStart(10, "0")` (e.g.
+    // "00000000-1.999"). The ClickHouse SQL date format is uniform across the
+    // entire Date32 range so 1938-1970 dates round-trip correctly via
+    // ClickHouse's query-parameter parser.
+    expect(formatQueryParamValue(new Date("1969-12-31T23:59:59.999Z"))).toBe("1969-12-31 23:59:59.999");
+    expect(formatQueryParamValue(new Date("1969-12-31T23:00:00.000Z"))).toBe("1969-12-31 23:00:00");
+    expect(formatQueryParamValue(new Date("1969-01-01T00:00:00.000Z"))).toBe("1969-01-01 00:00:00");
+    expect(formatQueryParamValue(new Date("1900-01-01T00:00:00.000Z"))).toBe("1900-01-01 00:00:00");
+    expect(formatQueryParamValue(new Date(0))).toBe("1970-01-01 00:00:00");
+    expect(formatQueryParamValue(new Date(-1))).toBe("1969-12-31 23:59:59.999");
+
+    // Far-future dates are formatted without scientific notation surprises
+    expect(formatQueryParamValue(new Date("2299-12-31T23:59:59.999Z"))).toBe("2299-12-31 23:59:59.999");
+
+    // Invalid Date is rejected at format time rather than producing "NaN-NaN-NaN"
+    expect(() => formatQueryParamValue(new Date(Number.NaN))).toThrow(
+      "Cannot format invalid Date as ClickHouse date-time",
+    );
   });
 
   it("covers config guards, authless header creation and async insert normalization", function testRuntimeConfigBranches() {
@@ -681,6 +699,33 @@ describe("ck-orm runtime/config validation", function describeConfigValidation()
         wait_end_of_query: 1,
         wait_for_async_insert: 1,
       });
+
+      // B1: wait_end_of_query is NOT injected for streaming parseMode
+      // (json_each_row), since streaming explicitly needs the body to come
+      // back early and incrementally.
+      expect(
+        normalizeTransportSettings({
+          settings: {},
+          parseMode: "json_each_row",
+        }),
+      ).not.toHaveProperty("wait_end_of_query");
+
+      // B1: when caller already set wait_end_of_query, do not override.
+      expect(
+        normalizeTransportSettings({
+          settings: { wait_end_of_query: 0 },
+          parseMode: "json",
+        }),
+      ).toMatchObject({ wait_end_of_query: 0 });
+
+      // B2: explicit wait_for_async_insert=0 with async_insert=1 must throw
+      // because the row would silently buffer and disappear from later reads.
+      expect(() =>
+        normalizeTransportSettings({
+          settings: { async_insert: 1, wait_for_async_insert: 0 },
+          parseMode: "json",
+        }),
+      ).toThrow("ck-orm requires wait_for_async_insert=1 when async_insert=1");
     } finally {
       if (originalRequest === undefined) {
         Reflect.deleteProperty(globalThis, "Request");

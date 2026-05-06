@@ -133,29 +133,14 @@ export const toDate = (value: unknown): Date => {
   return date;
 };
 
-const TIME_VALUE_PATTERN = /^(-?)(\d+):([0-5]\d):([0-5]\d)(?:\.(\d{1,9}))?$/;
-
-export const toTimeDate = (value: unknown): Date => {
-  if (typeof value === "string") {
-    const match = TIME_VALUE_PATTERN.exec(value);
-    if (match) {
-      const [, sign, hoursRaw, minutesRaw, secondsRaw, fractionalRaw] = match;
-      const hours = Number(hoursRaw);
-      const minutes = Number(minutesRaw);
-      const seconds = Number(secondsRaw);
-      const milliseconds = Number((fractionalRaw ?? "").slice(0, 3).padEnd(3, "0"));
-      const totalMilliseconds = (((hours * 60 + minutes) * 60 + seconds) * 1000 + milliseconds) * (sign ? -1 : 1);
-      return new Date(totalMilliseconds);
-    }
-  }
-  return toDate(value);
-};
-
 export const toBoolean = (value: unknown): boolean => {
   if (typeof value === "boolean") {
     return value;
   }
   if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw createDecodeError(`Cannot convert non-finite number to boolean: ${String(value)}`, value);
+    }
     return value !== 0;
   }
   if (typeof value === "string") {

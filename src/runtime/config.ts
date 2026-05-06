@@ -1,5 +1,6 @@
 import { createClientValidationError } from "../errors";
 import { getArrayElementType, getTupleElementTypes } from "../internal/clickhouse-type";
+import { formatClickHouseDateTime } from "../internal/datetime";
 import type {
   ClickHouseORMInstrumentation,
   ClickHouseORMLogger,
@@ -440,11 +441,9 @@ export const formatQueryParamValue = (
     return wrapStringInQuotes ? `'${escaped}'` : escaped;
   }
   if (value instanceof Date) {
-    const seconds = Math.floor(value.getTime() / 1000)
-      .toString()
-      .padStart(10, "0");
-    const milliseconds = value.getUTCMilliseconds();
-    return milliseconds === 0 ? seconds : `${seconds}.${milliseconds.toString().padStart(3, "0")}`;
+    // Use ms precision when present, second precision otherwise — keeps the
+    // wire format as terse as possible without losing information.
+    return formatClickHouseDateTime(value, value.getUTCMilliseconds() === 0 ? 0 : 3);
   }
   if (Array.isArray(value)) {
     const tupleElementTypes = getTupleElementTypes(sqlType);

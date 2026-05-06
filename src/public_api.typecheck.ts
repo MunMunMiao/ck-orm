@@ -54,7 +54,7 @@ const nullableUInt64Selection: Selection<string | null> = fn.toUInt64OrNull("bad
 const dateOrNullSelection: Selection<Date | null> = fn.toDateOrNull("bad");
 const parsedDateTimeSelection: Selection<Date> = fn.parseDateTime64BestEffort("2026-01-01 00:00:00.123", 3, "UTC");
 const parsedDateTimeOrNullSelection: Selection<Date | null> = fn.parseDateTime64OrNull("bad", "%F %T.%f", "UTC");
-const timeSelection: Selection<Date> = fn.toTime64("12:34:56.123456", 6);
+const timeSelection: Selection<string> = fn.toTime64("12:34:56.123456", 6);
 const intervalSelection: Selection<unknown> = fn.toInterval(1, "day");
 const uuidSelection: Selection<string> = ck.fn.toUUIDOrZero("bad");
 void unixTimestampSelection;

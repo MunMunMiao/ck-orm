@@ -403,33 +403,35 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
       return rows;
     }
 
-    const mappings = Object.entries(table.columns)
-      .map(([schemaKey, column]) => ({
-        logicalKey: column.key ?? schemaKey,
-        physicalName: column.name ?? schemaKey,
-      }))
-      .filter((mapping) => mapping.logicalKey !== mapping.physicalName);
-
-    if (mappings.length === 0) {
-      return rows;
-    }
+    // Run every value through the column's `mapToDriverValue` so JSONEachRow
+    // sees ClickHouse-acceptable literals (e.g. Date → `'YYYY-MM-DD HH:MM:SS'`
+    // rather than `JSON.stringify` ISO 8601 with `Z`). Logical-to-physical
+    // key rename is folded into the same pass.
+    const columnEntries = Object.entries(table.columns).map(([schemaKey, column]) => ({
+      logicalKey: column.key ?? schemaKey,
+      physicalName: column.name ?? schemaKey,
+      mapToDriverValue: column.mapToDriverValue,
+    }));
+    const schemaKeys = new Set(columnEntries.flatMap((e) => [e.logicalKey, e.physicalName]));
 
     const mapRow = (row: Record<string, unknown>): Record<string, unknown> => {
-      let mapped: Record<string, unknown> | undefined;
-      for (const { logicalKey, physicalName } of mappings) {
-        if (!Object.hasOwn(row, logicalKey)) {
-          continue;
-        }
-        if (Object.hasOwn(row, physicalName)) {
+      const mapped: Record<string, unknown> = {};
+      // Pass through caller-supplied synthetic columns (e.g. `_peerdb_*`).
+      for (const [key, value] of Object.entries(row)) {
+        if (!schemaKeys.has(key)) mapped[key] = value;
+      }
+      for (const { logicalKey, physicalName, mapToDriverValue } of columnEntries) {
+        const fromLogical = Object.hasOwn(row, logicalKey);
+        const fromPhysical = logicalKey !== physicalName && Object.hasOwn(row, physicalName);
+        if (fromLogical && fromPhysical) {
           throw createClientValidationError(
             `insertJsonEachRow() row contains both logical key "${logicalKey}" and database column "${physicalName}"`,
           );
         }
-        mapped ??= { ...row };
-        mapped[physicalName] = mapped[logicalKey];
-        delete mapped[logicalKey];
+        if (fromLogical) mapped[physicalName] = mapToDriverValue(row[logicalKey]);
+        else if (fromPhysical) mapped[physicalName] = mapToDriverValue(row[physicalName]);
       }
-      return mapped ?? row;
+      return mapped;
     };
 
     if (Array.isArray(rows)) {
@@ -597,7 +599,20 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
       rows: readonly Record<string, unknown>[] | AsyncIterable<Record<string, unknown>>,
       options?: ClickHouseBaseQueryOptions,
     ) {
-      const mergedOptions = mergeOptions(options);
+      // The schema-aware encoder for `dateTime`/`dateTime64` columns emits
+      // ISO 8601 with `Z` so identical instants land at identical Unix scaled
+      // values regardless of the column's declared timezone. ClickHouse's
+      // default `date_time_input_format=basic` parser rejects the `Z` suffix,
+      // so the `best_effort` mode is enabled by default. Callers retain
+      // priority — explicit per-request or client-level overrides win.
+      const baseOptions = mergeOptions(options);
+      const mergedOptions: ClickHouseBaseQueryOptions = {
+        ...baseOptions,
+        clickhouse_settings: {
+          date_time_input_format: "best_effort",
+          ...(baseOptions.clickhouse_settings ?? {}),
+        },
+      };
       const tableName = toClickHouseTableName(table);
       const tableIdentifier = compileSql(sql.identifier({ table: tableName })).query;
       const mappedRows = mapLogicalJsonEachRowKeys(table, rows);

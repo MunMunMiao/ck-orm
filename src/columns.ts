@@ -1,4 +1,4 @@
-import { toBoolean, toDate, toIntegerNumber, toIntegerString, toNumber, toStringValue, toTimeDate } from "./coercion";
+import { toBoolean, toDate, toIntegerNumber, toIntegerString, toNumber, toStringValue } from "./coercion";
 import { createClientValidationError, createDecodeError, type DecodeError, isDecodeError } from "./errors";
 import { normalizeAggregateFunctionSignature, normalizeClickHouseTypeLiteral } from "./internal/clickhouse-type";
 import { assertDecimalParams, type DecimalParams, formatDecimalSqlType } from "./internal/decimal";
@@ -92,10 +92,6 @@ type PrecisionConfig = {
 type DateTime64Config = PrecisionConfig & {
   readonly timezone?: string;
 };
-export type DateColumnEncode = "utc" | "local" | ((date: Date) => string);
-type DateColumnConfig = {
-  readonly encode: DateColumnEncode;
-};
 type QBitConfig = {
   readonly dimensions: number;
 };
@@ -155,33 +151,6 @@ const parseNamedConfig = <TConfig extends object>(
   if (isObjectRecord(first) && second === undefined) return { config: first };
 
   throw createClientValidationError(`${builderName}() requires a config object`);
-};
-
-const parseOptionalNamedConfig = <TConfig extends object>(
-  builderName: string,
-  first?: string | TConfig,
-  second?: TConfig,
-): {
-  readonly name?: string;
-  readonly config?: TConfig;
-} => {
-  if (first === undefined) {
-    return {};
-  }
-
-  if (typeof first === "string") {
-    if (second !== undefined && !isObjectRecord(second)) {
-      throw createClientValidationError(`${builderName}() config must be an object when provided`);
-    }
-    return {
-      name: normalizeConfiguredName(first),
-      config: second,
-    };
-  }
-
-  if (isObjectRecord(first) && second === undefined) return { config: first };
-
-  throw createClientValidationError(`${builderName}() requires a column name, a config object, or both`);
 };
 
 const parseNamedValue = <TValue>(
@@ -452,8 +421,8 @@ export type FixedString<TData extends string = string> = Column<TData, `FixedStr
 export type Decimal<TData extends string = string> = Column<TData, string>;
 export type DateColumn<TData extends Date = Date> = Column<TData, "Date">;
 export type Date32<TData extends Date = Date> = Column<TData, "Date32">;
-export type Time<TData extends Date = Date> = Column<TData, "Time">;
-export type Time64<TData extends Date = Date> = Column<TData, string>;
+export type Time<TData extends string = string> = Column<TData, "Time">;
+export type Time64<TData extends string = string> = Column<TData, string>;
 export type DateTime<TData extends Date = Date> = Column<TData, "DateTime">;
 export type DateTime64<TData extends Date = Date> = Column<TData, string>;
 export type Bool<TData extends boolean = boolean> = Column<TData, "Bool">;
@@ -577,109 +546,154 @@ export function decimal(first: string | DecimalConfig, second?: DecimalConfig): 
     configuredName: name,
     sqlType: formatDecimalSqlType({ precision, scale }),
     mapFromDriverValue: toStringValue,
-    mapToDriverValue: toStringValue,
+    mapToDriverValue: toDecimalDriverValue,
     decimalConfig: { precision, scale },
     rejectObjectInput: true,
   });
 }
 
-const DATE_LITERAL_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
-
-const padDatePart = (value: number) => String(value).padStart(2, "0");
-
-const assertDateLiteral = (value: string): string => {
-  const match = DATE_LITERAL_PATTERN.exec(value);
-  if (!match) {
-    throw createClientValidationError(`Date column values must use YYYY-MM-DD format, got ${value}`);
+/**
+ * Encoder for `decimal()` columns. Rejects JS `number` inputs because IEEE 754
+ * doubles cannot represent values like `0.1 + 0.2` precisely (round-trips
+ * `"0.30000000000000004"`) nor scientific-notation results like `1e30`
+ * (ClickHouse's Decimal parser rejects `"1e+30"` outright). Pass strings or
+ * BigInts to preserve precision — same convention as Prisma, TypeORM, and
+ * Sequelize.
+ */
+const toDecimalDriverValue = (value: unknown): string => {
+  if (typeof value === "number") {
+    throw createClientValidationError(
+      `decimal column requires a string or bigint value to preserve precision; ` +
+        `got JS number ${value}. Use String(value) or BigInt(value) at the call site instead.`,
+    );
   }
-  const [, yearRaw, monthRaw, dayRaw] = match;
-  const year = Number(yearRaw);
-  const month = Number(monthRaw);
-  const day = Number(dayRaw);
-  const dateValue = new Date(Date.UTC(year, month - 1, day));
-  if (dateValue.getUTCFullYear() !== year || dateValue.getUTCMonth() !== month - 1 || dateValue.getUTCDate() !== day) {
-    throw createClientValidationError(`Date column values must use a valid YYYY-MM-DD date, got ${value}`);
-  }
-  return value;
+  return toStringValue(value);
 };
 
-const encodeDateWithMode = (value: Date, mode: Exclude<DateColumnEncode, (date: Date) => string>): string => {
-  if (mode === "utc") {
-    return `${value.getUTCFullYear()}-${padDatePart(value.getUTCMonth() + 1)}-${padDatePart(value.getUTCDate())}`;
-  }
-  return `${value.getFullYear()}-${padDatePart(value.getMonth() + 1)}-${padDatePart(value.getDate())}`;
-};
-
-const createDateEncoder =
-  (columnType: "Date" | "Date32", encode: DateColumnEncode | undefined): Encoder<Date> =>
-  (value) => {
-    const input = value as unknown;
-    if (typeof input === "string") {
-      return assertDateLiteral(input);
+/**
+ * Encoder for `date`/`date32` columns. ClickHouse Date columns reject ISO 8601
+ * strings with `Z` suffix even with `best_effort`, so we cannot let `Date`
+ * pass through to `JSON.stringify`. We extract the UTC `YYYY-MM-DD` part
+ * before serialising. Strings and numbers pass through verbatim.
+ *
+ * Why default to UTC: a JS `Date` is an unambiguous UTC instant (per
+ * [ECMA-262](https://tc39.es/ecma262/#sec-date-objects)), so taking its UTC
+ * date components gives a deterministic answer. Callers who want a different
+ * date can construct the `Date` so its UTC components hit the desired day,
+ * or pass a pre-formatted `'YYYY-MM-DD'` string.
+ */
+const createDateOnlyEncoder = (columnLabel: "Date" | "Date32"): Encoder<Date> => {
+  return (value) => {
+    if (typeof value === "string" || typeof value === "number") {
+      return value;
     }
-    if (!(input instanceof Date) || Number.isNaN(input.getTime())) {
-      throw createClientValidationError(`${columnType} column values must be a valid Date or YYYY-MM-DD string`);
+    if (!(value instanceof Date) || Number.isNaN(value.getTime())) {
+      throw createClientValidationError(`${columnLabel} column values must be a Date, string, or number`);
     }
-    if (!encode) {
-      throw createClientValidationError(
-        `${columnType} column values passed as JavaScript Date require ckType.${columnType === "Date" ? "date" : "date32"}({ encode: "utc" | "local" | fn })`,
-      );
-    }
-    const encoded = typeof encode === "function" ? encode(input) : encodeDateWithMode(input, encode);
-    return assertDateLiteral(encoded);
+    // toISOString() always returns 'YYYY-MM-DDTHH:mm:ss.sssZ'; slice to date part.
+    return value.toISOString().slice(0, 10);
   };
+};
 
-export function date(): DateColumn<Date>;
-export function date(name: string): DateColumn<Date>;
-export function date(config: DateColumnConfig): DateColumn<Date>;
-export function date(name: string, config: DateColumnConfig): DateColumn<Date>;
-export function date(first?: string | DateColumnConfig, second?: DateColumnConfig): DateColumn<Date> {
-  const { name, config } = parseOptionalNamedConfig("date", first, second);
-  return createColumnFactory(
+export const date = (name?: string): DateColumn<Date> =>
+  createColumnFactory(
     withConfiguredName(
       {
         sqlType: "Date",
         mapFromDriverValue: toDate,
-        mapToDriverValue: createDateEncoder("Date", config?.encode),
+        mapToDriverValue: createDateOnlyEncoder("Date"),
       },
       name,
     ),
   );
-}
 
-export function date32(): Date32<Date>;
-export function date32(name: string): Date32<Date>;
-export function date32(config: DateColumnConfig): Date32<Date>;
-export function date32(name: string, config: DateColumnConfig): Date32<Date>;
-export function date32(first?: string | DateColumnConfig, second?: DateColumnConfig): Date32<Date> {
-  const { name, config } = parseOptionalNamedConfig("date32", first, second);
-  return createColumnFactory(
+export const date32 = (name?: string): Date32<Date> =>
+  createColumnFactory(
     withConfiguredName(
       {
         sqlType: "Date32",
         mapFromDriverValue: toDate,
-        mapToDriverValue: createDateEncoder("Date32", config?.encode),
+        mapToDriverValue: createDateOnlyEncoder("Date32"),
       },
       name,
     ),
   );
-}
-export const time = (name?: string): Time<Date> =>
-  createColumnFactory(withConfiguredName({ sqlType: "Time", mapFromDriverValue: toTimeDate }, name));
-export function time64(config: PrecisionConfig): Time64<Date>;
-export function time64(name: string, config: PrecisionConfig): Time64<Date>;
-export function time64(first: string | PrecisionConfig, second?: PrecisionConfig): Time64<Date> {
+
+/**
+ * Encoder for `time`/`time64` columns. ClickHouse `Time`/`Time64` represents
+ * time-of-day or duration **independent of any calendar date**, with a range
+ * of `[-999:59:59, +999:59:59]` (signed, can exceed 24h). JS `Date` cannot
+ * faithfully represent this — it's bound to a specific instant on a calendar.
+ *
+ * Therefore Date inputs are rejected; callers must pass `'HH:MM:SS[.fff]'`
+ * strings or integers (interpreted by ClickHouse as scaled units per
+ * `Time64(N)` precision). This matches the official `@clickhouse/client`
+ * pattern (see `examples/node/coding/time_time64.ts`).
+ */
+const createTimeEncoder = (columnLabel: "Time" | "Time64"): Encoder<string> => {
+  return (value) => {
+    if (typeof value === "string" || typeof value === "number") {
+      return value;
+    }
+    throw createClientValidationError(
+      `${columnLabel} column values must be a 'HH:MM:SS' string or integer; ` +
+        `JS Date is not appropriate (${columnLabel} can be negative or exceed 24h, Date cannot represent that). ` +
+        `See https://clickhouse.com/docs/sql-reference/data-types/${columnLabel === "Time" ? "time" : "time64"}`,
+    );
+  };
+};
+
+export const time = (name?: string): Time<string> =>
+  createColumnFactory(
+    withConfiguredName(
+      { sqlType: "Time", mapFromDriverValue: toStringValue, mapToDriverValue: createTimeEncoder("Time") },
+      name,
+    ),
+  );
+export function time64(config: PrecisionConfig): Time64<string>;
+export function time64(name: string, config: PrecisionConfig): Time64<string>;
+export function time64(first: string | PrecisionConfig, second?: PrecisionConfig): Time64<string> {
   const { name, config } = parseNamedConfig("time64", first, second);
   const { precision } = config;
   assertPrecision("time64 precision", precision);
   return createColumnFactory({
     configuredName: name,
     sqlType: `Time64(${precision})`,
-    mapFromDriverValue: toTimeDate,
+    mapFromDriverValue: toStringValue,
+    mapToDriverValue: createTimeEncoder("Time64"),
   });
 }
+/**
+ * Encoder for `dateTime`/`dateTime64` columns. `Date` passes through unchanged
+ * so `JSON.stringify` (in `insertJsonEachRow`) emits ISO 8601 with `Z`,
+ * which `date_time_input_format=best_effort` (auto-injected by
+ * `insertJsonEachRow`) accepts as a timezone-anchored UTC instant. Strings
+ * and numbers pass through for callers who already produce a
+ * ClickHouse-acceptable literal or Unix timestamp.
+ */
+const createDateTimeEncoder = (columnLabel: "DateTime" | "DateTime64"): Encoder<Date> => {
+  return (value) => {
+    if (typeof value === "string" || typeof value === "number") {
+      return value;
+    }
+    if (!(value instanceof Date) || Number.isNaN(value.getTime())) {
+      throw createClientValidationError(`${columnLabel} column values must be a Date, string, or number`);
+    }
+    return value;
+  };
+};
+
 export const dateTime = (name?: string): DateTime<Date> =>
-  createColumnFactory(withConfiguredName({ sqlType: "DateTime", mapFromDriverValue: toDate }, name));
+  createColumnFactory(
+    withConfiguredName(
+      {
+        sqlType: "DateTime",
+        mapFromDriverValue: toDate,
+        mapToDriverValue: createDateTimeEncoder("DateTime"),
+      },
+      name,
+    ),
+  );
 const escapeSqlSingleQuoted = (value: string) => value.replaceAll("\\", "\\\\").replaceAll("'", "\\'");
 
 export function dateTime64(config: DateTime64Config): DateTime64<Date>;
@@ -693,6 +707,7 @@ export function dateTime64(first: string | DateTime64Config, second?: DateTime64
     configuredName: name,
     sqlType: `DateTime64(${precision}${suffix})`,
     mapFromDriverValue: toDate,
+    mapToDriverValue: createDateTimeEncoder("DateTime64"),
   });
 }
 export const bool = (name?: string): Bool<boolean> =>
@@ -798,8 +813,15 @@ export function nullable<TInner extends AnyColumn>(first: string | TInner, secon
     configuredName: name,
     sqlType: `Nullable(${inner.sqlType})`,
     mapFromDriverValue: (value) => {
-      if (value === null || value === undefined) {
+      if (value === null) {
         return null;
+      }
+      // ClickHouse JSON output never emits `undefined`; treating it as `null`
+      // would mask a driver-layer bug. Surface it as a decode error so the
+      // caller learns about the malformed payload instead of silently
+      // turning it into a NULL.
+      if (value === undefined) {
+        throw createDecodeError("Nullable column received undefined from the driver; expected null", value);
       }
       return inner.mapFromDriverValue(value) as InferData<TInner>;
     },

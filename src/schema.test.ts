@@ -138,4 +138,13 @@ describe("ck-orm schema infer helpers", function describeClickHouseORMSchemaInfe
     expect(aliased.options.partitionBy).toBe(aliased.tenant_id);
     expect(aliased.options.primaryKey).toBe(aliased.id);
   });
+
+  it("rejects malformed alias names at construction time", function testAliasFailFast() {
+    const events = ckTable("events", { id: int32() });
+    // Previously these only failed at compile-time. Fail-fast keeps stack
+    // traces meaningful and matches Drizzle's `alias()` behaviour.
+    expect(() => ckAlias(events, "evil`; drop --" as never)).toThrow("Invalid SQL identifier");
+    expect(() => ckAlias(events, "x y" as never)).toThrow("Invalid SQL identifier");
+    expect(() => ckAlias(events, "" as never)).toThrow("Invalid SQL identifier");
+  });
 });

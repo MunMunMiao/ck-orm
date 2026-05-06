@@ -1,4 +1,4 @@
-import { it } from "bun:test";
+import { expect, it } from "bun:test";
 import { ckAlias, ckSql, fn, type SQLFragment } from "./ck-orm";
 import { createE2EDb, users } from "./shared";
 import { describeE2E, expectClientValidationNotSent, expectNoMutationAfterRejectedInjection } from "./test-helpers";
@@ -6,7 +6,10 @@ import { describeE2E, expectClientValidationNotSent, expectNoMutationAfterReject
 describeE2E("ck-orm e2e injection identifiers", function describeInjectionIdentifiers() {
   it("rejects malicious string and object identifiers before a request is sent", async function testSqlIdentifierValidation() {
     const db = createE2EDb();
-    const evilAlias = ckAlias(users, "owner`; DROP");
+
+    // ckAlias() validates the alias at construction time (fail-fast). This
+    // means the error surfaces here rather than later inside db.execute().
+    expect(() => ckAlias(users, "owner`; DROP")).toThrow("[ck-orm] Invalid SQL identifier: owner`; DROP");
 
     const cases: Array<{
       readonly run: () => Promise<unknown> | unknown;
@@ -26,17 +29,6 @@ describeE2E("ck-orm e2e injection identifiers", function describeInjectionIdenti
       {
         run: () => db.execute(ckSql`select 1 as ${ckSql.identifier({ as: "user_id--comment" })}`),
         message: "[ck-orm] Invalid SQL identifier: user_id--comment",
-      },
-      {
-        run: () =>
-          db
-            .select({
-              id: evilAlias.id,
-            })
-            .from(evilAlias)
-            .limit(1)
-            .execute(),
-        message: "[ck-orm] Invalid SQL identifier: owner`; DROP",
       },
     ];
 

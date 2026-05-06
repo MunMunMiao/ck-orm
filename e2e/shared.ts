@@ -33,6 +33,7 @@ export const experimentalSettings = {
   allow_experimental_json_type: 1,
   allow_experimental_dynamic_type: 1,
   allow_experimental_qbit_type: 1,
+  enable_time_time64_type: 1,
 } as const;
 
 export const datasetCounts = {

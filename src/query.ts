@@ -662,9 +662,9 @@ const renderCountExpression = (mode: CountMode): SQLFragment => {
 const buildLogicalPredicate = (operator: "and" | "or", predicates: readonly SqlPredicate[]): SqlPredicate => {
   return createExpression<boolean>({
     compile: (ctx) =>
-      sql`${sql.raw("(")}${joinSqlParts(
+      sql`${sql.raw("(")}${sql.join(
         predicates.map((predicate) => predicate.compile(ctx)),
-        ` ${operator} `,
+        sql.raw(` ${operator} `),
       )}${sql.raw(")")}`,
     decoder: (value) => Boolean(value),
     sqlType: "Bool",

@@ -165,8 +165,33 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
     await db.insertJsonEachRow(orderRewardLog as AnyTable, [{ id: 2 }], {
       query_id: "insert_2",
     });
+    // C2: insertJsonEachRow injects date_time_input_format=best_effort by
+    // default (so the JSON.stringify(Date) → 'YYYY-MM-DDTHH:mm:ss.sssZ' value
+    // round-trips into DateTime/DateTime64 columns without manual coercion).
     expect(
-      capturedUrls.some((url) => url.searchParams.get("query") === "INSERT INTO `manual_table` FORMAT JSONEachRow"),
+      capturedUrls.some(
+        (url) =>
+          url.searchParams.get("query") === "INSERT INTO `manual_table` FORMAT JSONEachRow" &&
+          url.searchParams.get("date_time_input_format") === "best_effort",
+      ),
+    ).toBe(true);
+    // The setting must NOT leak into ordinary execute() / stream() calls.
+    expect(
+      capturedUrls
+        .filter((url) => !url.searchParams.get("query")?.includes("FORMAT JSONEachRow"))
+        .every((url) => url.searchParams.get("date_time_input_format") === null),
+    ).toBe(true);
+    // C2: explicit override wins (merge order: { default, ...userOverrides }).
+    await db.insertJsonEachRow("manual_table", [{ id: 3 }], {
+      query_id: "insert_basic",
+      clickhouse_settings: { date_time_input_format: "basic" },
+    });
+    expect(
+      capturedUrls.some(
+        (url) =>
+          url.searchParams.get("query_id") === "insert_basic" &&
+          url.searchParams.get("date_time_input_format") === "basic",
+      ),
     ).toBe(true);
     expect(
       capturedUrls.some((url) => url.searchParams.get("query") === "INSERT INTO `order_reward_log` FORMAT JSONEachRow"),
@@ -511,6 +536,26 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
         },
       } as unknown as Parameters<typeof clickhouseClient<{ users: typeof users }>>[0]),
     ).toThrow();
+  });
+
+  it("injects enable_http_compression=1 into the request URL when compression.response is enabled", async function testResponseCompressionInjection() {
+    const capturedUrls: URL[] = [];
+    globalThis.fetch = mock(async (input: string | URL | Request, _init?: RequestInit) => {
+      const url = new URL(typeof input === "string" || input instanceof URL ? String(input) : input.url);
+      capturedUrls.push(url);
+      return new Response(JSON.stringify({ data: [{ raw: "ok" }] }), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const compressed = clickhouseClient({
+      host: "http://localhost:8123",
+      compression: { response: true },
+    });
+    await compressed.execute(sql`select 1`);
+    expect(capturedUrls.at(-1)?.searchParams.get("enable_http_compression")).toBe("1");
+
+    const plain = clickhouseClient({ host: "http://localhost:8123" });
+    await plain.execute(sql`select 1`);
+    expect(capturedUrls.at(-1)?.searchParams.get("enable_http_compression")).toBeNull();
   });
 
   it("detects ClickHouse exception blocks even when HTTP status is 200", async function testEmbeddedExceptionBlocks() {

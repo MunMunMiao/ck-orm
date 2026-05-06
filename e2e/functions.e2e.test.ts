@@ -248,9 +248,8 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
       presentRow.parsedDateTime64,
       presentRow.parsedDateTime64BestEffort,
       presentRow.parsedDateTimeJoda,
+      // toTime() is actually toTimeWithFixedDate — returns DateTime pinned to 1970-01-02.
       presentRow.timeValue,
-      presentRow.time64Value,
-      presentRow.time64Zero,
       presentRow.intervalDay,
       presentRow.intervalGeneric,
     ]) {
@@ -261,10 +260,11 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
     expect(presentRow.dateTime64Default.getUTCMilliseconds()).toBe(456);
     expect(presentRow.parsedDateTime64.getUTCMilliseconds()).toBe(456);
     expect(presentRow.parsedDateTime64BestEffort.getUTCMilliseconds()).toBe(789);
-    const millisecondsWithinDay = (value: Date) => ((value.getTime() % 86_400_000) + 86_400_000) % 86_400_000;
-    expect(millisecondsWithinDay(presentRow.timeValue)).toBe(45_296_000);
-    expect(presentRow.time64Value.getTime()).toBe(45_296_789);
-    expect(presentRow.time64Zero.getTime()).toBe(0);
+    // toTime returns DateTime at 1970-01-02 plus the time-of-day (45_296_000 ms = 12h34m56s).
+    expect(presentRow.timeValue.getTime()).toBe(86_400_000 + 45_296_000);
+    // toTime64 returns the new Time64 data type — strings, no calendar date.
+    expect(presentRow.time64Value).toBe("12:34:56.789123");
+    expect(presentRow.time64Zero).toBe("00:00:00.000000");
     expect(presentRow.intervalDay.toISOString().slice(0, 10)).toBe("2026-01-02");
     expect(presentRow.intervalGeneric.toISOString().slice(0, 10)).toBe("2026-01-02");
   });

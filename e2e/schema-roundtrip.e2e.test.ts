@@ -25,8 +25,10 @@ describeE2E("ck-orm e2e schema roundtrip", function describeSchemaRoundtrip() {
     expect(presentRow.decimal_value).toBe("1234.56");
     expectDate(presentRow.date_value);
     expectDate(presentRow.date32_value);
-    expectDate(presentRow.time_value);
-    expectDate(presentRow.time64_value);
+    // Time/Time64 are 'HH:MM:SS[.fff]' strings — ClickHouse semantics are
+    // signed and can exceed 24h, so JS Date cannot represent them faithfully.
+    expect(typeof presentRow.time_value).toBe("string");
+    expect(typeof presentRow.time64_value).toBe("string");
     expectDate(presentRow.date_time_value);
     expectDate(presentRow.date_time64_value);
     expect(presentRow.bool_value).toBe(true);

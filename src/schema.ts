@@ -1,5 +1,6 @@
 import type { AnyColumn, Column, DdlFragmentInput } from "./columns";
 import { createClientValidationError } from "./errors";
+import { assertValidSqlIdentifier } from "./internal/identifier";
 import { type SQLFragment, sql } from "./sql";
 
 type InferSelect<TColumns extends Record<string, AnyColumn>> = {
@@ -257,6 +258,7 @@ export const ckAlias = <TTable extends AnyTable, TAlias extends string>(
   TAlias,
   TTable["originalName"]
 > => {
+  assertValidSqlIdentifier(aliasName);
   const boundColumns = bindColumns(table.originalName, table.columns, aliasName);
   // `column.key` is the logical schema key. It remains stable even when
   // `column.name` is an explicit database column name such as `user_id`.

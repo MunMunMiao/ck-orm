@@ -122,4 +122,18 @@ describe("ck-orm internal ClickHouse type literals", function describeClickHouse
     expect(() => splitTopLevelTypeList("UInt8,")).toThrow("Invalid ClickHouse type literal");
     expect(() => splitTopLevelTypeList("Tuple(UInt8")).toThrow("Invalid ClickHouse type literal");
   });
+
+  it("rejects pathologically deep nested type literals", function testNestedDepthLimit() {
+    // 50000-level nesting previously triggered "Maximum call stack size exceeded"
+    // after ~24 seconds. We now refuse anything above 100 levels with a fast
+    // explicit error.
+    let nested = "Int32";
+    for (let i = 0; i < 5000; i += 1) nested = `Array(${nested})`;
+    expect(() => normalizeClickHouseTypeLiteral(nested)).toThrow(/nested deeper than 100 levels/);
+
+    // Just-below-the-limit nesting still works.
+    let shallow = "Int32";
+    for (let i = 0; i < 90; i += 1) shallow = `Array(${shallow})`;
+    expect(normalizeClickHouseTypeLiteral(shallow)).toBe(shallow);
+  });
 });

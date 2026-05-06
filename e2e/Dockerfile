@@ -1,4 +1,4 @@
-FROM oven/bun:latest
+FROM oven/bun:1.3.13
 
 WORKDIR /workspace
 

@@ -182,13 +182,35 @@ describe("ck-orm sql security", function describeSqlSecurity() {
     expect(() => compileSql(sql.join([sql.identifier("a")], "a--b"))).toThrow("Invalid SQL join separator");
     expect(() => compileSql(sql.join([sql.identifier("a")], "/*x*/"))).toThrow("Invalid SQL join separator");
     expect(() => compileSql(sql.join([sql.identifier("a")], "a;b"))).toThrow("Invalid SQL join separator");
+
+    // Tightened allowlist also rejects SQL keywords disguised as separators —
+    // these previously slipped through because the regex permitted ASCII
+    // letters. Reproduces a real PoC: `sql.join([cond1, cond2], " OR 1=1 OR ")`
+    // would compile to `cond1 OR 1=1 OR cond2`, neutralising the conditions.
+    expect(() => compileSql(sql.join([sql.identifier("a")], " OR 1=1 OR "))).toThrow("Invalid SQL join separator");
+    expect(() => compileSql(sql.join([sql.identifier("a")], " AND "))).toThrow("Invalid SQL join separator");
+    expect(() => compileSql(sql.join([sql.identifier("a")], " OR "))).toThrow("Invalid SQL join separator");
+    expect(() => compileSql(sql.join([sql.identifier("a")], " UNION ALL "))).toThrow("Invalid SQL join separator");
+    expect(() => compileSql(sql.join([sql.identifier("a")], " == "))).toThrow("Invalid SQL join separator");
+    expect(() => compileSql(sql.join([sql.identifier("a")], " < "))).toThrow("Invalid SQL join separator");
+    expect(() => compileSql(sql.join([sql.identifier("a")], " + "))).toThrow("Invalid SQL join separator");
   });
 
   it("allows safe sql.join separators", function testJoinSafeSeparators() {
+    // String separators are now restricted to whitespace and grouping
+    // punctuation only. Anything more (keywords, operators) must travel as
+    // an SQLFragment to make the raw-SQL intent explicit at the call site.
     expect(compileSql(sql.join([sql.identifier("a"), sql.identifier("b")], ", ")).query).toBe("`a`, `b`");
-    expect(compileSql(sql.join([sql.identifier("a"), sql.identifier("b")], " AND ")).query).toBe("`a` AND `b`");
-    expect(compileSql(sql.join([sql.identifier("a"), sql.identifier("b")], " OR ")).query).toBe("`a` OR `b`");
-    expect(compileSql(sql.join([sql.identifier("a"), sql.identifier("b")], " + ")).query).toBe("`a` + `b`");
+    expect(compileSql(sql.join([sql.identifier("a"), sql.identifier("b")], " ")).query).toBe("`a` `b`");
+    expect(compileSql(sql.join([sql.identifier("a"), sql.identifier("b")], "(),")).query).toBe("`a`(),`b`");
+  });
+
+  it("supports keyword separators when wrapped as SQLFragments", function testJoinFragmentSeparators() {
+    expect(compileSql(sql.join([sql.identifier("a"), sql.identifier("b")], sql` AND `)).query).toBe("`a` AND `b`");
+    expect(compileSql(sql.join([sql.identifier("a"), sql.identifier("b")], sql` OR `)).query).toBe("`a` OR `b`");
+    expect(compileSql(sql.join([sql.identifier("a"), sql.identifier("b")], sql.raw(" UNION ALL "))).query).toBe(
+      "`a` UNION ALL `b`",
+    );
   });
 
   it("rejects invalid table function names at compile time", function testTableFunctionNameValidation() {

@@ -65,36 +65,68 @@ export const trustSqlSourceObject = <TValue extends object>(value: TValue): TVal
   return value;
 };
 
-const inferArrayType = (values: readonly unknown[]): string => {
+const INT64_MIN = -(1n << 63n);
+const INT64_MAX = (1n << 63n) - 1n;
+const UINT64_MAX = (1n << 64n) - 1n;
+const INT128_MIN = -(1n << 127n);
+const INT128_MAX = (1n << 127n) - 1n;
+const UINT128_MAX = (1n << 128n) - 1n;
+const INT256_MIN = -(1n << 255n);
+const INT256_MAX = (1n << 255n) - 1n;
+const UINT256_MAX = (1n << 256n) - 1n;
+
+const inferBigIntType = (value: bigint): string => {
+  if (value >= INT64_MIN && value <= INT64_MAX) return "Int64";
+  if (value >= 0n && value <= UINT64_MAX) return "UInt64";
+  if (value >= INT128_MIN && value <= INT128_MAX) return "Int128";
+  if (value >= 0n && value <= UINT128_MAX) return "UInt128";
+  if (value >= INT256_MIN && value <= INT256_MAX) return "Int256";
+  if (value >= 0n && value <= UINT256_MAX) return "UInt256";
+  throw createClientValidationError(`BigInt value ${value} is out of all ClickHouse integer ranges (max UInt256)`);
+};
+
+const inferArrayType = (values: readonly unknown[], seen: WeakSet<object>): string => {
   if (values.length === 0) {
     return "Array(String)";
   }
 
-  const elementType = inferPrimitiveType(values[0]);
+  const elementType = inferPrimitiveTypeWithSeen(values[0], seen);
   for (const value of values.slice(1)) {
-    if (inferPrimitiveType(value) !== elementType) {
+    if (inferPrimitiveTypeWithSeen(value, seen) !== elementType) {
       return "Array(String)";
     }
   }
   return `Array(${elementType})`;
 };
 
-const inferMapValueType = (values: readonly unknown[]): string => {
+const inferMapValueType = (values: readonly unknown[], seen: WeakSet<object>): string => {
   if (values.length === 0) {
     return "String";
   }
 
-  const firstType = inferPrimitiveType(values[0]);
+  const firstType = inferPrimitiveTypeWithSeen(values[0], seen);
   for (const value of values.slice(1)) {
-    if (inferPrimitiveType(value) !== firstType) return "String";
+    if (inferPrimitiveTypeWithSeen(value, seen) !== firstType) return "String";
   }
   return firstType;
 };
 
-export const inferPrimitiveType = (value: unknown): string => {
+const trackCycle = <T>(value: object, seen: WeakSet<object>, label: string, fn: () => T): T => {
+  if (seen.has(value)) {
+    throw createClientValidationError(`Cannot infer SQL type for ${label} containing a circular reference`);
+  }
+  seen.add(value);
+  try {
+    return fn();
+  } finally {
+    seen.delete(value);
+  }
+};
+
+const inferPrimitiveTypeWithSeen = (value: unknown, seen: WeakSet<object>): string => {
   switch (typeof value) {
     case "bigint":
-      return "Int64";
+      return inferBigIntType(value);
     case "boolean":
       return "Bool";
     case "number":
@@ -106,31 +138,36 @@ export const inferPrimitiveType = (value: unknown): string => {
         return "DateTime64(3)";
       }
       if (Array.isArray(value)) {
-        return inferArrayType(value);
+        return trackCycle(value, seen, "array", () => inferArrayType(value, seen));
       }
       if (value instanceof Map) {
-        return `Map(String, ${inferMapValueType([...value.values()])})`;
+        return trackCycle(value, seen, "Map", () => `Map(String, ${inferMapValueType([...value.values()], seen)})`);
       }
       if (typeof value === "object" && value !== null) {
-        return `Map(String, ${inferMapValueType(Object.values(value))})`;
+        return trackCycle(value, seen, "object", () => `Map(String, ${inferMapValueType(Object.values(value), seen)})`);
       }
       throw createClientValidationError(`Unsupported SQL parameter value: ${String(value)}`);
   }
 };
+
+export const inferPrimitiveType = (value: unknown): string => inferPrimitiveTypeWithSeen(value, new WeakSet());
 
 const ensureParamTypes = (ctx: BuildContext): QueryParamTypes => {
   ctx.paramTypes ??= {};
   return ctx.paramTypes;
 };
 
-const VALID_JOIN_SEPARATOR = /^[\s,()A-Za-z0-9_+\-=<>!]+$/;
-const JOIN_SEPARATOR_DENYLIST = /;|--|\/\*|\*\/|`|'|"/;
+// Whitespace and grouping punctuation only. Keyword/operator separators must
+// be passed as `SQLFragment` (e.g. `sql.join(parts, sql\` OR \`)`) so the
+// raw-SQL intent is explicit at the call site.
+const VALID_JOIN_SEPARATOR = /^[\s,()]+$/;
 
 const assertValidJoinSeparator = (value: string): void => {
-  if (!VALID_JOIN_SEPARATOR.test(value) || JOIN_SEPARATOR_DENYLIST.test(value)) {
+  if (!VALID_JOIN_SEPARATOR.test(value)) {
     throw createClientValidationError(
       `Invalid SQL join separator: "${value}". ` +
-        `Separators must match /^[\\s,()A-Za-z0-9_+\\-=<>!]+$/ and cannot contain ; -- /* */ \` ' "`,
+        `String separators may only contain whitespace and the punctuation ", ( )". ` +
+        `Pass an SQLFragment (e.g. sql\` OR \`) for keyword separators.`,
     );
   }
 };
