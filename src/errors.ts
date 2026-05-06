@@ -1,3 +1,5 @@
+import { isRecord } from "./internal/predicates";
+
 export type ClickHouseORMExecutionState = "not_sent" | "rejected" | "unknown";
 
 export type ClickHouseORMErrorKind =
@@ -41,10 +43,6 @@ export type DecodeError = ClickHouseORMError & DecodeErrorFields;
 
 const CK_ORM_PREFIX = "[ck-orm] ";
 const UNKNOWN_EXECUTION_STATE_SUFFIX = "; execution state is unknown";
-
-const isRecord = (value: unknown): value is Record<string, unknown> => {
-  return typeof value === "object" && value !== null;
-};
 
 const withCKORMPrefix = (message: string) =>
   message.startsWith(CK_ORM_PREFIX) ? message : `${CK_ORM_PREFIX}${message}`;

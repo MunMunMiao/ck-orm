@@ -1,5 +1,7 @@
 import type { AnyColumn, ColumnDdlConfig, DdlFragmentInput } from "./columns";
 import { createClientValidationError } from "./errors";
+import { isColumnLike } from "./internal/column";
+import { escapeSqlSingleQuoted } from "./internal/escape";
 import { assertValidSqlIdentifier } from "./internal/identifier";
 import { normalizeSingleStatementSql } from "./runtime/sql-scan";
 import { type AnyTable, type ClickHouseTableEngine, mergeTreeTableEngines, type TableOptions } from "./schema";
@@ -12,8 +14,6 @@ type TableExpressionInput = AnyColumn | DdlFragmentInput;
 const mergeTreeEngineNames = new Set<string>(mergeTreeTableEngines);
 const tempEngineDenyPrefixes = ["Replicated"];
 const tempEngineDenySet = new Set(["KeeperMap"]);
-
-const escapeSqlSingleQuoted = (value: string) => value.replaceAll("\\", "\\\\").replaceAll("'", "\\'");
 
 const renderStringLiteral = (value: string) => `'${escapeSqlSingleQuoted(value)}'`;
 
@@ -67,10 +67,6 @@ const renderColumnDdl = (ddl: ColumnDdlConfig | undefined): string[] => {
 
 const renderColumnDefinition = (column: AnyColumn) => {
   return [renderColumnName(column), column.sqlType, ...renderColumnDdl(column.ddl)].join(" ");
-};
-
-const isColumnLike = (value: unknown): value is AnyColumn => {
-  return typeof value === "object" && value !== null && "kind" in value && value.kind === "column";
 };
 
 const renderTableExpression = (value: TableExpressionInput, label: string) => {

@@ -1,7 +1,9 @@
 import type { AnyColumn } from "./columns";
 import { createClientValidationError, createInternalError } from "./errors";
 import { getArrayElementType } from "./internal/clickhouse-type";
+import { isColumnLike } from "./internal/column";
 import { type CountMode, type CountModeResult, getCountDecoder, getCountSqlType, wrapCountSql } from "./internal/count";
+import { isPlainObject } from "./internal/predicates";
 import { createUuid } from "./platform";
 import type { InferSelectionResult, NoJoinedSources, SelectionRecord } from "./query/types";
 import {
@@ -335,10 +337,6 @@ const withCompileState = <TResult>(
   }
 };
 
-const isInsertRowRecord = (value: unknown): value is Record<string, unknown> => {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-};
-
 type InsertColumnEntry =
   | {
       readonly kind: "column";
@@ -408,7 +406,7 @@ const compileNestedInsertFieldValue = (
     throw createClientValidationError(`Nested column "${entry.key}" expects an array of objects`);
   }
   const encodedValues = value.map((item, index) => {
-    if (!isInsertRowRecord(item)) {
+    if (!isPlainObject(item)) {
       throw createClientValidationError(`Nested column "${entry.key}" item ${index + 1} must be an object`);
     }
     if (!Object.hasOwn(item, entry.fieldKey) || item[entry.fieldKey] === undefined) {
@@ -456,7 +454,7 @@ const normalizeInsertRows = <TTable extends AnyTable>(
     .filter(([, column]) => column.ddl?.materialized !== undefined || column.ddl?.aliasExpr !== undefined)
     .map(([schemaKey, column]) => column.key ?? schemaKey);
   for (const [index, row] of rows.entries()) {
-    if (!isInsertRowRecord(row)) {
+    if (!isPlainObject(row)) {
       throw createClientValidationError(`insert().values() row ${index + 1} must be an object`);
     }
 
@@ -664,6 +662,11 @@ const renderCountExpression = (mode: CountMode): SQLFragment => {
   return wrapCountSql(sql.raw("count()"), mode);
 };
 
+// Cast-to-boolean decoder shared by every predicate-building helper. Hoisting
+// it to module scope means each `eq/ne/and/or/...` call doesn't allocate its
+// own closure on a hot expression-construction path.
+const booleanCastDecoder: Decoder<boolean> = (value) => Boolean(value);
+
 const buildLogicalPredicate = (operator: "and" | "or", predicates: readonly SqlPredicate[]): SqlPredicate => {
   return createExpression<boolean>({
     compile: (ctx) =>
@@ -671,7 +674,7 @@ const buildLogicalPredicate = (operator: "and" | "or", predicates: readonly SqlP
         predicates.map((predicate) => predicate.compile(ctx)),
         sql.raw(` ${operator} `),
       )}${sql.raw(")")}`,
-    decoder: (value) => Boolean(value),
+    decoder: booleanCastDecoder,
     sqlType: "Bool",
   });
 };
@@ -685,7 +688,7 @@ const normalizePredicateInput = (helperName: string, predicate: PredicateInput):
   }
   if (isSqlFragment(predicate)) {
     return wrapSql<boolean>(predicate, {
-      decoder: (value) => Boolean(value),
+      decoder: booleanCastDecoder,
       sqlType: "Bool",
     }) as SqlPredicate;
   }
@@ -1777,14 +1780,11 @@ const assertPredicateValueArray = (
   }
 };
 
-const isColumnExpression = (value: unknown): value is AnyColumn => {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    (value as { kind?: unknown }).kind === "column" &&
-    typeof (value as { mapToDriverValue?: unknown }).mapToDriverValue === "function"
-  );
-};
+// Predicate-builder paths add a `mapToDriverValue` callable check on top of
+// the shared `isColumnLike` so the operand encoders aren't fooled by stray
+// objects that happen to carry `kind: "column"` (e.g. test doubles).
+const isColumnExpression = (value: unknown): value is AnyColumn =>
+  isColumnLike(value) && typeof (value as { mapToDriverValue?: unknown }).mapToDriverValue === "function";
 
 const encodePredicateValue = (left: unknown, value: unknown): unknown => {
   if (isExpression(value) || isSqlFragment(value)) {
@@ -1807,7 +1807,7 @@ const createNullPredicateExpression = (operator: "is null" | "is not null", left
   const leftExpression = ensureComparableExpression(left);
   return createExpression<boolean>({
     compile: (ctx) => sql`${leftExpression.compile(ctx)}${sql.raw(` ${operator}`)}`,
-    decoder: (value) => Boolean(value),
+    decoder: booleanCastDecoder,
     sqlType: "Bool",
   });
 };
@@ -1836,7 +1836,7 @@ const createBinaryExpression = (operator: string, left: unknown, right: unknown)
         ctx,
         leftExpression.sqlType,
       )}`,
-    decoder: (value) => Boolean(value),
+    decoder: booleanCastDecoder,
     sqlType: "Bool",
   });
 };
@@ -1859,7 +1859,7 @@ export const not = (condition: Predicate): Predicate => {
   const wrapped = condition as SqlPredicate;
   return createExpression<boolean>({
     compile: (ctx) => sql`${sql.raw("not (")}${wrapped.compile(ctx)}${sql.raw(")")}`,
-    decoder: (value) => Boolean(value),
+    decoder: booleanCastDecoder,
     sqlType: "Bool",
   });
 };
@@ -1904,7 +1904,7 @@ const createLikePredicate = (left: unknown, right: unknown, operator: LikeOperat
   return createExpression<boolean>({
     compile: (ctx) =>
       sql`${leftExpression.compile(ctx)}${sql.raw(` ${operator} `)}${compileValue(right, ctx, "String")}`,
-    decoder: (value) => Boolean(value),
+    decoder: booleanCastDecoder,
     sqlType: "Bool",
   });
 };
@@ -1923,35 +1923,23 @@ export const notIlike = (left: unknown, right: string | PredicateSqlValue): Pred
   return createLikePredicate(left, right, "not ilike");
 };
 
-export const contains = (left: unknown, right: string): Predicate => {
-  assertStringPredicateValue(right, "contains");
-  return like(left, toLiteralLikePattern(right, "contains"));
-};
+// Six string-shape predicates fan out from one factory: each helper escapes
+// its right-hand value into a LIKE/ILIKE literal pattern and forwards to the
+// matching base operator. Adding a new shape (e.g. `equalsIgnoreCase`) is a
+// one-line export now.
+const makeStringShapePredicate =
+  (helperName: string, mode: LikeLiteralMode, op: typeof like) =>
+  (left: unknown, right: string): Predicate => {
+    assertStringPredicateValue(right, helperName);
+    return op(left, toLiteralLikePattern(right, mode));
+  };
 
-export const startsWith = (left: unknown, right: string): Predicate => {
-  assertStringPredicateValue(right, "startsWith");
-  return like(left, toLiteralLikePattern(right, "startsWith"));
-};
-
-export const endsWith = (left: unknown, right: string): Predicate => {
-  assertStringPredicateValue(right, "endsWith");
-  return like(left, toLiteralLikePattern(right, "endsWith"));
-};
-
-export const containsIgnoreCase = (left: unknown, right: string): Predicate => {
-  assertStringPredicateValue(right, "containsIgnoreCase");
-  return ilike(left, toLiteralLikePattern(right, "contains"));
-};
-
-export const startsWithIgnoreCase = (left: unknown, right: string): Predicate => {
-  assertStringPredicateValue(right, "startsWithIgnoreCase");
-  return ilike(left, toLiteralLikePattern(right, "startsWith"));
-};
-
-export const endsWithIgnoreCase = (left: unknown, right: string): Predicate => {
-  assertStringPredicateValue(right, "endsWithIgnoreCase");
-  return ilike(left, toLiteralLikePattern(right, "endsWith"));
-};
+export const contains = makeStringShapePredicate("contains", "contains", like);
+export const startsWith = makeStringShapePredicate("startsWith", "startsWith", like);
+export const endsWith = makeStringShapePredicate("endsWith", "endsWith", like);
+export const containsIgnoreCase = makeStringShapePredicate("containsIgnoreCase", "contains", ilike);
+export const startsWithIgnoreCase = makeStringShapePredicate("startsWithIgnoreCase", "startsWith", ilike);
+export const endsWithIgnoreCase = makeStringShapePredicate("endsWithIgnoreCase", "endsWith", ilike);
 
 export const between = (expression: unknown, start: unknown, end: unknown): Predicate => {
   const wrapped = ensureComparableExpression(expression);
@@ -1965,7 +1953,7 @@ export const between = (expression: unknown, start: unknown, end: unknown): Pred
         ctx,
         wrapped.sqlType,
       )}${sql.raw(" and ")}${compilePredicateValue(expression, end, ctx, wrapped.sqlType)}`,
-    decoder: (value) => Boolean(value),
+    decoder: booleanCastDecoder,
     sqlType: "Bool",
   });
 };
@@ -2035,7 +2023,7 @@ export const has = (haystack: unknown, needle: unknown): Predicate => {
         haystackExpression.compile(ctx),
         compileHasNeedle(haystack, needle, ctx, haystackExpression),
       ]),
-    decoder: (value) => Boolean(value),
+    decoder: booleanCastDecoder,
     sqlType: "Bool",
   });
 };
@@ -2052,7 +2040,7 @@ export const hasAll = (set: unknown, subset: unknown): Predicate => {
         setExpression.compile(ctx),
         compileArrayFunctionArg(set, subset, ctx, setExpression, "hasAll"),
       ]),
-    decoder: (value) => Boolean(value),
+    decoder: booleanCastDecoder,
     sqlType: "Bool",
   });
 };
@@ -2069,7 +2057,7 @@ export const hasAny = (arrX: unknown, arrY: unknown): Predicate => {
         arrXExpression.compile(ctx),
         compileArrayFunctionArg(arrX, arrY, ctx, arrXExpression, "hasAny"),
       ]),
-    decoder: (value) => Boolean(value),
+    decoder: booleanCastDecoder,
     sqlType: "Bool",
   });
 };
@@ -2086,7 +2074,7 @@ export const hasSubstr = (array: unknown, needle: unknown): Predicate => {
         arrayExpression.compile(ctx),
         compileArrayFunctionArg(array, needle, ctx, arrayExpression, "hasSubstr"),
       ]),
-    decoder: (value) => Boolean(value),
+    decoder: booleanCastDecoder,
     sqlType: "Bool",
   });
 };
@@ -2117,7 +2105,7 @@ const createInExpression = (
       const querySource = (right as AnySubquery | AnyCte).query;
       return sql`${leftExpression.compile(ctx)}${sql.raw(operator)}${sql.raw(compileNestedQuery(querySource, ctx).statement)}${sql.raw(")")}`;
     },
-    decoder: (value) => Boolean(value),
+    decoder: booleanCastDecoder,
     sqlType: "Bool",
   });
 };
@@ -2133,7 +2121,7 @@ export const exists = (query: AnySubquery | AnyCte | SelectBuilder<Record<string
   return createExpression<boolean>({
     compile: (ctx) =>
       sql`${sql.raw("exists (")}${sql.raw(compileNestedQuery(selectQuery, ctx).statement)}${sql.raw(")")}`,
-    decoder: (value) => Boolean(value),
+    decoder: booleanCastDecoder,
     sqlType: "Bool",
   });
 };

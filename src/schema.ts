@@ -1,5 +1,6 @@
 import type { AnyColumn, Column, DdlFragmentInput } from "./columns";
 import { createClientValidationError } from "./errors";
+import { isColumnLike } from "./internal/column";
 import { assertValidSqlIdentifier } from "./internal/identifier";
 import { type SQLFragment, sql } from "./sql";
 
@@ -190,10 +191,6 @@ const bindColumns = <
   }
 
   return boundColumns;
-};
-
-const isColumnLike = (value: unknown): value is AnyColumn => {
-  return typeof value === "object" && value !== null && "kind" in value && value.kind === "column";
 };
 
 const remapColumn = (boundColumns: Record<string, AnyColumn>, column: AnyColumn): AnyColumn => {

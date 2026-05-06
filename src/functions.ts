@@ -18,6 +18,7 @@ import {
   wrapCountSql,
 } from "./internal/count";
 import { type DecimalParams, formatDecimalSqlType, parseDecimalSqlType } from "./internal/decimal";
+import { escapeSqlSingleQuoted } from "./internal/escape";
 import { assertValidSqlIdentifier } from "./internal/identifier";
 import { createTableFunctionSource } from "./query";
 import {
@@ -189,8 +190,6 @@ const assertPositiveInteger: (label: string, value: unknown) => asserts value is
     throw createClientValidationError(`${label} must be a positive integer, got ${String(value)}`);
   }
 };
-
-const escapeSqlSingleQuoted = (value: string) => value.replaceAll("\\", "\\\\").replaceAll("'", "\\'");
 
 const createStringLiteral = (label: string, value: unknown): SQLFragment => {
   if (typeof value !== "string" || value.length === 0) {

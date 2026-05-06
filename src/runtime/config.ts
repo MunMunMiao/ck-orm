@@ -262,7 +262,26 @@ const singleDocumentFormats = new Set(["JSON"]);
 const streamingFormats = new Set(["JSONEachRow"]);
 const RESERVED_INTERNAL_QUERY_PARAM_PREFIX = "orm_param";
 
-const assertValidUserQueryParams = (queryParams: Record<string, unknown> | undefined): void => {
+// Single-pass string escape for ClickHouse query-parameter wire format.
+// Replaces a chain of nine `replaceAll` scans with one regex sweep + table
+// lookup — string params on the parameter channel are touched on every
+// raw query, so any wider table that ships free-text columns benefits.
+const QUERY_PARAM_STRING_ESCAPE_PATTERN = /[\\\0\b\f\n\r\t\v']/g;
+const QUERY_PARAM_STRING_ESCAPE_TABLE: Record<string, string> = {
+  "\\": "\\\\",
+  "\0": "\\0",
+  "\b": "\\b",
+  "\f": "\\f",
+  "\n": "\\n",
+  "\r": "\\r",
+  "\t": "\\t",
+  "\v": "\\v",
+  "'": "\\'",
+};
+const escapeQueryParamString = (value: string): string =>
+  value.replace(QUERY_PARAM_STRING_ESCAPE_PATTERN, (char) => QUERY_PARAM_STRING_ESCAPE_TABLE[char] ?? char);
+
+export const assertValidUserQueryParams = (queryParams: Record<string, unknown> | undefined): void => {
   if (!queryParams) {
     return;
   }
@@ -428,16 +447,7 @@ export const formatQueryParamValue = (
     return value ? "1" : "0";
   }
   if (typeof value === "string") {
-    const escaped = value
-      .replaceAll("\\", "\\\\")
-      .replaceAll("\0", "\\0")
-      .replaceAll("\b", "\\b")
-      .replaceAll("\f", "\\f")
-      .replaceAll("\t", "\\t")
-      .replaceAll("\n", "\\n")
-      .replaceAll("\r", "\\r")
-      .replaceAll("\v", "\\v")
-      .replaceAll("'", "\\'");
+    const escaped = escapeQueryParamString(value);
     return wrapStringInQuotes ? `'${escaped}'` : escaped;
   }
   if (value instanceof Date) {
@@ -453,19 +463,26 @@ export const formatQueryParamValue = (
           `Tuple query parameter expected ${tupleElementTypes.length} items, got ${value.length}`,
         );
       }
-      return `(${value
-        .map((item, index) => formatQueryParamValue(item, tupleElementTypes[index], nestedOptions))
-        .join(",")})`;
+      // Single-pass build — `Array.prototype.map` would allocate an extra
+      // intermediate array just to hand it to `.join`. Same shape as the
+      // Map/object branches below.
+      const parts: string[] = [];
+      for (let index = 0; index < value.length; index += 1) {
+        parts.push(formatQueryParamValue(value[index], tupleElementTypes[index], nestedOptions));
+      }
+      return `(${parts.join(",")})`;
     }
 
     const arrayElementType = getArrayElementType(sqlType);
-    return `[${value
-      .map((item) =>
+    const parts: string[] = [];
+    for (const item of value) {
+      parts.push(
         arrayElementType === undefined
           ? formatQueryParamValue(item, nestedOptions)
           : formatQueryParamValue(item, arrayElementType, nestedOptions),
-      )
-      .join(",")}]`;
+      );
+    }
+    return `[${parts.join(",")}]`;
   }
   if (value instanceof Map) {
     // Iterate the Map directly instead of `[...value.entries()].map(...)` —

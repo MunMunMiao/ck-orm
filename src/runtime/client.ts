@@ -20,6 +20,7 @@ import type { AnyTable } from "../schema";
 import { buildCreateTemporaryTableStatement } from "../schema-ddl";
 import { quoteIdentifier, sql } from "../sql";
 import {
+  assertValidUserQueryParams,
   buildQueryParams,
   type ClickHouseBaseQueryOptions,
   type ClickHouseEndpointOptions,
@@ -159,7 +160,7 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
       ...(defaultOptions.query_params ?? {}),
       ...(options?.query_params ?? {}),
     };
-    mergeQueryParams(undefined, queryParams);
+    assertValidUserQueryParams(queryParams);
 
     return {
       ...defaultOptions,
@@ -356,6 +357,13 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
     queryParamTypes: CompiledQuery<TResult>["paramTypes"],
     options: ClickHouseBaseQueryOptions,
   ): AsyncGenerator<TResult, void, unknown> {
+    // The selection shape is fixed for the lifetime of the stream — branch
+    // once at the boundary instead of paying for `compiled.selection.length`
+    // and the typed-vs-passthrough decision on every row.
+    const selection = compiled.selection;
+    const decode: (row: Record<string, unknown>) => TResult =
+      selection.length === 0 ? (row) => row as TResult : (row) => decodeRow<TResult>(row, selection);
+
     for await (const row of config.client.queryStream<Record<string, unknown>>({
       statement: query,
       query_params: queryParams,
@@ -363,11 +371,7 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
       options,
       format: "JSONEachRow",
     })) {
-      if (compiled.selection.length === 0) {
-        yield row as TResult;
-        continue;
-      }
-      yield decodeRow<TResult>(row, compiled.selection);
+      yield decode(row);
     }
   };
 

@@ -283,6 +283,31 @@ export const createTracingInstrumentation = (
   const includeStatement = options.includeStatement ?? true;
   const spanByExecutionId = new Map<string, Span>();
 
+  // Common epilogue shared by `onQuerySuccess` / `onQueryError`: pull the span,
+  // detach it from the lookup map, write the per-result attributes that don't
+  // depend on outcome, then let the caller stamp status + close.
+  const closeSpan = (
+    event: ClickHouseORMQueryResultEvent | ClickHouseORMQueryErrorEvent,
+    finalize: (span: Span) => void,
+  ): void => {
+    const span = spanByExecutionId.get(event.executionId);
+    if (!span) return;
+    spanByExecutionId.delete(event.executionId);
+
+    if (event.format) {
+      span.setAttribute("db.response.format", event.format);
+    }
+    if (shouldIncludeRowCount(options.includeRowCount, event.mode) && typeof event.rowCount === "number") {
+      span.setAttribute("db.response.row_count", event.rowCount);
+      span.setAttribute("db.response.returned_rows", event.rowCount);
+    }
+    span.setAttribute("db.query.duration_ms", event.durationMs);
+    span.setAttribute("ck_orm.duration_ms", event.durationMs);
+
+    finalize(span);
+    span.end();
+  };
+
   return {
     onQueryStart(event) {
       const span = tracer.startSpan(buildClickHouseSpanName(event.operation), {
@@ -295,50 +320,24 @@ export const createTracingInstrumentation = (
       spanByExecutionId.set(event.executionId, span);
     },
     onQuerySuccess(event) {
-      const span = spanByExecutionId.get(event.executionId);
-      if (!span) {
-        return;
-      }
-      spanByExecutionId.delete(event.executionId);
-      if (event.format) {
-        span.setAttribute("db.response.format", event.format);
-      }
-      if (shouldIncludeRowCount(options.includeRowCount, event.mode) && typeof event.rowCount === "number") {
-        span.setAttribute("db.response.row_count", event.rowCount);
-        span.setAttribute("db.response.returned_rows", event.rowCount);
-      }
-      setOptionalNumberAttribute(span, "ck_orm.server.elapsed_ms", event.serverElapsedMs);
-      setOptionalNumberAttribute(span, "ck_orm.read.rows", event.readRows);
-      setOptionalNumberAttribute(span, "ck_orm.read.bytes", event.readBytes);
-      setOptionalNumberAttribute(span, "ck_orm.result.rows", event.resultRows);
-      setOptionalNumberAttribute(span, "ck_orm.rows_before_limit_at_least", event.rowsBeforeLimitAtLeast);
-      span.setAttribute("db.query.duration_ms", event.durationMs);
-      span.setAttribute("ck_orm.duration_ms", event.durationMs);
-      span.setStatus({ code: SpanStatusCode.OK });
-      span.end();
+      closeSpan(event, (span) => {
+        setOptionalNumberAttribute(span, "ck_orm.server.elapsed_ms", event.serverElapsedMs);
+        setOptionalNumberAttribute(span, "ck_orm.read.rows", event.readRows);
+        setOptionalNumberAttribute(span, "ck_orm.read.bytes", event.readBytes);
+        setOptionalNumberAttribute(span, "ck_orm.result.rows", event.resultRows);
+        setOptionalNumberAttribute(span, "ck_orm.rows_before_limit_at_least", event.rowsBeforeLimitAtLeast);
+        span.setStatus({ code: SpanStatusCode.OK });
+      });
     },
     onQueryError(event) {
-      const span = spanByExecutionId.get(event.executionId);
-      if (!span) {
-        return;
-      }
-      spanByExecutionId.delete(event.executionId);
-      if (event.format) {
-        span.setAttribute("db.response.format", event.format);
-      }
-      if (shouldIncludeRowCount(options.includeRowCount, event.mode) && typeof event.rowCount === "number") {
-        span.setAttribute("db.response.row_count", event.rowCount);
-        span.setAttribute("db.response.returned_rows", event.rowCount);
-      }
-      setErrorAttributes(span, event.error);
-      span.setAttribute("db.query.duration_ms", event.durationMs);
-      span.setAttribute("ck_orm.duration_ms", event.durationMs);
-      span.recordException(toSpanException(event.error));
-      span.setStatus({
-        code: SpanStatusCode.ERROR,
-        message: event.error instanceof Error ? event.error.message : String(event.error),
+      closeSpan(event, (span) => {
+        setErrorAttributes(span, event.error);
+        span.recordException(toSpanException(event.error));
+        span.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: event.error instanceof Error ? event.error.message : String(event.error),
+        });
       });
-      span.end();
     },
   };
 };

@@ -2,7 +2,9 @@ import { toBoolean, toDate, toIntegerNumber, toIntegerString, toNumber, toString
 import { createClientValidationError, createDecodeError, type DecodeError, isDecodeError } from "./errors";
 import { normalizeAggregateFunctionSignature, normalizeClickHouseTypeLiteral } from "./internal/clickhouse-type";
 import { assertDecimalParams, type DecimalParams, formatDecimalSqlType } from "./internal/decimal";
+import { escapeSqlSingleQuoted } from "./internal/escape";
 import { assertValidSqlIdentifier } from "./internal/identifier";
+import { isPlainObject } from "./internal/predicates";
 import { createExpression, type Decoder, type Encoder, type InferData, type SqlExpression } from "./query-shared";
 import { type SQLFragment, sql, trustSqlExpressionObject } from "./sql";
 
@@ -112,12 +114,8 @@ const normalizeConfiguredName = (name: OptionalColumnName): OptionalColumnName =
   return name;
 };
 
-const isObjectRecord = (value: unknown): value is Record<string, unknown> => {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-};
-
 const isAggregateFunctionConfig = (value: unknown): value is AggregateFunctionConfig => {
-  return isObjectRecord(value) && !("kind" in value) && typeof value.name === "string";
+  return isPlainObject(value) && !("kind" in value) && typeof value.name === "string";
 };
 
 const withConfiguredName = <TData, TSqlType extends string>(
@@ -139,7 +137,7 @@ const parseNamedConfig = <TConfig extends object>(
   readonly config: TConfig;
 } => {
   if (typeof first === "string") {
-    if (!isObjectRecord(second)) {
+    if (!isPlainObject(second)) {
       throw createClientValidationError(`${builderName}() requires a config object after the column name`);
     }
     return {
@@ -148,7 +146,7 @@ const parseNamedConfig = <TConfig extends object>(
     };
   }
 
-  if (isObjectRecord(first) && second === undefined) return { config: first };
+  if (isPlainObject(first) && second === undefined) return { config: first };
 
   throw createClientValidationError(`${builderName}() requires a config object`);
 };
@@ -314,6 +312,24 @@ const createColumnFactory = <
     sourceKey: (binding?.tableAlias ?? binding?.tableName) as ResolveSourceKey<TTableName, TTableAlias>,
   });
 
+  // The driver-side encoder is fully determined at column-definition time:
+  // bake the `rejectObjectInput` guard and the `mapToDriverValue ?? identity`
+  // fallback into one closure so the per-row encode loop only does the
+  // actual work — no recurring branch, no recurring `??`.
+  const baseEncoder: Encoder<TData> = config.mapToDriverValue ?? (identity as Encoder<TData>);
+  const mapToDriverValue: (value: TData) => unknown = config.rejectObjectInput
+    ? (value) => {
+        if (typeof value === "object" && value !== null && !(value instanceof Date)) {
+          const columnLabel = binding?.name ?? config.configuredName ?? config.sqlType;
+          throw createClientValidationError(
+            `${config.sqlType} column "${columnLabel}" expects string | number; got an object. ` +
+              `If you are using decimal.js, call .toFixed(scale) before passing it to ck-orm.`,
+          );
+        }
+        return baseEncoder(value);
+      }
+    : baseEncoder;
+
   const column = {
     ...expression,
     kind: "column",
@@ -326,19 +342,11 @@ const createColumnFactory = <
     ddl: config.ddl,
     decimalConfig: config.decimalConfig,
     nestedShape: config.nestedShape,
-    mapFromDriverValue(value: unknown) {
-      return config.mapFromDriverValue(value);
-    },
-    mapToDriverValue(value: TData) {
-      if (config.rejectObjectInput && typeof value === "object" && value !== null && !(value instanceof Date)) {
-        const columnLabel = binding?.name ?? config.configuredName ?? config.sqlType;
-        throw createClientValidationError(
-          `${config.sqlType} column "${columnLabel}" expects string | number; got an object. ` +
-            `If you are using decimal.js, call .toFixed(scale) before passing it to ck-orm.`,
-        );
-      }
-      return (config.mapToDriverValue ?? identity)(value);
-    },
+    // Direct reference — no extra forwarding closure on the per-row decode
+    // loop. Wide tables decoding millions of rows skip a function call per
+    // column-cell.
+    mapFromDriverValue: config.mapFromDriverValue,
+    mapToDriverValue,
     cast(precision: number, scale: number): SQLFragment<string> {
       return sql.decimal(this, precision, scale);
     },
@@ -694,7 +702,6 @@ export const dateTime = (name?: string): DateTime<Date> =>
       name,
     ),
   );
-const escapeSqlSingleQuoted = (value: string) => value.replaceAll("\\", "\\\\").replaceAll("'", "\\'");
 
 export function dateTime64(config: DateTime64Config): DateTime64<Date>;
 export function dateTime64(name: string, config: DateTime64Config): DateTime64<Date>;
@@ -1079,7 +1086,7 @@ export function simpleAggregateFunction<TData = string>(
   first: string,
   second: AnyColumn | SimpleAggregateFunctionConfig,
 ): SimpleAggregateFunction<TData> {
-  const namedConfig = isObjectRecord(second) && "name" in second && "value" in second ? second : undefined;
+  const namedConfig = isPlainObject(second) && "name" in second && "value" in second ? second : undefined;
   const configuredName = namedConfig ? normalizeConfiguredName(first) : undefined;
   const name = namedConfig ? String(namedConfig.name) : first;
   const value = namedConfig ? (namedConfig.value as AnyColumn) : (second as AnyColumn);

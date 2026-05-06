@@ -1,4 +1,5 @@
 import { createDecodeError } from "./errors";
+import { isRecord } from "./internal/predicates";
 import {
   allocParam,
   type BuildContext,
@@ -103,13 +104,9 @@ export const createExpression = <TData, TSourceKey extends string | undefined = 
   return trustSqlExpressionObject(expression);
 };
 
-const isObject = (value: unknown): value is Record<string, unknown> => {
-  return typeof value === "object" && value !== null;
-};
-
 export const isExpression = (value: unknown): value is SqlExpression<unknown> => {
   return (
-    isObject(value) &&
+    isRecord(value) &&
     isTrustedSqlExpressionObject(value) &&
     (value.kind === "expression" || value.kind === "column") &&
     typeof value.compile === "function"
