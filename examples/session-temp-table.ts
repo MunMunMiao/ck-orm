@@ -1,33 +1,22 @@
-import { ckSql, ckTable, ckType, clickhouseClient } from "./ck-orm";
-
-const createCommerceDb = () => {
-  return clickhouseClient({
-    host: "http://127.0.0.1:8123",
-    database: "demo_store",
-    username: "default",
-    password: "<password>",
-    clickhouse_settings: {
-      max_execution_time: 10,
-    },
-  });
-};
+import { ckSql, ckTable, ckType } from "./ck-orm";
+import { createProbeDb } from "./probe-client";
 
 export const runSessionTempTableExample = async () => {
-  const commerceDb = createCommerceDb();
+  const probeDb = createProbeDb();
   const tmpScope = ckTable("tmp_scope", {
-    user_id: ckType.string(),
+    probe_id: ckType.string(),
   });
 
-  return commerceDb.runInSession(async (sessionDb) => {
+  return probeDb.runInSession(async (sessionDb) => {
     // Temporary tables live only inside this Session and are cleaned up automatically.
     await sessionDb.createTemporaryTable(tmpScope);
-    await sessionDb.insertJsonEachRow(tmpScope, [{ user_id: "user_100" }, { user_id: "user_200" }]);
+    await sessionDb.insertJsonEachRow(tmpScope, [{ probe_id: "probe_alpha" }, { probe_id: "probe_beta" }]);
 
     return sessionDb.execute(
       ckSql`
-        SELECT user_id
-        FROM order_reward_log
-        WHERE user_id IN (SELECT user_id FROM tmp_scope)
+        SELECT probe_id
+        FROM probe_telemetry
+        WHERE probe_id IN (SELECT probe_id FROM tmp_scope)
       `,
     );
   });

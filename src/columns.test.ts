@@ -100,8 +100,34 @@ describe("ck-orm columns", function describeClickHouseORMColumns() {
     expect(dateColumn.mapFromDriverValue(originalDate)).toBe(originalDate);
     const parsedDate = dateColumn.mapFromDriverValue("2026-04-21T00:00:00.000Z");
     expect(parsedDate).toBeInstanceOf(Date);
+    expect(dateTime().mapFromDriverValue("2026-04-21 01:02:03").toISOString()).toBe("2026-04-21T01:02:03.000Z");
+    expect(dateColumn.mapFromDriverValue(1_710_000_000_000 as never).toISOString()).toBe("2024-03-09T16:00:00.000Z");
     expect(() => dateColumn.mapFromDriverValue(false)).toThrow("Cannot convert value to Date");
     expect(() => dateColumn.mapFromDriverValue("not-a-date")).toThrow("Cannot convert value to valid Date");
+    expect(() => dateTime().mapFromDriverValue("2026-02-30 01:02:03")).toThrow("Cannot convert value to valid Date");
+
+    expect(date({ encode: "utc" }).mapToDriverValue(new Date("2026-06-15T23:59:00.000Z"))).toBe("2026-06-15");
+    expect(
+      date32("business_day", { encode: (value) => value.toISOString().slice(0, 10) }).mapToDriverValue(
+        new Date("2026-06-16T01:00:00.000Z"),
+      ),
+    ).toBe("2026-06-16");
+    expect(date({ encode: "local" }).mapToDriverValue(new Date("2026-06-15T23:59:00.000Z"))).toMatch(
+      /^\d{4}-\d{2}-\d{2}$/,
+    );
+    expect(date().mapToDriverValue("2026-06-17" as never)).toBe("2026-06-17");
+    expect(() => date().mapToDriverValue(new Date("2026-06-15T00:00:00.000Z"))).toThrow(
+      'Date column values passed as JavaScript Date require ckType.date({ encode: "utc" | "local" | fn })',
+    );
+    expect(() => date({ encode: "utc" }).mapToDriverValue("20260617" as never)).toThrow(
+      "Date column values must use YYYY-MM-DD format",
+    );
+    expect(() => date({ encode: "utc" }).mapToDriverValue("2026-99-17" as never)).toThrow(
+      "Date column values must use a valid YYYY-MM-DD date",
+    );
+    expect(() => date({ encode: "utc" }).mapToDriverValue(new Date("not-a-date"))).toThrow(
+      "Date column values must be a valid Date or YYYY-MM-DD string",
+    );
 
     const parsedTime = time().mapFromDriverValue("12:34:56");
     expect(parsedTime).toBeInstanceOf(Date);
@@ -226,6 +252,7 @@ describe("ck-orm columns", function describeClickHouseORMColumns() {
     expect(() => string("bad-name")).toThrow("Invalid SQL identifier: bad-name");
     expect(() => decimal("reward_points" as never)).toThrow("decimal() requires a config object after the column name");
     expect(() => decimal(20 as never)).toThrow("decimal() requires a config object");
+    expect(() => date("business_day", "bad" as never)).toThrow("date() config must be an object when provided");
   });
 
   it("covers enum, nullable, array, tuple, map, variant and nested types", function testCompositeColumns() {
@@ -302,12 +329,17 @@ describe("ck-orm columns", function describeClickHouseORMColumns() {
       name: string(),
     });
     expect(nestedColumn.sqlType).toBe("Nested(id Int32, name String)");
+    expect(nestedColumn.nestedShape).toBeTruthy();
     const nestedValue = [{ id: 1, name: "name" }] as Array<{
       id: number;
       name: string;
     }>;
     expect(nestedColumn.mapFromDriverValue(nestedValue)).toEqual(nestedValue);
     expect(nestedColumn.mapToDriverValue(nestedValue)).toEqual(nestedValue);
+    expect(() => nestedColumn.mapToDriverValue([null] as never)).toThrow("Cannot convert nested item: null");
+    expect(() => nestedColumn.mapToDriverValue([{ id: 1 } as never])).toThrow(
+      'Nested item is missing required field "name"',
+    );
     expect(() => nestedColumn.mapFromDriverValue("bad")).toThrow("Cannot convert value to nested");
     expect(() =>
       nestedColumn.mapFromDriverValue([{ id: 1, name: "ok" }, 1] as unknown[] as typeof nestedValue),
@@ -326,6 +358,16 @@ describe("ck-orm columns", function describeClickHouseORMColumns() {
     });
     expect(namedAggregate.configuredName).toBe("agg_sum_state");
     expect(namedAggregate.sqlType).toBe("AggregateFunction(sum, UInt64)");
+
+    const quantileAggregate = aggregateFunction("quantile(0.5)", float64());
+    expect(quantileAggregate.sqlType).toBe("AggregateFunction(quantile(0.5), Float64)");
+
+    const namedTopKAggregate = aggregateFunction("agg_top_tags", {
+      name: "topK(10)",
+      args: ["LowCardinality(String)"],
+    });
+    expect(namedTopKAggregate.configuredName).toBe("agg_top_tags");
+    expect(namedTopKAggregate.sqlType).toBe("AggregateFunction(topK(10), LowCardinality(String))");
 
     const simpleAggregate = simpleAggregateFunction("sum", int32());
     expect(simpleAggregate.sqlType).toBe("SimpleAggregateFunction(sum, Int32)");

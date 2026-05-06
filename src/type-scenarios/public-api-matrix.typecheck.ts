@@ -240,6 +240,7 @@ const conversionFunctionTypeMatrix = {
   accurateCastOrNull: fn.accurateCastOrNull<number>("bad", "UInt8"),
   cast: fn.cast<number>("1", "UInt8"),
   date: fn.date(activityLedger.event_time),
+  formatDateTime: fn.formatDateTime(activityLedger.event_time, "%Y-%m-%d", "UTC"),
   formatRow: fn.formatRow("JSONEachRow", activityLedger.actor_id),
   formatRowNoNewline: fn.formatRowNoNewline("JSONEachRow", activityLedger.actor_id),
   parseDateTime: fn.parseDateTime("2026-01-01 00:00:00", "%F %T", "UTC"),
@@ -713,6 +714,8 @@ const ckApiMatrix = {
   hasSubstr: ck.hasSubstr(ckTypeNameMatrix.array[0], ["vip"]),
   ilike: ck.ilike(activityLedger.system_id, "%system%"),
   inArray: ck.inArray(activityLedger.event_phase, [0, 1]),
+  isNotNull: ck.isNotNull(activityLedger.system_id),
+  isNull: ck.isNull(activityLedger.system_id),
   like: ck.like(activityLedger.system_id, "%system%"),
   lt: ck.lt(activityLedger.actor_id, 100),
   lte: ck.lte(activityLedger.actor_id, 100),
@@ -726,6 +729,23 @@ const ckApiMatrix = {
   startsWith: ck.startsWith(activityLedger.system_id, "system"),
   startsWithIgnoreCase: ck.startsWithIgnoreCase(activityLedger.system_id, "SYSTEM"),
 } satisfies { readonly [K in keyof typeof ck]: unknown };
+
+const limitValueMatrix = [
+  db.select({ actor_id: activityLedger.actor_id }).from(activityLedger).limit(10),
+  db.select({ actor_id: activityLedger.actor_id }).from(activityLedger).offset(0n),
+  db.select({ actor_id: activityLedger.actor_id }).from(activityLedger).limit(ckSql`toUInt64(10)`),
+  db.select({ actor_id: activityLedger.actor_id }).from(activityLedger).limitBy([activityLedger.actor_id], ckSql`10`),
+];
+
+// @ts-expect-error LIMIT values must not accept arbitrary column or function selections.
+db.select({ actor_id: activityLedger.actor_id }).from(activityLedger).limit(activityLedger.actor_id);
+
+db.select({ actor_id: activityLedger.actor_id })
+  .from(activityLedger)
+  // @ts-expect-error LIMIT BY values must not accept arbitrary `Selection` wrappers.
+  .limitBy([activityLedger.actor_id], ck.expr(ckSql`10`));
+
+void limitValueMatrix;
 
 const ckSqlMatrix = {
   identifier: ckSql.identifier({ table: "activity_ledger", column: "actor_id" }),

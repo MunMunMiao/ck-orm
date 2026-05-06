@@ -131,6 +131,7 @@ const typeConversionFunctionNames = [
   "accurateCastOrNull",
   "cast",
   "date",
+  "formatDateTime",
   "formatRow",
   "formatRowNoNewline",
   "parseDateTime",
@@ -319,6 +320,9 @@ const compileExpression = (expression: { compile(ctx: ReturnType<typeof createCo
       ...ctx.params,
       ...built.params,
     },
+    paramTypes: {
+      ...built.paramTypes,
+    },
   };
 };
 
@@ -352,6 +356,7 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     expectCompiled("accurateCast", fn.accurateCast(source, "UInt8"));
     expectCompiled("accurateCastOrDefault", fn.accurateCastOrDefault(source, "UInt8", 7));
     expectCompiled("accurateCastOrNull", fn.accurateCastOrNull(source, "UInt8"));
+    expectCompiled("formatDateTime", fn.formatDateTime(dateSource, "%Y-%m-%d", "UTC"));
     expectCompiled("formatRow", fn.formatRow("JSONEachRow", source));
     expectCompiled("formatRowNoNewline", fn.formatRowNoNewline("JSONEachRow", source));
 
@@ -635,6 +640,9 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     expect(fn.toNullable<string>("vip").decoder("vip")).toBe("vip");
     expect(fn.accurateCastOrNull<number>("bad", "UInt8").decoder(null)).toBeNull();
 
+    expect(compileExpression(fn.cast("state", "AggregateFunction(quantile(0.5), Float64)")).query).toContain(
+      "CAST({orm_param1:String} AS AggregateFunction(quantile(0.5), Float64))",
+    );
     expect(() => fn.cast("1", "UInt8; DROP TABLE t")).toThrow("Invalid ClickHouse type literal");
     expect(() => fn.accurateCast("1", "")).toThrow("ClickHouse type literal must be a non-empty string");
     expect(() => fn.toDecimal32OrDefault("1", 10)).toThrow(
@@ -846,19 +854,51 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     });
 
     const tupleElementBuilt = compileExpression(fn.tupleElement(fn.tuple("ticket", 9001), 1));
-    expect(tupleElementBuilt.query).toContain(
-      "tupleElement(tuple({orm_param1:String}, {orm_param2:Int64}), {orm_param3:Int64})",
+    expect(tupleElementBuilt.query).toContain("tupleElement(tuple({orm_param1:String}, {orm_param2:Int64}), 1)");
+    expect(tupleElementBuilt.params).toEqual({
+      orm_param1: "ticket",
+      orm_param2: 9001,
+    });
+    expect(tupleElementBuilt.paramTypes).toEqual({
+      orm_param1: "String",
+      orm_param2: "Int64",
+    });
+
+    const tupleElementBigIntBuilt = compileExpression(fn.tupleElement(sql.raw("target_order"), 1n));
+    expect(tupleElementBigIntBuilt.query).toContain("tupleElement(target_order, 1)");
+    expect(tupleElementBigIntBuilt.params).toEqual({});
+
+    const tupleElementEscapedNameBuilt = compileExpression(
+      fn.tupleElement<string>(sql.raw("target_order"), "it'works", "missing"),
     );
+    expect(tupleElementEscapedNameBuilt.query).toContain(
+      "tupleElement(target_order, 'it\\'works', {orm_param1:String})",
+    );
+    expect(tupleElementEscapedNameBuilt.params).toEqual({
+      orm_param1: "missing",
+    });
+    expect(tupleElementEscapedNameBuilt.paramTypes).toEqual({
+      orm_param1: "String",
+    });
+
+    for (const invalid of [0, -1, 1.5, Number.NaN, Number.MAX_SAFE_INTEGER + 1, 0n, -1n, "", {}, []]) {
+      expect(() => compileExpression(fn.tupleElement(sql.raw("target_order"), invalid as never))).toThrow(
+        "tupleElement indexOrName must be a positive safe integer or non-empty string",
+      );
+    }
+
+    const tupleElementWithDefaultBuilt = compileExpression(fn.tupleElement<string>(sql.raw("target_order"), 2, "zero"));
+    expect(tupleElementWithDefaultBuilt.query).toContain("tupleElement(target_order, 2, {orm_param1:String})");
+    expect(tupleElementWithDefaultBuilt.params).toEqual({
+      orm_param1: "zero",
+    });
 
     const tupleElementByNameBuilt = compileExpression(
       fn.tupleElement<string>(sql.raw("target_order"), "ticket", "missing"),
     );
-    expect(tupleElementByNameBuilt.query).toContain(
-      "tupleElement(target_order, {orm_param1:String}, {orm_param2:String})",
-    );
+    expect(tupleElementByNameBuilt.query).toContain("tupleElement(target_order, 'ticket', {orm_param1:String})");
     expect(tupleElementByNameBuilt.params).toEqual({
-      orm_param1: "ticket",
-      orm_param2: "missing",
+      orm_param1: "missing",
     });
 
     const arrayBuilt = compileExpression(fn.array("vip", "pro"));
@@ -1009,6 +1049,42 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
 
     for (const [name, expression] of Object.entries(helpers)) {
       expect(compileExpression(expression).query).toContain(`${name}(`);
+    }
+  });
+
+  it("inlines ClickHouse const-only array helper integer arguments", function testConstOnlyArrayHelperArgs() {
+    const denseRanked = compileExpression(fn.arrayEnumerateDenseRanked(1, [[1, 2]], 2));
+    expect(denseRanked.query).toContain("arrayEnumerateDenseRanked(1, {orm_param1:Array(Array(Int64))}, 2)");
+    expect(denseRanked.params).toEqual({
+      orm_param1: [[1, 2]],
+    });
+
+    const uniqRanked = compileExpression(fn.arrayEnumerateUniqRanked(1n, [[1, 2]], 2n));
+    expect(uniqRanked.query).toContain("arrayEnumerateUniqRanked(1, {orm_param1:Array(Array(Int64))}, 2)");
+    expect(uniqRanked.params).toEqual({
+      orm_param1: [[1, 2]],
+    });
+
+    const sampled = compileExpression(fn.arrayRandomSample(["vip", "pro"], 1));
+    expect(sampled.query).toContain("arrayRandomSample({orm_param1:Array(String)}, 1)");
+    expect(sampled.params).toEqual({
+      orm_param1: ["vip", "pro"],
+    });
+
+    const rawSampled = compileExpression(fn.arrayRandomSample(["vip", "pro"], sql.raw("toUInt8(1)")));
+    expect(rawSampled.query).toContain("arrayRandomSample({orm_param1:Array(String)}, toUInt8(1))");
+
+    for (const invalid of [0, -1, 1.5, Number.NaN, "", {}, []]) {
+      expect(() => compileExpression(fn.arrayEnumerateDenseRanked(invalid, [[1]], 1))).toThrow(
+        "arrayEnumerateDenseRanked clearDepth",
+      );
+      expect(() => compileExpression(fn.arrayEnumerateUniqRanked(1, [[1]], invalid))).toThrow(
+        "arrayEnumerateUniqRanked maxArrayDepth",
+      );
+    }
+
+    for (const invalid of [-1, 1.5, Number.NaN, "", {}, []]) {
+      expect(() => compileExpression(fn.arrayRandomSample([1, 2], invalid))).toThrow("arrayRandomSample samples");
     }
   });
 
@@ -1249,6 +1325,20 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     expect(fn.hasSubstr(["vip"], ["vip"]).decoder("1")).toBe(true);
     expect(fn.kql_array_sort_asc(["vip"]).decoder([["vip"]])).toEqual([["vip"]]);
     expect(() => fn.emptyArrayFloat64().decoder("bad")).toThrow("Cannot convert value to emptyArrayFloat64 array");
+  });
+
+  it("validates ClickHouse type literals used by conversion helpers", function testTypeLiteralValidation() {
+    const source = string().bind({ name: "raw_value", tableName: "orders" });
+
+    expect(
+      compileExpression(fn.cast(source, "Array(Tuple(name String, score UInt8, at DateTime64(3, 'UTC')))")).query,
+    ).toBe("CAST(`orders`.`raw_value` AS Array(Tuple(name String, score UInt8, at DateTime64(3, 'UTC'))))");
+    expect(compileExpression(fn.cast(source, "Enum8('active' = 1, 'paused' = 2)")).query).toBe(
+      "CAST(`orders`.`raw_value` AS Enum8('active' = 1, 'paused' = 2))",
+    );
+    expect(() => fn.cast(source, "UInt8); DROP TABLE users; --")).toThrow("Invalid ClickHouse type literal");
+    expect(() => fn.cast(source, "concat(String)")).toThrow("Unsupported ClickHouse type literal");
+    expect(() => fn.accurateCast(source, "Enum8('active' = 1) OR 1 = 1")).toThrow("Invalid ClickHouse type literal");
   });
 
   it("compiles toDecimal* casts and Decimal-aware aggregates", function testDecimalAwareAggregates() {

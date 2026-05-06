@@ -558,56 +558,58 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
     expect(streamedRows).toEqual([{ raw: "first" }]);
   });
 
-  it("guards exception output parsing and unsafe async insert settings before sending requests", async function testStrictErrorSettings() {
+  it("overrides ORM wire settings with warnings and still rejects unsafe async insert settings", async function testStrictErrorSettings() {
     const fetchSpy = mock(async () => new Response(JSON.stringify({ data: [] }), { status: 200 }));
     globalThis.fetch = fetchSpy as unknown as typeof fetch;
 
     const db = clickhouseClient({
       host: "http://localhost:8123",
     });
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (message?: unknown) => {
+      warnings.push(String(message));
+    };
 
-    await expectRejectsWithClickhouseError(
-      db.execute(sql`select 1`, {
+    try {
+      await db.execute(sql`select 1`, {
         clickhouse_settings: {
           http_write_exception_in_output_format: 1,
         },
-      }),
-      {
-        kind: "client_validation",
-        executionState: "not_sent",
-        message: "[ck-orm] ck-orm requires http_write_exception_in_output_format=0 for stable HTTP exception parsing",
-      },
-    );
+      });
 
-    await expectRejectsWithClickhouseError(
-      db.execute(sql`select 1`, {
+      await db.execute(sql`select 1`, {
         clickhouse_settings: {
           output_format_json_quote_64bit_integers: 0,
         },
-      }),
-      {
-        kind: "client_validation",
-        executionState: "not_sent",
-        message:
-          "[ck-orm] ck-orm requires output_format_json_quote_64bit_integers=1 for lossless 64-bit integer decoding",
-      },
-    );
+      });
 
-    await expectRejectsWithClickhouseError(
-      db.insertJsonEachRow(users, [{ id: 1, name: "alice" }], {
-        clickhouse_settings: {
-          async_insert: 1,
-          wait_for_async_insert: 0,
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      expect(warnings.some((message) => message.includes("http_write_exception_in_output_format=1 is ignored"))).toBe(
+        true,
+      );
+      expect(warnings.some((message) => message.includes("output_format_json_quote_64bit_integers=0 is ignored"))).toBe(
+        true,
+      );
+
+      await expectRejectsWithClickhouseError(
+        db.insertJsonEachRow(users, [{ id: 1, name: "alice" }], {
+          clickhouse_settings: {
+            async_insert: 1,
+            wait_for_async_insert: 0,
+          },
+        }),
+        {
+          kind: "client_validation",
+          executionState: "not_sent",
+          message: "[ck-orm] ck-orm requires wait_for_async_insert=1 when async_insert=1",
         },
-      }),
-      {
-        kind: "client_validation",
-        executionState: "not_sent",
-        message: "[ck-orm] ck-orm requires wait_for_async_insert=1 when async_insert=1",
-      },
-    );
+      );
 
-    expect(fetchSpy).not.toHaveBeenCalled();
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+    } finally {
+      console.warn = originalWarn;
+    }
   });
 
   it("covers complex query params, child query builders and session raw streams", async function testChildClientsAndQueryParams() {

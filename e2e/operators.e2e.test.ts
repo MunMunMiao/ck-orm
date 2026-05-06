@@ -1,6 +1,6 @@
 import { expect, it } from "bun:test";
-import { ck, ckSql } from "./ck-orm";
-import { createE2EDb, pets, users, webEvents } from "./shared";
+import { ck, ckSql, ckTable, ckType } from "./ck-orm";
+import { createE2EDb, createTempTableName, pets, users, webEvents } from "./shared";
 import { describeE2E, expectPresent } from "./test-helpers";
 
 describeE2E("ck-orm e2e operators", function describeOperators() {
@@ -114,6 +114,22 @@ describeE2E("ck-orm e2e operators", function describeOperators() {
     expect(notExistsRows).toEqual([{ id: 4001 }, { id: 4002 }, { id: 4003 }]);
   });
 
+  it("uses explicit NULL predicates and rejects nullish predicate values before requests", async function testNullPredicates() {
+    const db = createE2EDb();
+
+    const rows = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(ck.and(ck.isNull(ckSql`NULL`), ck.isNotNull(users.name)))
+      .orderBy(users.id)
+      .limit(1);
+
+    expect(rows).toEqual([{ id: 1 }]);
+    expect(() => ck.eq(users.tier, null as never)).toThrow("does not accept bare null");
+    expect(() => ck.inArray(users.tier, ["vip", null] as never)).toThrow("does not accept bare null");
+    expect(() => ck.like(users.tier, undefined as never)).toThrow("does not accept bare undefined");
+  });
+
   it("supports has, hasAll, hasAny and hasSubstr against array columns", async function testHasOperators() {
     const db = createE2EDb();
 
@@ -149,6 +165,57 @@ describeE2E("ck-orm e2e operators", function describeOperators() {
     expect(hasAllRows).toEqual([{ id: "1" }, { id: "11" }, { id: "21" }]);
     expect(hasAnyRows).toEqual([{ id: "1" }, { id: "2" }, { id: "6" }, { id: "11" }, { id: "12" }]);
     expect(hasSubstrRows).toEqual([{ id: "1" }, { id: "11" }, { id: "21" }]);
+  });
+
+  it("uses array column encoders for date arrays and keeps boolean predicates explicit", async function testArrayDateAndBooleanPredicates() {
+    const db = createE2EDb();
+    const tempTable = createTempTableName("array_predicate_scope");
+    const scope = ckTable(tempTable, {
+      id: ckType.int32(),
+      active: ckType.bool(),
+      business_days: ckType.array(ckType.date({ encode: "utc" })),
+      local_days: ckType.array(ckType.date32({ encode: (value) => value.toISOString().slice(0, 10) })),
+    });
+
+    await db.runInSession(async (session) => {
+      await session.createTemporaryTable(scope);
+      await session.insertJsonEachRow(scope, [
+        {
+          id: 1,
+          active: false,
+          business_days: ["2026-06-15"],
+          local_days: ["2026-06-16"],
+        },
+        {
+          id: 2,
+          active: true,
+          business_days: ["2026-06-20"],
+          local_days: ["2026-06-21"],
+        },
+      ]);
+
+      const dateRows = await session
+        .select({ id: scope.id })
+        .from(scope)
+        .where(
+          ck.has(scope.business_days, new Date("2026-06-15T23:00:00.000Z")),
+          ck.hasAny(scope.local_days, [new Date("2026-06-16T01:00:00.000Z")]),
+          ck.hasAll(scope.business_days, [new Date("2026-06-15T00:00:00.000Z")]),
+        )
+        .orderBy(scope.id);
+
+      const falseRows = await session
+        .select({ id: scope.id })
+        .from(scope)
+        .where(ck.eq(scope.active, false))
+        .orderBy(scope.id);
+
+      const trueRows = await session.select({ id: scope.id }).from(scope).where(scope.active).orderBy(scope.id);
+
+      expect(dateRows).toEqual([{ id: 1 }]);
+      expect(falseRows).toEqual([{ id: 1 }]);
+      expect(trueRows).toEqual([{ id: 2 }]);
+    });
   });
 
   it("supports asc, desc and expr in ordered builder queries", async function testOrderByAndExpr() {

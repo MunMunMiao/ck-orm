@@ -229,19 +229,19 @@ const insertSchemaPrimitives = async () => {
 
 const insertSchemaCompound = async () => {
   const db = createE2EDb();
-  await db.insertJsonEachRow("schema_compound", [
-    {
-      id: 1,
-      nullable_value: null,
-      array_value: ["alpha", "beta"],
-      tuple_value: ["login", 42],
-      map_value: { a: 1, b: 2 },
-      variant_value: 7,
-      low_cardinality_value: "vip",
-      "nested_value.name": ["first", "second"],
-      "nested_value.score": [10, 20],
-    },
-  ]);
+  await db.insert(schemaCompound).values({
+    id: 1,
+    nullable_value: null,
+    array_value: ["alpha", "beta"],
+    tuple_value: ["login", 42],
+    map_value: { a: 1, b: 2 },
+    variant_value: 7,
+    low_cardinality_value: "vip",
+    nested_value: [
+      { name: "first", score: 10 },
+      { name: "second", score: 20 },
+    ],
+  });
 };
 
 const insertSchemaAggregates = async () => {

@@ -1,21 +1,10 @@
-import { ck, clickhouseClient, isClickHouseORMError, isDecodeError } from "./ck-orm";
-import { orderRewardLog } from "./schema/commerce";
+import { ck, isClickHouseORMError, isDecodeError } from "./ck-orm";
+import { createProbeDb } from "./probe-client";
+import { probeTelemetry } from "./schema/probe";
 
 type PublicQueryError = {
   code: "clickhouse_query_failed";
   message: string;
-};
-
-const createCommerceDb = () => {
-  return clickhouseClient({
-    host: "http://127.0.0.1:8123",
-    database: "demo_store",
-    username: "default",
-    password: "<password>",
-    clickhouse_settings: {
-      max_execution_time: 10,
-    },
-  });
 };
 
 const toPublicQueryError = (error: unknown): PublicQueryError => {
@@ -68,12 +57,12 @@ const toPublicQueryError = (error: unknown): PublicQueryError => {
 };
 
 export const runCountModesExample = async () => {
-  const commerceDb = createCommerceDb();
-  const activeRewardEvents = ck.eq(orderRewardLog.peerdbIsDeleted, 0);
+  const probeDb = createProbeDb();
+  const activeTelemetry = ck.isNull(probeTelemetry.deletedAt);
 
-  const approximateNumber = await commerceDb.count(orderRewardLog, activeRewardEvents);
-  const exactString = await commerceDb.count(orderRewardLog, activeRewardEvents).toSafe();
-  const wireShape = await commerceDb.count(orderRewardLog, activeRewardEvents).toMixed();
+  const approximateNumber = await probeDb.count(probeTelemetry, activeTelemetry);
+  const exactString = await probeDb.count(probeTelemetry, activeTelemetry).toSafe();
+  const wireShape = await probeDb.count(probeTelemetry, activeTelemetry).toMixed();
 
   return {
     approximateNumber,
@@ -83,19 +72,19 @@ export const runCountModesExample = async () => {
 };
 
 export const runErrorHandlingExample = async () => {
-  const commerceDb = createCommerceDb();
+  const probeDb = createProbeDb();
 
   try {
-    return await commerceDb
+    return await probeDb
       .select({
-        userId: orderRewardLog.userId,
-        rewardPoints: orderRewardLog.rewardPoints,
+        probeId: probeTelemetry.probeId,
+        signalStrength: probeTelemetry.signalStrength,
       })
-      .from(orderRewardLog)
-      .where(ck.eq(orderRewardLog.peerdbIsDeleted, 0))
+      .from(probeTelemetry)
+      .where(ck.isNull(probeTelemetry.deletedAt))
       .limit(20)
       .execute({
-        query_id: "reward_error_handling_example",
+        query_id: "probe_error_handling_example",
       });
   } catch (error) {
     return toPublicQueryError(error);

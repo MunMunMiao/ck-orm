@@ -81,6 +81,8 @@ This matrix records the public API coverage contract. Runtime behavior rows poin
 | `ck.ilike` | `injection-values.e2e.test.ts` |
 | `ck.notIlike` | `injection-values.e2e.test.ts` |
 | `ck.between` | `operators.e2e.test.ts` |
+| `ck.isNull` | `operators.e2e.test.ts`, `write-paths.e2e.test.ts` |
+| `ck.isNotNull` | `operators.e2e.test.ts`, `write-paths.e2e.test.ts`, `src/query-extra.test.ts`, `src/type-scenarios/public-api-matrix.typecheck.ts` |
 | `ck.inArray` | `operators.e2e.test.ts`, `builder-analytics.e2e.test.ts`, `injection-values.e2e.test.ts` |
 | `ck.notInArray` | `operators.e2e.test.ts` |
 | `ck.exists` | `operators.e2e.test.ts`, `builder-analytics.e2e.test.ts` |
@@ -120,7 +122,7 @@ This matrix records the public API coverage contract. Runtime behavior rows poin
 | `fn.withParams` | `functions.e2e.test.ts`, `injection-identifiers.e2e.test.ts` |
 | `fn.cast`, `fn.date`, `fn.accurateCast`, `fn.accurateCastOrDefault`, `fn.accurateCastOrNull`, `fn.reinterpretAs*` | `functions.e2e.test.ts` |
 | `fn.toString`, `fn.toStringCutToZero`, `fn.toBool`, `fn.toInt*`, `fn.toUInt*`, `fn.toFloat*`, `fn.toBFloat16*` | `functions.e2e.test.ts` |
-| `fn.toDate*`, `fn.toDateTime*`, `fn.parseDateTime*`, `fn.toTime*`, `fn.toTime64*` | `functions.e2e.test.ts` |
+| `fn.toDate*`, `fn.toDateTime*`, `fn.parseDateTime*`, `fn.formatDateTime`, `fn.toTime*`, `fn.toTime64*` | `functions.e2e.test.ts` |
 | `fn.toDecimal*`, `fn.toDecimalString`, `fn.toFixedString` | `functions.e2e.test.ts`, `builder-analytics.e2e.test.ts` |
 | `fn.formatRow`, `fn.formatRowNoNewline`, `fn.toInterval*`, `fn.toLowCardinality`, `fn.toNullable`, `fn.toUUID*` | `functions.e2e.test.ts` |
 | `fn.toUnixTimestamp`, `fn.toUnixTimestamp64Second`, `fn.toUnixTimestamp64Milli`, `fn.toUnixTimestamp64Micro`, `fn.toUnixTimestamp64Nano` | `functions.e2e.test.ts` |
@@ -152,9 +154,9 @@ This matrix records the public API coverage contract. Runtime behavior rows poin
 | `fn.arrayFill`, `fn.arrayReverseFill`, `fn.arraySplit`, `fn.arrayReverseSplit`, `fn.arrayFold` | `functions.e2e.test.ts` |
 | `fn.arrayAvg`, `fn.arraySum`, `fn.arrayProduct`, `fn.arrayMax`, `fn.arrayMin`, `fn.arrayDotProduct`, `fn.arrayReduce` | `functions.e2e.test.ts` |
 | `fn.arrayJaccardIndex`, `fn.arrayLevenshteinDistance`, `fn.arrayROCAUC` | `functions.e2e.test.ts` |
-| `fn.arrayCompact`, `fn.arrayDistinct`, `fn.arrayDifference`, `fn.arrayCumSum`, `fn.arrayEnumerate`, `fn.arrayEnumerateDense`, `fn.arrayEnumerateUniq` | `functions.e2e.test.ts` |
+| `fn.arrayCompact`, `fn.arrayDistinct`, `fn.arrayDifference`, `fn.arrayCumSum`, `fn.arrayEnumerate`, `fn.arrayEnumerateDense`, `fn.arrayEnumerateDenseRanked`, `fn.arrayEnumerateUniq`, `fn.arrayEnumerateUniqRanked` | `functions.e2e.test.ts` |
 | `fn.arraySort`, `fn.arrayReverseSort`, `fn.arrayReverse`, `fn.arrayRotateLeft`, `fn.arrayRotateRight`, `fn.arrayShiftLeft`, `fn.arrayShiftRight` | `functions.e2e.test.ts` |
-| `fn.arrayPartialSort`, `fn.arrayPartialReverseSort`, `fn.arrayShuffle`, `fn.arrayPartialShuffle`, `fn.arrayRandomSample` | `functions.e2e.test.ts` structural assertions |
+| `fn.arrayPartialSort`, `fn.arrayPartialReverseSort`, `fn.arrayShuffle`, `fn.arrayPartialShuffle`, `fn.arrayRandomSample` | `functions.e2e.test.ts` |
 | `fn.arrayExcept`, `fn.arrayRemove`, `fn.arrayResize`, `fn.arrayUniq`, `fn.arrayUnion`, `fn.arraySymmetricDifference` | `functions.e2e.test.ts` |
 | `fn.arrayShingles`, `fn.arrayWithConstant`, `fn.arrayPopBack`, `fn.arrayPopFront`, `fn.arrayPushBack`, `fn.arrayPushFront`, `fn.arrayZipUnaligned` | `functions.e2e.test.ts` |
 | `fn.empty`, `fn.emptyArrayDate`, `fn.emptyArrayDateTime`, `fn.emptyArrayFloat32`, `fn.emptyArrayFloat64`, `fn.emptyArrayInt8`, `fn.emptyArrayInt16`, `fn.emptyArrayInt32`, `fn.emptyArrayInt64`, `fn.emptyArrayString`, `fn.emptyArrayUInt8`, `fn.emptyArrayUInt16`, `fn.emptyArrayUInt32`, `fn.emptyArrayUInt64`, `fn.emptyArrayToSingle` | `functions.e2e.test.ts` |
@@ -164,7 +166,7 @@ This matrix records the public API coverage contract. Runtime behavior rows poin
 | `fn.notEmpty` | `functions.e2e.test.ts` |
 | `fn.not` | `functions.e2e.test.ts` |
 | `fn.table.call` | `functions.e2e.test.ts`, `injection-identifiers.e2e.test.ts` |
-| version-gated or long-tail array helpers: `fn.arrayAUCPR`, `fn.arrayAutocorrelation`, `fn.arrayCumSumNonNegative`, `fn.arrayEnumerateDenseRanked`, `fn.arrayEnumerateUniqRanked`, `fn.arrayLevenshteinDistanceWeighted`, `fn.arrayNormalizedGini`, `fn.arrayReduceInRanges`, `fn.arraySimilarity`, `fn.arrayTranspose` | `src/functions.test.ts`, `src/type-scenarios/public-api-matrix.typecheck.ts` |
+| version-gated or long-tail array helpers: `fn.arrayAUCPR`, `fn.arrayAutocorrelation`, `fn.arrayCumSumNonNegative`, `fn.arrayLevenshteinDistanceWeighted`, `fn.arrayNormalizedGini`, `fn.arrayReduceInRanges`, `fn.arraySimilarity`, `fn.arrayTranspose` | `src/functions.test.ts`, `src/type-scenarios/public-api-matrix.typecheck.ts` |
 
 All `fn` keys are guarded by `src/public_api.test.ts` and `src/type-scenarios/public-api-matrix.typecheck.ts`; every official array helper also has SQL compile coverage in `src/functions.test.ts`.
 
@@ -181,7 +183,7 @@ All `fn` keys are guarded by `src/public_api.test.ts` and `src/type-scenarios/pu
 | `decimal` | `schema-roundtrip.e2e.test.ts` |
 | `decimal.cast(P, S)` (column-level precision cast) | `builder-analytics.e2e.test.ts` |
 | Decimal column rejects object inputs (e.g. raw `decimal.js` instances) | `write-paths.e2e.test.ts` |
-| `date/date32/time/time64/dateTime/dateTime64` | `schema-roundtrip.e2e.test.ts` |
+| `date/date32/time/time64/dateTime/dateTime64` | `schema-roundtrip.e2e.test.ts`, `write-paths.e2e.test.ts` |
 | `bool` | `schema-roundtrip.e2e.test.ts` |
 | `uuid` | `schema-roundtrip.e2e.test.ts` |
 | `ipv4/ipv6` | `schema-roundtrip.e2e.test.ts` |
@@ -191,12 +193,12 @@ All `fn` keys are guarded by `src/public_api.test.ts` and `src/type-scenarios/pu
 | `enum8/enum16` | `schema-roundtrip.e2e.test.ts` |
 | `nullable` | `schema-roundtrip.e2e.test.ts` |
 | `array` | `schema-roundtrip.e2e.test.ts` |
-| `tuple` | `schema-roundtrip.e2e.test.ts` |
+| `tuple` | `schema-roundtrip.e2e.test.ts`, `write-paths.e2e.test.ts` |
 | `map` | `schema-roundtrip.e2e.test.ts` |
 | `variant` | `schema-roundtrip.e2e.test.ts` |
 | `lowCardinality` | `schema-roundtrip.e2e.test.ts` |
-| `nested` | `schema-roundtrip.e2e.test.ts` |
-| `aggregateFunction` | `schema-roundtrip.e2e.test.ts` |
+| `nested` | `schema-roundtrip.e2e.test.ts`, `write-paths.e2e.test.ts` |
+| `aggregateFunction` | `schema-roundtrip.e2e.test.ts`, `functions.e2e.test.ts` parameterized signature |
 | `simpleAggregateFunction` | `schema-roundtrip.e2e.test.ts` |
 | `point/ring/lineString/multiLineString/polygon/multiPolygon` | `schema-roundtrip.e2e.test.ts` |
 

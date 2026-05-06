@@ -37,9 +37,9 @@ const instrumentation: ClickHouseORMInstrumentation = {
   },
 };
 
-export const createInstrumentedCommerceDb = () => {
+export const createInstrumentedProbeDb = () => {
   return clickhouseClient({
-    databaseUrl: "http://default:<password>@127.0.0.1:8123/demo_store",
+    databaseUrl: "http://default:<password>@127.0.0.1:8123/telemetry_lab",
     logger,
     logLevel: "info",
     instrumentation: [instrumentation],
@@ -56,27 +56,27 @@ export const createInstrumentedCommerceDb = () => {
 };
 
 export const runEndpointAndRuntimeMethodsExample = async () => {
-  const db = createInstrumentedCommerceDb();
-  const reportDb = db.withSettings({
+  const db = createInstrumentedProbeDb();
+  const telemetryDb = db.withSettings({
     max_execution_time: 30,
     join_use_nulls: 1,
   });
 
-  await reportDb.ping();
+  await telemetryDb.ping();
 
-  const rows = await reportDb.execute(ckSql`SELECT 1 AS one`, {
+  const rows = await telemetryDb.execute(ckSql`SELECT 1 AS one`, {
     query_id: "runtime_execute_example",
   });
 
   const streamedRows: Record<string, unknown>[] = [];
-  for await (const row of reportDb.stream(ckSql`SELECT number FROM numbers(3)`, {
+  for await (const row of telemetryDb.stream(ckSql`SELECT number FROM numbers(3)`, {
     format: "JSONEachRow",
     query_id: "runtime_stream_example",
   })) {
     streamedRows.push(row);
   }
 
-  await reportDb.command(ckSql`SYSTEM FLUSH LOGS`, {
+  await telemetryDb.command(ckSql`SYSTEM FLUSH LOGS`, {
     query_id: "runtime_command_example",
   });
 
@@ -87,6 +87,6 @@ export const runEndpointAndRuntimeMethodsExample = async () => {
 };
 
 export const runReplicasStatusExample = async (options?: ClickHouseEndpointOptions) => {
-  const db = createInstrumentedCommerceDb();
+  const db = createInstrumentedProbeDb();
   await db.replicasStatus(options);
 };

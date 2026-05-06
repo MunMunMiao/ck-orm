@@ -233,6 +233,80 @@ describeE2E("ck-orm e2e write paths", function describeWritePaths() {
     });
   });
 
+  it("writes Date encoders, null predicates, Tuple params and Nested columns through insert builder", async function testBuilderDateTupleNested() {
+    const db = createE2EDb();
+    const tempTable = createTempTableName("tmp_builder_date_tuple_nested");
+    const scope = ckTable(tempTable, {
+      id: ckType.int32(),
+      businessDay: ckType.date("business_day", { encode: "utc" }),
+      optionalNote: ckType.nullable("optional_note", ckType.string()),
+      pair: ckType.tuple(ckType.string(), ckType.int32()),
+      items: ckType.nested({
+        name: ckType.string(),
+        score: ckType.int32(),
+      }),
+    });
+
+    await db.runInSession(async (session) => {
+      await session.createTemporaryTable(scope);
+      await session.insert(scope).values([
+        {
+          id: 1,
+          businessDay: new Date("2026-06-15T08:00:00.000Z"),
+          optionalNote: null,
+          pair: ["login", 42],
+          items: [
+            { name: "first", score: 10 },
+            { name: "second", score: 20 },
+          ],
+        },
+        {
+          id: 2,
+          businessDay: new Date("2026-06-16T08:00:00.000Z"),
+          optionalNote: "ready",
+          pair: ["logout", 7],
+          items: [{ name: "third", score: 30 }],
+        },
+      ]);
+
+      const rows = await session
+        .select({
+          id: scope.id,
+          businessDay: scope.businessDay,
+          optionalNote: scope.optionalNote,
+          pair: scope.pair,
+          items: scope.items,
+        })
+        .from(scope)
+        .where(
+          ck.eq(scope.businessDay, new Date("2026-06-15T23:00:00.000Z")),
+          ck.isNull(scope.optionalNote),
+          ck.or(ck.inArray(scope.optionalNote, ["missing"]), ck.isNull(scope.optionalNote)),
+          ck.inArray(scope.pair, [["login", 42]]),
+        );
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.id).toBe(1);
+      expect(rows[0]?.businessDay.toISOString().slice(0, 10)).toBe("2026-06-15");
+      expect(rows[0]?.optionalNote).toBeNull();
+      expect(rows[0]?.pair).toEqual(["login", 42]);
+      expect(rows[0]?.items).toEqual([
+        { name: "first", score: 10 },
+        { name: "second", score: 20 },
+      ]);
+
+      const notNullRows = await session
+        .select({
+          id: scope.id,
+          optionalNote: scope.optionalNote,
+        })
+        .from(scope)
+        .where(ck.isNotNull(scope.optionalNote));
+
+      expect(notNullRows).toEqual([{ id: 2, optionalNote: "ready" }]);
+    });
+  });
+
   it("supports JSONEachRow unknown-field skipping when ClickHouse setting is enabled", async function testJsonEachRowSkipUnknownFields() {
     const db = createE2EDb();
     const tempTable = createTempTableName("tmp_json_each_row_unknown");

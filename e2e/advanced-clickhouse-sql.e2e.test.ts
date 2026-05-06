@@ -91,9 +91,9 @@ describeE2E("ck-orm e2e advanced clickhouse sql", function describeAdvancedClick
     `);
 
     expect(rows).toEqual([
-      { trade_id: "1", symbol: "EURUSD", bid: 1.1 },
-      { trade_id: "2", symbol: "XAUUSD", bid: 2350.001 },
-      { trade_id: "3", symbol: "BTCUSD", bid: 65000.002 },
+      { trade_id: "1", symbol: "EURUSD", bid: "1.1" },
+      { trade_id: "2", symbol: "XAUUSD", bid: "2350.001" },
+      { trade_id: "3", symbol: "BTCUSD", bid: "65000.002" },
     ]);
   });
 

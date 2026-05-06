@@ -6,7 +6,7 @@ This directory contains the real `ck-orm` end-to-end suite. It is not a unit tes
 
 The suite does the following:
 
-1. Starts a temporary ClickHouse 26.3 LTS instance with Docker Compose
+1. Starts a temporary ClickHouse 26.3.x instance with Docker Compose
 2. Recreates the database and seeds a large deterministic dataset programmatically
 3. Covers the public runtime API, schema DSL, and complex SQL scenarios in `ck-orm`
 4. Runs the full E2E suite inside an `oven/bun:latest` container

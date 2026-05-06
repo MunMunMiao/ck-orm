@@ -1,7 +1,7 @@
 import { createClientValidationError, normalizeTransportError } from "../errors";
 import type { ClickHouseORMQueryStatistics } from "../observability";
 import { createUuid } from "../platform";
-import { compileSql, sql } from "../sql";
+import { compileSql, type QueryParamTypes, sql } from "../sql";
 import { createAbortController } from "./abort";
 import {
   assertValidQueryId,
@@ -49,6 +49,7 @@ export interface FetchClickHouseTransport {
     statement: string,
     options?: ClickHouseBaseQueryOptions,
     query_params?: Record<string, unknown>,
+    query_param_types?: QueryParamTypes,
   ): Promise<void>;
   insertJsonEachRow(
     tableName: string,
@@ -77,6 +78,7 @@ export const createFetchClickHouseTransport = (config: NormalizedClientConfig): 
     readonly statement: string;
     readonly options?: ClickHouseBaseQueryOptions;
     readonly query_params?: Record<string, unknown>;
+    readonly query_param_types?: QueryParamTypes;
     readonly format?: ClickHouseQueryOptions["format"] | ClickHouseStreamOptions["format"];
     readonly parseMode: ResponseParseMode;
     readonly body?: RequestBody;
@@ -129,7 +131,7 @@ export const createFetchClickHouseTransport = (config: NormalizedClientConfig): 
         form.append("query", normalizedStatement);
         for (const [key, value] of Object.entries(input.query_params ?? {})) {
           assertValidQueryParamKey(key);
-          form.append(`param_${key}`, formatQueryParamValue(value));
+          form.append(`param_${key}`, formatQueryParamValue(value, input.query_param_types?.[key]));
         }
         body = form;
       } else if (input.sendQueryInBody) {
@@ -190,6 +192,7 @@ export const createFetchClickHouseTransport = (config: NormalizedClientConfig): 
       const request = await send({
         statement: input.statement,
         query_params: input.query_params,
+        query_param_types: input.query_param_types,
         options: input.options,
         format,
         parseMode: "json",
@@ -219,6 +222,7 @@ export const createFetchClickHouseTransport = (config: NormalizedClientConfig): 
       const request = await send({
         statement: input.statement,
         query_params: input.query_params,
+        query_param_types: input.query_param_types,
         options: input.options,
         format,
         parseMode: "json_each_row",
@@ -248,10 +252,16 @@ export const createFetchClickHouseTransport = (config: NormalizedClientConfig): 
       }
     },
 
-    async command(statement: string, options?: ClickHouseBaseQueryOptions, query_params?: Record<string, unknown>) {
+    async command(
+      statement: string,
+      options?: ClickHouseBaseQueryOptions,
+      query_params?: Record<string, unknown>,
+      query_param_types?: QueryParamTypes,
+    ) {
       const request = await send({
         statement,
         query_params,
+        query_param_types,
         options,
         parseMode: "text",
         sendQueryInBody: true,

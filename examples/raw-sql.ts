@@ -1,28 +1,17 @@
-import { ckSql, clickhouseClient, fn } from "./ck-orm";
-import { orderRewardLog } from "./schema/commerce";
-
-const createCommerceDb = () => {
-  return clickhouseClient({
-    host: "http://127.0.0.1:8123",
-    database: "demo_store",
-    username: "default",
-    password: "<password>",
-    clickhouse_settings: {
-      max_execution_time: 10,
-    },
-  });
-};
+import { ckSql, fn } from "./ck-orm";
+import { createProbeDb } from "./probe-client";
+import { probeTelemetry } from "./schema/probe";
 
 export const buildRawExpressionExample = () => {
-  const commerceDb = createCommerceDb();
+  const probeDb = createProbeDb();
 
-  const query = commerceDb
+  const query = probeDb
     .select({
-      userId: orderRewardLog.userId,
-      month: fn.toStartOfMonth(orderRewardLog.createdAt).as("month"),
-      createdAtText: fn.toString(orderRewardLog.createdAt).as("created_at_text"),
+      probeId: probeTelemetry.probeId,
+      month: fn.toStartOfMonth(probeTelemetry.createdAt).as("month"),
+      createdAtText: fn.toString(probeTelemetry.createdAt).as("created_at_text"),
     })
-    .from(orderRewardLog);
+    .from(probeTelemetry);
 
   return {
     query,
@@ -30,43 +19,43 @@ export const buildRawExpressionExample = () => {
 };
 
 export const runRawQueryExample = async () => {
-  const commerceDb = createCommerceDb();
-  const threshold = 10;
+  const probeDb = createProbeDb();
+  const minStatus = 1;
 
-  return commerceDb.execute(ckSql`
+  return probeDb.execute(ckSql`
     select
-      ${orderRewardLog.userId},
-      ${fn.sum(orderRewardLog.rewardPoints)} as total_reward_points
-    from ${orderRewardLog}
-    where ${orderRewardLog.id} > ${threshold}
-    group by ${orderRewardLog.userId}
+      ${probeTelemetry.probeId},
+      ${fn.sum(probeTelemetry.signalStrength)} as total_signal_strength
+    from ${probeTelemetry}
+    where ${probeTelemetry.status} >= ${minStatus}
+    group by ${probeTelemetry.probeId}
   `);
 };
 
 export const runTaggedTemplateRawQueryExample = async () => {
-  const commerceDb = createCommerceDb();
-  return commerceDb.execute(ckSql`SELECT 1 AS one`);
+  const probeDb = createProbeDb();
+  return probeDb.execute(ckSql`SELECT 1 AS one`);
 };
 
 export const runIdentifierQueryExample = async () => {
-  const commerceDb = createCommerceDb();
-  const selectedColumns = ckSql.join([ckSql.identifier("user_id"), ckSql.identifier("reward_points")], ", ");
+  const probeDb = createProbeDb();
+  const selectedColumns = ckSql.join([ckSql.identifier("probe_id"), ckSql.identifier("signal_strength")], ", ");
 
-  return commerceDb.execute(
+  return probeDb.execute(
     ckSql`
       SELECT ${selectedColumns}
-      FROM ${ckSql.identifier("order_reward_log")}
-      WHERE ${ckSql.identifier("region")} = ${"AU"}
+      FROM ${ckSql.identifier("probe_telemetry")}
+      WHERE ${ckSql.identifier("status")} = ${1}
       LIMIT ${10}
     `,
   );
 };
 
 export const buildTableFunctionExample = () => {
-  const commerceDb = createCommerceDb();
+  const probeDb = createProbeDb();
   const numbers = fn.table.call("numbers", 10).as("n");
 
-  const query = commerceDb
+  const query = probeDb
     .select({
       total: fn.count(),
     })

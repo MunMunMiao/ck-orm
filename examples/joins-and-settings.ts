@@ -1,24 +1,13 @@
-import { ck, clickhouseClient } from "./ck-orm";
-import { customerInvoice, orderRewardLog } from "./schema/commerce";
-
-const createCommerceDb = () => {
-  return clickhouseClient({
-    host: "http://127.0.0.1:8123",
-    database: "demo_store",
-    username: "default",
-    password: "<password>",
-    clickhouse_settings: {
-      max_execution_time: 10,
-    },
-  });
-};
+import { ck } from "./ck-orm";
+import { createProbeDb } from "./probe-client";
+import { probeSignalRollup, probeTelemetry } from "./schema/probe";
 
 export const buildDefaultLeftJoinExample = () => {
-  const commerceDb = createCommerceDb();
-  const query = commerceDb
+  const probeDb = createProbeDb();
+  const query = probeDb
     .select()
-    .from(customerInvoice)
-    .leftJoin(orderRewardLog, ck.eq(customerInvoice.userId, orderRewardLog.userId));
+    .from(probeSignalRollup)
+    .leftJoin(probeTelemetry, ck.eq(probeSignalRollup.probeId, probeTelemetry.probeId));
 
   return {
     query,
@@ -31,29 +20,29 @@ export const runDefaultLeftJoinExample = async () => {
 };
 
 export const runClickHouseDefaultJoinExample = async () => {
-  const commerceDb = createCommerceDb();
-  const rawDefaultDb = commerceDb.withSettings({
+  const probeDb = createProbeDb();
+  const rawDefaultDb = probeDb.withSettings({
     join_use_nulls: 0,
   });
 
   return rawDefaultDb
     .select()
-    .from(customerInvoice)
-    .leftJoin(orderRewardLog, ck.eq(customerInvoice.userId, orderRewardLog.userId))
+    .from(probeSignalRollup)
+    .leftJoin(probeTelemetry, ck.eq(probeSignalRollup.probeId, probeTelemetry.probeId))
     .execute();
 };
 
 export const buildExplicitSelectJoinExample = () => {
-  const commerceDb = createCommerceDb();
-  const query = commerceDb
+  const probeDb = createProbeDb();
+  const query = probeDb
     .select({
-      userId: customerInvoice.userId,
-      invoiceId: customerInvoice.id,
-      rewardEventId: orderRewardLog.id,
-      rewardPoints: orderRewardLog.rewardPoints,
+      probeId: probeSignalRollup.probeId,
+      bucketStart: probeSignalRollup.bucketStart,
+      sampleId: probeTelemetry.sampleId,
+      signalStrength: probeTelemetry.signalStrength,
     })
-    .from(customerInvoice)
-    .leftJoin(orderRewardLog, ck.eq(customerInvoice.userId, orderRewardLog.userId));
+    .from(probeSignalRollup)
+    .leftJoin(probeTelemetry, ck.eq(probeSignalRollup.probeId, probeTelemetry.probeId));
 
   return {
     query,

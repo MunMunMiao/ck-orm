@@ -1,34 +1,23 @@
-import { ck, ckAlias, clickhouseClient, fn } from "./ck-orm";
-import { orderRewardLog } from "./schema/commerce";
+import { ck, ckAlias, fn } from "./ck-orm";
+import { createProbeDb } from "./probe-client";
+import { probeTelemetry } from "./schema/probe";
 
-const createCommerceDb = () => {
-  return clickhouseClient({
-    host: "http://127.0.0.1:8123",
-    database: "demo_store",
-    username: "default",
-    password: "<password>",
-    clickhouse_settings: {
-      max_execution_time: 10,
-    },
-  });
-};
+export const buildSignalLeaderboardExample = () => {
+  const probeDb = createProbeDb();
+  const telemetry = ckAlias(probeTelemetry, "pt");
+  const totalSignalStrength = fn.sum(telemetry.signalStrength).as("total_signal_strength");
 
-export const buildRewardLeaderboardExample = () => {
-  const commerceDb = createCommerceDb();
-  const rewardLog = ckAlias(orderRewardLog, "orl");
-  const totalRewardPoints = fn.sum(rewardLog.rewardPoints).as("total_reward_points");
-
-  const query = commerceDb
+  const query = probeDb
     .select({
-      userId: rewardLog.userId,
-      totalRewardPoints,
-      rewardEventCount: fn.count().as("reward_event_count"),
-      campaignCount: fn.uniqExact(rewardLog.campaignId).as("campaign_count"),
+      probeId: telemetry.probeId,
+      totalSignalStrength,
+      sampleCount: fn.count().as("sample_count"),
+      missionCount: fn.uniqExact(telemetry.missionId).as("mission_count"),
     })
-    .from(rewardLog)
-    .where(ck.and(ck.eq(rewardLog.peerdbIsDeleted, 0), ck.inArray(rewardLog.channel, [1, 2])))
-    .groupBy(rewardLog.userId)
-    .orderBy(ck.desc(totalRewardPoints))
+    .from(telemetry)
+    .where(ck.and(ck.isNull(telemetry.deletedAt), ck.inArray(telemetry.status, [1, 2])))
+    .groupBy(telemetry.probeId)
+    .orderBy(ck.desc(totalSignalStrength))
     .limit(20)
     .final();
 
@@ -37,7 +26,7 @@ export const buildRewardLeaderboardExample = () => {
   };
 };
 
-export const runRewardLeaderboardExample = async () => {
-  const { query } = buildRewardLeaderboardExample();
+export const runSignalLeaderboardExample = async () => {
+  const { query } = buildSignalLeaderboardExample();
   return query.execute();
 };

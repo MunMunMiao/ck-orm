@@ -1,5 +1,5 @@
 import { ckSql, ckTable, ckType, type InferInsertModel, type InferSelectModel, type InferSelectSchema } from "./ck-orm";
-import type { commerceSchema, orderRewardLog } from "./schema/commerce";
+import type { probeSchema, probeTelemetry } from "./schema/probe";
 
 export const auditEvent = ckTable(
   "audit_events",
@@ -17,13 +17,13 @@ export const auditEvent = ckTable(
     createdAt: ckType.dateTime64("created_at", { precision: 3, timezone: "UTC" }),
     createdDay: ckType.date("created_day").materialized(ckSql`toDate(created_at)`),
     searchText: ckType.string("search_text").aliasExpr(ckSql`lowerUTF8(JSONExtractString(payload, 'message'))`),
-    peerdbVersion: ckType.uint64("_peerdb_version"),
+    ingestVersion: ckType.uint64("_ingest_version"),
   },
   (table) => ({
     engine: "ReplacingMergeTree",
     partitionBy: ckSql`toYYYYMM(${table.createdAt})`,
     orderBy: [table.actorId, table.createdAt, table.id],
-    versionColumn: table.peerdbVersion,
+    versionColumn: table.ingestVersion,
     settings: {
       index_granularity: 8192,
     },
@@ -31,76 +31,77 @@ export const auditEvent = ckTable(
   }),
 );
 
-export const logicalRewardEvent = ckTable("logical_reward_events", {
-  userId: ckType.string("user_id"),
-  rewardPoints: ckType.decimal("reward_points", { precision: 20, scale: 5 }),
+export const logicalSignalEvent = ckTable("logical_signal_events", {
+  probeId: ckType.string("probe_id"),
+  signalStrength: ckType.decimal("signal_strength", { precision: 20, scale: 5 }),
   createdAt: ckType.dateTime64("created_at", { precision: 3, timezone: "UTC" }),
 });
 
 export const columnNameShowcase = ckTable("column_name_showcase", {
   id: ckType.int32(),
-  userId: ckType.string("user_id"),
-  rewardPoints: ckType.decimal("reward_points", { precision: 20, scale: 5 }),
+  probeId: ckType.string("probe_id"),
+  signalStrength: ckType.decimal("signal_strength", { precision: 20, scale: 5 }),
   fixedCode: ckType.fixedString("fixed_code", { length: 8 }),
   tags: ckType.array("tags", ckType.string()),
   attrs: ckType.map("attrs", ckType.string(), ckType.string()),
   embedding: ckType.qbit("embedding", ckType.float32(), { dimensions: 8 }),
-  // The outer Nested column is "line_items"; nested field names come from shape keys.
-  lineItems: ckType.nested("line_items", {
-    productSku: ckType.string(),
-    quantity: ckType.float64(),
+  // The outer Nested column is "components"; nested field names come from shape keys.
+  components: ckType.nested("components", {
+    componentId: ckType.string(),
+    reading: ckType.float64(),
   }),
-  rewardSumState: ckType.aggregateFunction("reward_sum_state", {
+  signalSumState: ckType.aggregateFunction("signal_sum_state", {
     name: "sum",
     args: [ckType.decimal({ precision: 20, scale: 5 })],
   }),
-  rewardSum: ckType.simpleAggregateFunction("reward_sum", {
+  signalSum: ckType.simpleAggregateFunction("signal_sum", {
     name: "sum",
     value: ckType.decimal({ precision: 20, scale: 5 }),
   }),
 });
 
 export const aggregateFunctionNameExample = ckTable("aggregate_function_name_example", {
-  // Here "sum" is the ClickHouse aggregate function name. The column names come from the object keys.
-  rewardSumState: ckType.aggregateFunction("sum", ckType.uint64()),
-  rewardSum: ckType.simpleAggregateFunction("sum", ckType.uint64()),
+  // Here "sum" and "quantile(0.5)" are ClickHouse aggregate function names. Column names come from object keys.
+  signalSumState: ckType.aggregateFunction("sum", ckType.uint64()),
+  medianSignalState: ckType.aggregateFunction("quantile(0.5)", ckType.float64()),
+  signalSum: ckType.simpleAggregateFunction("sum", ckType.uint64()),
 });
 
 export type AuditEventRow = InferSelectModel<typeof auditEvent>;
 export type AuditEventInsert = InferInsertModel<typeof auditEvent>;
-export type LogicalRewardEventRow = InferSelectModel<typeof logicalRewardEvent>;
-export type LogicalRewardEventInsert = InferInsertModel<typeof logicalRewardEvent>;
+export type LogicalSignalEventRow = InferSelectModel<typeof logicalSignalEvent>;
+export type LogicalSignalEventInsert = InferInsertModel<typeof logicalSignalEvent>;
 export type ColumnNameShowcaseRow = InferSelectModel<typeof columnNameShowcase>;
 export type ColumnNameShowcaseInsert = InferInsertModel<typeof columnNameShowcase>;
-export type CommerceRows = InferSelectSchema<typeof commerceSchema>;
-export type RewardLogRow = typeof orderRewardLog.$inferSelect;
-export type RewardLogInsert = typeof orderRewardLog.$inferInsert;
+export type ProbeRows = InferSelectSchema<typeof probeSchema>;
+export type ProbeTelemetryRow = typeof probeTelemetry.$inferSelect;
+export type ProbeTelemetryInsert = typeof probeTelemetry.$inferInsert;
 
 export const exampleAuditInsert = {
   id: "018fc4c4-7d57-7112-812a-8c8c36d0f8c1",
-  actorId: "user_100",
+  actorId: "probe_alpha",
   action: "updated",
   payload: {
-    message: "Reward status changed",
+    message: "Probe status changed",
     before: 0,
     after: 1,
   },
-  labels: ["reward", "status"],
+  labels: ["probe", "status"],
   amountDelta: "42.50000",
   createdAt: new Date("2026-04-24T00:00:00.000Z"),
-  peerdbVersion: "1",
+  ingestVersion: "1",
 } satisfies Partial<AuditEventInsert>;
 
-export const exampleLogicalRewardInsert = {
-  userId: "user_100",
-  rewardPoints: "42.50000",
+export const exampleLogicalSignalInsert = {
+  probeId: "probe_alpha",
+  signalStrength: "42.50000",
   createdAt: new Date("2026-04-24T00:00:00.000Z"),
-} satisfies LogicalRewardEventInsert;
+} satisfies LogicalSignalEventInsert;
 
 export const useColumnNameShowcaseRow = (row: ColumnNameShowcaseRow): string => {
-  return row.userId;
+  return row.probeId;
 };
 
-export const useInferredRows = (row: CommerceRows["orderRewardLog"]): RewardLogRow => {
+export const useInferredRows = (row: ProbeRows["probeTelemetry"]): ProbeTelemetryRow => {
   return row;
 };

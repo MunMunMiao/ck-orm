@@ -82,11 +82,47 @@ export const toStringValue = (value: unknown): string => {
   throw createDecodeError(`Cannot convert value to string: ${String(value)}`, value);
 };
 
+const NAIVE_DATETIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?)$/;
+
+const parseNaiveDateTimeAsUtc = (value: string): Date | null | undefined => {
+  const match = NAIVE_DATETIME_PATTERN.exec(value);
+  if (!match || !value.includes(":")) {
+    return undefined;
+  }
+  const [, yearRaw, monthRaw, dayRaw, hourRaw, minuteRaw, secondRaw, fractionalRaw] = match;
+  const year = Number(yearRaw);
+  const month = Number(monthRaw);
+  const day = Number(dayRaw);
+  const hour = Number(hourRaw);
+  const minute = Number(minuteRaw);
+  const second = Number(secondRaw);
+  const millisecond = Number((fractionalRaw ?? "").slice(0, 3).padEnd(3, "0"));
+  const timestamp = Date.UTC(year, month - 1, day, hour, minute, second, millisecond);
+  const date = new Date(timestamp);
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day ||
+    date.getUTCHours() !== hour ||
+    date.getUTCMinutes() !== minute ||
+    date.getUTCSeconds() !== second
+  ) {
+    return null;
+  }
+  return date;
+};
+
 export const toDate = (value: unknown): Date => {
   let date: Date;
   if (value instanceof Date) {
     date = value;
-  } else if (typeof value === "string" || typeof value === "number") {
+  } else if (typeof value === "string") {
+    const parsedNaiveDateTime = parseNaiveDateTimeAsUtc(value);
+    if (parsedNaiveDateTime === null) {
+      throw createDecodeError(`Cannot convert value to valid Date: ${String(value)}`, value);
+    }
+    date = parsedNaiveDateTime ?? new Date(value);
+  } else if (typeof value === "number") {
     date = new Date(value);
   } else {
     throw createDecodeError(`Cannot convert value to Date: ${String(value)}`, value);

@@ -1,57 +1,46 @@
-import { ck, clickhouseClient, fn } from "./ck-orm";
-import { orderRewardLog } from "./schema/commerce";
+import { ck, fn } from "./ck-orm";
+import { createProbeDb } from "./probe-client";
+import { probeTelemetry } from "./schema/probe";
 
-const createCommerceDb = () => {
-  return clickhouseClient({
-    host: "http://127.0.0.1:8123",
-    database: "demo_store",
-    username: "default",
-    password: "<password>",
-    clickhouse_settings: {
-      max_execution_time: 10,
-    },
-  });
-};
+export const buildSignalSummaryWithLatestSampleExample = () => {
+  const probeDb = createProbeDb();
 
-export const buildRewardSummaryWithLatestEventExample = () => {
-  const commerceDb = createCommerceDb();
-
-  const rankedUsers = commerceDb.$with("ranked_users").as(
-    commerceDb
+  const rankedProbes = probeDb.$with("ranked_probes").as(
+    probeDb
       .select({
-        userId: orderRewardLog.userId,
-        totalRewardPoints: fn.sum(orderRewardLog.rewardPoints).as("total_reward_points"),
+        probeId: probeTelemetry.probeId,
+        totalSignalStrength: fn.sum(probeTelemetry.signalStrength).as("total_signal_strength"),
       })
-      .from(orderRewardLog)
-      .groupBy(orderRewardLog.userId),
+      .from(probeTelemetry)
+      .groupBy(probeTelemetry.probeId),
   );
 
-  const latestRewardEvent = commerceDb
+  const latestSample = probeDb
     .select({
-      userId: orderRewardLog.userId,
-      createdAt: orderRewardLog.createdAt,
+      probeId: probeTelemetry.probeId,
+      createdAt: probeTelemetry.createdAt,
     })
-    .from(orderRewardLog)
-    .orderBy(ck.desc(orderRewardLog.createdAt))
+    .from(probeTelemetry)
+    .orderBy(ck.desc(probeTelemetry.createdAt))
     .limit(10)
-    .as("latest_reward_event");
+    .as("latest_sample");
 
-  const query = commerceDb
-    .with(rankedUsers)
+  const query = probeDb
+    .with(rankedProbes)
     .select({
-      userId: rankedUsers.userId,
-      totalRewardPoints: rankedUsers.totalRewardPoints,
-      latestCreatedAt: latestRewardEvent.createdAt,
+      probeId: rankedProbes.probeId,
+      totalSignalStrength: rankedProbes.totalSignalStrength,
+      latestCreatedAt: latestSample.createdAt,
     })
-    .from(rankedUsers)
-    .leftJoin(latestRewardEvent, ck.eq(rankedUsers.userId, latestRewardEvent.userId));
+    .from(rankedProbes)
+    .leftJoin(latestSample, ck.eq(rankedProbes.probeId, latestSample.probeId));
 
   return {
     query,
   };
 };
 
-export const runRewardSummaryWithLatestEventExample = async () => {
-  const { query } = buildRewardSummaryWithLatestEventExample();
+export const runSignalSummaryWithLatestSampleExample = async () => {
+  const { query } = buildSignalSummaryWithLatestSampleExample();
   return query.execute();
 };

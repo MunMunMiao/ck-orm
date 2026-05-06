@@ -67,6 +67,8 @@ import {
   hasSubstr,
   ilike,
   inArray,
+  isNotNull,
+  isNull,
   like,
   lt,
   lte,
@@ -98,6 +100,8 @@ type CkNamespace = {
   lte: typeof lte;
   between: typeof between;
   inArray: typeof inArray;
+  isNull: typeof isNull;
+  isNotNull: typeof isNotNull;
   notInArray: typeof notInArray;
   contains: typeof contains;
   startsWith: typeof startsWith;
@@ -316,6 +320,8 @@ export const ck: CkNamespace = {
   lte,
   between,
   inArray,
+  isNull,
+  isNotNull,
   notInArray,
   contains,
   startsWith,

@@ -252,6 +252,8 @@ describe("ck-orm sql security", function describeSqlSecurity() {
   });
 
   it("rejects raw AggregateFunction type arguments with unsafe tokens", function testAggregateFunctionArgTypes() {
+    expect(aggregateFunction("quantile(0.5)", "Float64").sqlType).toBe("AggregateFunction(quantile(0.5), Float64)");
+    expect(() => aggregateFunction("quantile(now())", "Float64")).toThrow("Invalid aggregate function name");
     expect(() => aggregateFunction("sum", "UInt64; DROP TABLE users")).toThrow(
       "Invalid AggregateFunction argument type",
     );

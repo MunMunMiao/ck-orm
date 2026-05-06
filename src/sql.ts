@@ -9,9 +9,11 @@ const trustedExpressionObjects = new WeakSet<object>();
 const trustedSourceObjects = new WeakSet<object>();
 
 export type QueryParams = Record<string, unknown>;
+export type QueryParamTypes = Record<string, string>;
 
 export interface BuildContext {
   params: QueryParams;
+  paramTypes?: QueryParamTypes;
   nextParamIndex: number;
 }
 
@@ -116,6 +118,11 @@ export const inferPrimitiveType = (value: unknown): string => {
   }
 };
 
+const ensureParamTypes = (ctx: BuildContext): QueryParamTypes => {
+  ctx.paramTypes ??= {};
+  return ctx.paramTypes;
+};
+
 const VALID_JOIN_SEPARATOR = /^[\s,()A-Za-z0-9_+\-=<>!]+$/;
 const JOIN_SEPARATOR_DENYLIST = /;|--|\/\*|\*\/|`|'|"/;
 
@@ -214,15 +221,17 @@ const createSqlFragment = <TData = unknown>(config: {
  * the compiled SQL output (e.g. `{orm_param3:String}`).
  */
 export const allocParam = (ctx: BuildContext, value: unknown, sqlType?: string): string => {
-  if (value === null || value === undefined) {
+  if (value === undefined || (value === null && sqlType === undefined)) {
     throw createClientValidationError(
       "Raw SQL parameters do not support null or undefined. Use ckSql`NULL` or builder expressions instead.",
     );
   }
   ctx.nextParamIndex += 1;
   const paramName = `orm_param${ctx.nextParamIndex}`;
+  const resolvedType = sqlType ?? inferPrimitiveType(value);
   ctx.params[paramName] = value;
-  return `{${paramName}:${sqlType ?? inferPrimitiveType(value)}}`;
+  ensureParamTypes(ctx)[paramName] = resolvedType;
+  return `{${paramName}:${resolvedType}}`;
 };
 
 const compileChunk = (chunk: SqlChunk, ctx: BuildContext): string => {
@@ -455,12 +464,14 @@ export const compileSql = (statement: SQLFragment<unknown>, initialContext?: Par
   }
   const ctx: BuildContext = {
     params: { ...(initialContext?.params ?? {}) },
+    paramTypes: { ...(initialContext?.paramTypes ?? {}) },
     nextParamIndex: initialContext?.nextParamIndex ?? 0,
   };
   const query = statement[compileSqlSymbol](ctx);
   return {
     query,
     params: ctx.params,
+    paramTypes: ctx.paramTypes ?? {},
     nextParamIndex: ctx.nextParamIndex,
   };
 };

@@ -1,32 +1,21 @@
-import { ck, ckType, clickhouseClient, fn } from "./ck-orm";
-import { orderRewardLog } from "./schema/commerce";
+import { ck, ckType, fn } from "./ck-orm";
+import { createProbeDb } from "./probe-client";
+import { probeTelemetry } from "./schema/probe";
 
-const createCommerceDb = () => {
-  return clickhouseClient({
-    host: "http://127.0.0.1:8123",
-    database: "demo_store",
-    username: "default",
-    password: "<password>",
-    clickhouse_settings: {
-      max_execution_time: 10,
-    },
-  });
-};
+export const buildJsonAlertFilterExample = () => {
+  const probeDb = createProbeDb();
+  const alertTags = fn.jsonExtract(probeTelemetry.metadata, ckType.array(ckType.string()), "alerts");
+  const riskScore = fn.jsonExtract(probeTelemetry.metadata, ckType.nullable(ckType.float64()), "risk", "score");
 
-export const buildJsonRegulatoryFilterExample = () => {
-  const commerceDb = createCommerceDb();
-  const regulatoryRegions = fn.jsonExtract(orderRewardLog.metadata, ckType.array(ckType.string()), "regulatory");
-  const riskScore = fn.jsonExtract(orderRewardLog.metadata, ckType.nullable(ckType.float64()), "risk", "score");
-
-  const query = commerceDb
+  const query = probeDb
     .select({
-      userId: orderRewardLog.userId,
-      orderId: orderRewardLog.orderId,
-      regulatoryRegions: regulatoryRegions.as("regulatory_regions"),
+      probeId: probeTelemetry.probeId,
+      sampleId: probeTelemetry.sampleId,
+      alertTags: alertTags.as("alert_tags"),
       riskScore: riskScore.as("risk_score"),
     })
-    .from(orderRewardLog)
-    .where(ck.eq(orderRewardLog.peerdbIsDeleted, 0), ck.hasAny(regulatoryRegions, ["AU", "EU"]), ck.gte(riskScore, 80))
+    .from(probeTelemetry)
+    .where(ck.isNull(probeTelemetry.deletedAt), ck.hasAny(alertTags, ["thermal", "battery"]), ck.gte(riskScore, 80))
     .limit(100);
 
   return {
@@ -35,25 +24,25 @@ export const buildJsonRegulatoryFilterExample = () => {
 };
 
 export const buildArrayHelperProjectionExample = () => {
-  const commerceDb = createCommerceDb();
-  const regulatoryRegions = fn.jsonExtract(orderRewardLog.metadata, ckType.array(ckType.string()), "regulatory");
-  const normalizedTags = fn.arrayConcat<string>(orderRewardLog.tags, fn.array("reward")).as("normalized_tags");
+  const probeDb = createProbeDb();
+  const alertTags = fn.jsonExtract(probeTelemetry.metadata, ckType.array(ckType.string()), "alerts");
+  const normalizedTags = fn.arrayConcat<string>(probeTelemetry.tags, fn.array("telemetry")).as("normalized_tags");
 
-  const query = commerceDb
+  const query = probeDb
     .select({
-      userId: orderRewardLog.userId,
-      firstTag: fn.arrayElement<string>(orderRewardLog.tags, 1).as("first_tag"),
-      maybeSecondTag: fn.arrayElementOrNull<string>(orderRewardLog.tags, 2).as("maybe_second_tag"),
-      topTwoRegions: fn.arraySlice<string>(regulatoryRegions, 1, 2).as("top_two_regions"),
-      flattenedRegions: fn.arrayFlatten<string>(fn.array(regulatoryRegions)).as("flattened_regions"),
-      matchingRegions: fn.arrayIntersect<string>(regulatoryRegions, ["AU", "EU", "UK"]).as("matching_regions"),
+      probeId: probeTelemetry.probeId,
+      firstTag: fn.arrayElement<string>(probeTelemetry.tags, 1).as("first_tag"),
+      maybeSecondTag: fn.arrayElementOrNull<string>(probeTelemetry.tags, 2).as("maybe_second_tag"),
+      topTwoAlerts: fn.arraySlice<string>(alertTags, 1, 2).as("top_two_alerts"),
+      flattenedAlerts: fn.arrayFlatten<string>(fn.array(alertTags)).as("flattened_alerts"),
+      matchingAlerts: fn.arrayIntersect<string>(alertTags, ["thermal", "battery", "signal"]).as("matching_alerts"),
       normalizedTags,
-      tagPosition: fn.indexOf(orderRewardLog.tags, "vip").as("tag_position"),
-      tagCount: fn.length(orderRewardLog.tags).as("tag_count"),
-      hasTags: fn.notEmpty(orderRewardLog.tags).as("has_tags"),
+      tagPosition: fn.indexOf(probeTelemetry.tags, "field").as("tag_position"),
+      tagCount: fn.length(probeTelemetry.tags).as("tag_count"),
+      hasTags: fn.notEmpty(probeTelemetry.tags).as("has_tags"),
     })
-    .from(orderRewardLog)
-    .where(ck.hasAll(normalizedTags, ["reward"]));
+    .from(probeTelemetry)
+    .where(ck.hasAll(normalizedTags, ["telemetry"]));
 
   return {
     query,
@@ -61,42 +50,42 @@ export const buildArrayHelperProjectionExample = () => {
 };
 
 export const buildArrayZipTupleElementScopeExample = () => {
-  const commerceDb = createCommerceDb();
-  const orderIds = ["900001", "900002", "900003"];
-  const userIds = ["user_100", "user_200", "user_300"];
+  const probeDb = createProbeDb();
+  const sampleIds = [900001, 900002, 900003];
+  const probeIds = ["probe_alpha", "probe_beta", "probe_gamma"];
 
-  const targetPairs = commerceDb.$with("target_pairs").as(
-    commerceDb.select({
-      pair: fn.arrayJoin(fn.arrayZip(orderIds, userIds)).as("pair"),
+  const targetPairs = probeDb.$with("target_pairs").as(
+    probeDb.select({
+      pair: fn.arrayJoin(fn.arrayZip(sampleIds, probeIds)).as("pair"),
     }),
   );
 
-  const targetOrders = commerceDb.$with("target_orders").as(
-    commerceDb
+  const targetTelemetry = probeDb.$with("target_telemetry").as(
+    probeDb
       .with(targetPairs)
       .select({
-        orderId: fn.tupleElement<string>(targetPairs.pair, 1).as("order_id"),
-        userId: fn.tupleElement<string>(targetPairs.pair, 2).as("user_id"),
+        sampleId: fn.tupleElement<number>(targetPairs.pair, 1).as("sample_id"),
+        probeId: fn.tupleElement<string>(targetPairs.pair, 2).as("probe_id"),
       })
       .from(targetPairs),
   );
 
-  const scopedOrderPair = commerceDb
+  const scopedSamples = probeDb
     .select({
-      pair: fn.tuple(targetOrders.orderId, targetOrders.userId).as("pair"),
+      pair: fn.tuple(targetTelemetry.sampleId, targetTelemetry.probeId).as("pair"),
     })
-    .from(targetOrders);
+    .from(targetTelemetry);
 
-  const query = commerceDb
-    .with(targetPairs, targetOrders)
+  const query = probeDb
+    .with(targetPairs, targetTelemetry)
     .select({
-      orderId: orderRewardLog.orderId,
-      userId: orderRewardLog.userId,
-      rewardPoints: orderRewardLog.rewardPoints,
+      sampleId: probeTelemetry.sampleId,
+      probeId: probeTelemetry.probeId,
+      signalStrength: probeTelemetry.signalStrength,
     })
-    .from(orderRewardLog)
-    .where(ck.inArray(fn.tuple(orderRewardLog.orderId, orderRewardLog.userId), scopedOrderPair.as("scoped_order_pair")))
-    .orderBy(ck.desc(orderRewardLog.createdAt));
+    .from(probeTelemetry)
+    .where(ck.inArray(fn.tuple(probeTelemetry.sampleId, probeTelemetry.probeId), scopedSamples.as("scoped_samples")))
+    .orderBy(ck.desc(probeTelemetry.createdAt));
 
   return {
     query,

@@ -1,4 +1,5 @@
 import { createClientValidationError } from "../errors";
+import { getArrayElementType, getTupleElementTypes } from "../internal/clickhouse-type";
 import type {
   ClickHouseORMInstrumentation,
   ClickHouseORMLogger,
@@ -8,7 +9,7 @@ import type {
 import { base64EncodeUtf8, canSetUserAgentHeader } from "../platform";
 import type { CompiledQuery, QueryClient } from "../query";
 import type { AnyTable } from "../schema";
-import { compileSql, type SQLFragment } from "../sql";
+import { compileSql, type QueryParamTypes, type SQLFragment } from "../sql";
 import type { JsonHandling } from "./json-stream";
 import type { ClickHouseSettings, ClickHouseSettingValue } from "./settings";
 
@@ -227,6 +228,7 @@ export type NormalizedClientConfig = {
 export type TransportQueryInput = {
   readonly statement: string;
   readonly query_params?: Record<string, unknown>;
+  readonly query_param_types?: QueryParamTypes;
   readonly options: ClickHouseBaseQueryOptions;
   readonly format?: ClickHouseQueryOptions["format"] | ClickHouseStreamOptions["format"];
 };
@@ -292,6 +294,7 @@ export const buildQueryParams = (
   return {
     query: compiled.statement,
     query_params: mergeQueryParams(compiled.params, options?.query_params),
+    query_param_types: compiled.paramTypes ?? {},
   };
 };
 
@@ -300,6 +303,7 @@ export const normalizeRawQueryInput = (query: RawQueryInput) => {
   return {
     query: compiled.query,
     params: compiled.params,
+    paramTypes: compiled.paramTypes,
   };
 };
 
@@ -376,15 +380,29 @@ export const assertValidSessionId = (id: string): void => {
 
 export const formatQueryParamValue = (
   value: unknown,
-  options?: {
+  sqlTypeOrOptions?:
+    | string
+    | {
+        wrapStringInQuotes?: boolean;
+        printNullAsKeyword?: boolean;
+        nested?: boolean;
+      },
+  maybeOptions?: {
     wrapStringInQuotes?: boolean;
     printNullAsKeyword?: boolean;
     nested?: boolean;
   },
 ): string => {
+  const sqlType = typeof sqlTypeOrOptions === "string" ? sqlTypeOrOptions : undefined;
+  const options = typeof sqlTypeOrOptions === "string" ? maybeOptions : sqlTypeOrOptions;
   const wrapStringInQuotes = options?.wrapStringInQuotes ?? false;
   const printNullAsKeyword = options?.printNullAsKeyword ?? false;
   const nested = options?.nested ?? false;
+  const nestedOptions = {
+    wrapStringInQuotes: true,
+    printNullAsKeyword: true,
+    nested: true,
+  };
 
   if (value === null || value === undefined) {
     return printNullAsKeyword ? "NULL" : "\\N";
@@ -429,43 +447,38 @@ export const formatQueryParamValue = (
     return milliseconds === 0 ? seconds : `${seconds}.${milliseconds.toString().padStart(3, "0")}`;
   }
   if (Array.isArray(value)) {
+    const tupleElementTypes = getTupleElementTypes(sqlType);
+    if (tupleElementTypes) {
+      if (value.length !== tupleElementTypes.length) {
+        throw createClientValidationError(
+          `Tuple query parameter expected ${tupleElementTypes.length} items, got ${value.length}`,
+        );
+      }
+      return `(${value
+        .map((item, index) => formatQueryParamValue(item, tupleElementTypes[index], nestedOptions))
+        .join(",")})`;
+    }
+
+    const arrayElementType = getArrayElementType(sqlType);
     return `[${value
       .map((item) =>
-        formatQueryParamValue(item, {
-          wrapStringInQuotes: true,
-          printNullAsKeyword: true,
-          nested: true,
-        }),
+        arrayElementType === undefined
+          ? formatQueryParamValue(item, nestedOptions)
+          : formatQueryParamValue(item, arrayElementType, nestedOptions),
       )
       .join(",")}]`;
   }
   if (value instanceof Map) {
     return `{${[...value.entries()]
       .map(([key, entryValue]) => {
-        return `${formatQueryParamValue(key, {
-          wrapStringInQuotes: true,
-          printNullAsKeyword: true,
-          nested: true,
-        })}:${formatQueryParamValue(entryValue, {
-          wrapStringInQuotes: true,
-          printNullAsKeyword: true,
-          nested: true,
-        })}`;
+        return `${formatQueryParamValue(key, nestedOptions)}:${formatQueryParamValue(entryValue, nestedOptions)}`;
       })
       .join(",")}}`;
   }
   if (typeof value === "object")
     return `{${Object.entries(value)
       .map(([key, entryValue]) => {
-        return `${formatQueryParamValue(key, {
-          wrapStringInQuotes: true,
-          printNullAsKeyword: true,
-          nested: true,
-        })}:${formatQueryParamValue(entryValue, {
-          wrapStringInQuotes: true,
-          printNullAsKeyword: true,
-          nested: true,
-        })}`;
+        return `${formatQueryParamValue(key, nestedOptions)}:${formatQueryParamValue(entryValue, nestedOptions)}`;
       })
       .join(",")}}`;
 
@@ -730,6 +743,7 @@ export const mergeClickHouseSettings = (
 };
 
 let warnedUserAgentRestricted = false;
+const warnedForcedSettings = new Set<string>();
 
 export const createHeaders = (input: {
   readonly config: NormalizedClientConfig;
@@ -786,6 +800,35 @@ const isDisabledSetting = (value: string | number | boolean | undefined) => {
   return value === false || value === 0 || value === "0";
 };
 
+const warnForcedSettingOverride = (
+  key: string,
+  configuredValue: ClickHouseSettingValue,
+  forcedValue: ClickHouseSettingValue,
+): void => {
+  if (warnedForcedSettings.has(key)) {
+    return;
+  }
+  warnedForcedSettings.add(key);
+  console.warn(
+    `[ck-orm] clickhouse_settings.${key}=${String(configuredValue)} is ignored; ck-orm requires ${key}=${String(
+      forcedValue,
+    )} for its HTTP/JSON wire contract and will use the forced value.`,
+  );
+};
+
+const forceSetting = (
+  settings: Record<string, ClickHouseSettingValue>,
+  key: string,
+  value: ClickHouseSettingValue,
+  accepts: (configured: ClickHouseSettingValue | undefined) => boolean,
+): void => {
+  const configured = settings[key];
+  if (configured !== undefined && !accepts(configured)) {
+    warnForcedSettingOverride(key, configured, value);
+  }
+  settings[key] = value;
+};
+
 export const normalizeTransportSettings = (input: {
   readonly settings: ClickHouseSettings;
   readonly parseMode: ResponseParseMode;
@@ -794,25 +837,10 @@ export const normalizeTransportSettings = (input: {
     ...input.settings,
   };
 
-  if (
-    "http_write_exception_in_output_format" in settings &&
-    !isDisabledSetting(settings.http_write_exception_in_output_format)
-  ) {
-    throw createClientValidationError(
-      "ck-orm requires http_write_exception_in_output_format=0 for stable HTTP exception parsing",
-    );
-  }
-  settings.http_write_exception_in_output_format = 0;
-
-  if (
-    "output_format_json_quote_64bit_integers" in settings &&
-    !isEnabledSetting(settings.output_format_json_quote_64bit_integers)
-  ) {
-    throw createClientValidationError(
-      "ck-orm requires output_format_json_quote_64bit_integers=1 for lossless 64-bit integer decoding",
-    );
-  }
-  settings.output_format_json_quote_64bit_integers = 1;
+  forceSetting(settings, "http_write_exception_in_output_format", 0, isDisabledSetting);
+  forceSetting(settings, "output_format_json_quote_64bit_integers", 1, isEnabledSetting);
+  forceSetting(settings, "output_format_json_quote_decimals", 1, isEnabledSetting);
+  forceSetting(settings, "date_time_output_format", "iso", (value) => value === "iso");
 
   if (input.parseMode !== "json_each_row" && settings.wait_end_of_query === undefined) {
     settings.wait_end_of_query = 1;

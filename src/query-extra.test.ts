@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { array, float64, int32, string } from "./columns";
+import { array, bool, date, date32, decimal, float64, int32, nested, nullable, string, tuple } from "./columns";
 import { fn, tableFn } from "./functions";
 import {
   and,
@@ -27,6 +27,8 @@ import {
   hasSubstr,
   ilike,
   inArray,
+  isNotNull,
+  isNull,
   like,
   lt,
   lte,
@@ -69,6 +71,40 @@ const taggedOrders = ckTable(
   {
     id: int32(),
     tags: array(string()),
+  },
+  (table) => ({
+    engine: "MergeTree",
+    orderBy: [table.id],
+  }),
+);
+
+const typedEvents = ckTable(
+  "typed_events",
+  {
+    id: int32(),
+    businessDay: date({ encode: "utc" }),
+    localDay: date32("local_day", { encode: (value) => value.toISOString().slice(0, 10) }),
+    optionalNote: nullable(string()),
+    pair: tuple(string(), int32()),
+    entries: nested({
+      name: string(),
+      score: int32(),
+    }),
+  },
+  (table) => ({
+    engine: "MergeTree",
+    orderBy: [table.id],
+  }),
+);
+
+const arrayEvents = ckTable(
+  "array_events",
+  {
+    id: int32(),
+    active: bool(),
+    businessDays: array(date({ encode: "utc" })),
+    localDays: array(date32({ encode: (value) => value.toISOString().slice(0, 10) })),
+    decimalValues: array(decimal({ precision: 10, scale: 2 })),
   },
   (table) => ({
     engine: "MergeTree",
@@ -146,8 +182,8 @@ describe("ck-orm query extras", function describeClickHouseORMQueryExtras() {
     expect(normalizeSql(built.query)).toContain("not (exists (select `orders`.`id` as `id` from `orders`))");
     expect(normalizeSql(built.query)).toContain("not (`orders`.`id` = {orm_param8:Int32})");
     expect(normalizeSql(built.query)).toContain("order by `orders`.`id` ASC, `orders`.`amount` DESC");
-    expect(normalizeSql(built.query)).toContain("limit {orm_param10:Int64}");
-    expect(normalizeSql(built.query)).toContain("offset {orm_param11:Int64}");
+    expect(normalizeSql(built.query)).toContain("limit 10");
+    expect(normalizeSql(built.query)).toContain("offset 5");
     expect(built.params).toEqual({
       orm_param1: 1,
       orm_param2: 1,
@@ -158,8 +194,6 @@ describe("ck-orm query extras", function describeClickHouseORMQueryExtras() {
       orm_param7: 100,
       orm_param8: 2,
       orm_param9: 1,
-      orm_param10: 10,
-      orm_param11: 5,
     });
 
     const tableFnBuilt = buildCompiled(
@@ -195,10 +229,9 @@ describe("ck-orm query extras", function describeClickHouseORMQueryExtras() {
     );
 
     expect(normalizeSql(built.query)).toContain("where `orders`.`id` = {orm_param1:Int32}");
-    expect(normalizeSql(built.query)).toContain("limit {orm_param2:Int64}");
+    expect(normalizeSql(built.query)).toContain("limit 10");
     expect(built.params).toEqual({
       orm_param1: 1,
-      orm_param2: 10,
     });
 
     const compiledInsert = buildCompiled(
@@ -511,6 +544,38 @@ describe("ck-orm query extras", function describeClickHouseORMQueryExtras() {
     expect(hasAll(taggedOrders.tags, ["vip"]).decoder(0)).toBe(false);
     expect(hasAny(taggedOrders.tags, ["vip"]).decoder("1")).toBe(true);
     expect(hasSubstr(taggedOrders.tags, ["vip"]).decoder("1")).toBe(true);
+
+    const encodedBuilt = buildCompiled(
+      db
+        .select({
+          id: arrayEvents.id,
+        })
+        .from(arrayEvents)
+        .where(
+          has(arrayEvents.businessDays, new Date("2026-06-15T08:00:00.000Z")),
+          hasAny(arrayEvents.localDays, [new Date("2026-06-16T01:00:00.000Z")]),
+          hasAll(arrayEvents.decimalValues, ["10.50"]),
+          hasSubstr(arrayEvents.businessDays, [new Date("2026-06-17T23:00:00.000Z")]),
+        )
+        [compileQuerySymbol](),
+    );
+
+    expect(normalizeSql(encodedBuilt.query)).toContain("has(`array_events`.`businessDays`, {orm_param1:Date})");
+    expect(normalizeSql(encodedBuilt.query)).toContain(
+      "hasAny(`array_events`.`localDays`, {orm_param2:Array(Date32)})",
+    );
+    expect(normalizeSql(encodedBuilt.query)).toContain(
+      "hasAll(`array_events`.`decimalValues`, {orm_param3:Array(Decimal(10, 2))})",
+    );
+    expect(normalizeSql(encodedBuilt.query)).toContain(
+      "hasSubstr(`array_events`.`businessDays`, {orm_param4:Array(Date)})",
+    );
+    expect(encodedBuilt.params).toEqual({
+      orm_param1: "2026-06-15",
+      orm_param2: ["2026-06-16"],
+      orm_param3: ["10.50"],
+      orm_param4: ["2026-06-17"],
+    });
   });
 
   it("supports drizzle-style db.count() for direct execution and scalar subqueries", async function testDbCount() {
@@ -695,10 +760,9 @@ describe("ck-orm query extras", function describeClickHouseORMQueryExtras() {
     });
 
     expect(normalizeSql(limitedCompiled.query)).toContain("where `orders`.`id` = {orm_param1:Int32}");
-    expect(normalizeSql(limitedCompiled.query)).toContain("limit {orm_param2:Int64}");
+    expect(normalizeSql(limitedCompiled.query)).toContain("limit 5");
     expect(limitedCompiled.params).toEqual({
       orm_param1: 1,
-      orm_param2: 5,
     });
   });
 
@@ -795,6 +859,54 @@ describe("ck-orm query extras", function describeClickHouseORMQueryExtras() {
     await expect(countDb.count(orders).execute()).rejects.toThrow("count() query did not return a result row");
   });
 
+  it("passes compiled select queries through the iterator runner", async function testSelectIteratorRunner() {
+    const iteratorCalls: Array<{
+      statement: string;
+      params: Record<string, unknown>;
+    }> = [];
+    const db = createQueryClient({
+      runner: {
+        async execute() {
+          return [];
+        },
+        async *iterator<TResult extends Record<string, unknown>>(compiled: {
+          statement: string;
+          params: Record<string, unknown>;
+        }) {
+          iteratorCalls.push({
+            statement: compiled.statement,
+            params: compiled.params,
+          });
+          yield { id: compiled.params.orm_param1 } as TResult;
+        },
+        async command() {
+          return undefined;
+        },
+      },
+    });
+
+    const rows: Array<{ id: number }> = [];
+    for await (const row of db
+      .select({
+        id: orders.id,
+      })
+      .from(orders)
+      .where(eq(orders.id, 7))
+      .iterator()) {
+      rows.push(row);
+    }
+
+    expect(rows).toEqual([{ id: 7 }]);
+    expect(iteratorCalls).toEqual([
+      {
+        statement: "select `orders`.`id` as `id` from `orders` where `orders`.`id` = {orm_param1:Int32}",
+        params: {
+          orm_param1: 7,
+        },
+      },
+    ]);
+  });
+
   it("fails fast with an internal error when nested forced settings compile without active state", function testMissingCompileStateInvariant() {
     const nestedQuery = {
       [compileWithContextSymbol]() {
@@ -864,6 +976,325 @@ describe("ck-orm query extras", function describeClickHouseORMQueryExtras() {
         [compileQuerySymbol](),
     );
     expect(normalizeSql(rawArrayPredicate.query)).toContain("hasAny(`tagged_orders`.`tags`, ['vip','pro'])");
+  });
+
+  it("uses column encoders for predicates and renders explicit nullable predicates", function testPredicateEncoders() {
+    const db = createQueryClient();
+    const compiled = db
+      .select({
+        id: typedEvents.id,
+      })
+      .from(typedEvents)
+      .where(
+        eq(typedEvents.businessDay, new Date("2026-06-15T08:00:00.000Z")),
+        between(typedEvents.localDay, new Date("2026-06-16T01:00:00.000Z"), "2026-06-17" as never),
+        inArray(typedEvents.businessDay, [new Date("2026-06-18T23:00:00.000Z"), "2026-06-19" as never]),
+        isNull(typedEvents.optionalNote),
+        isNotNull(typedEvents.optionalNote),
+      )
+      [compileQuerySymbol]();
+
+    expect(normalizeSql(compiled.statement)).toContain("`typed_events`.`businessDay` = {orm_param1:Date}");
+    expect(normalizeSql(compiled.statement)).toContain(
+      "`typed_events`.`local_day` between {orm_param2:Date32} and {orm_param3:Date32}",
+    );
+    expect(normalizeSql(compiled.statement)).toContain(
+      "`typed_events`.`businessDay` in ({orm_param4:Date}, {orm_param5:Date})",
+    );
+    expect(normalizeSql(compiled.statement)).toContain("`typed_events`.`optionalNote` is null");
+    expect(normalizeSql(compiled.statement)).toContain("`typed_events`.`optionalNote` is not null");
+    expect(isNull(typedEvents.optionalNote).decoder(1)).toBe(true);
+    expect(isNotNull(typedEvents.optionalNote).decoder(0)).toBe(false);
+    expect(compiled.params).toEqual({
+      orm_param1: "2026-06-15",
+      orm_param2: "2026-06-16",
+      orm_param3: "2026-06-17",
+      orm_param4: "2026-06-18",
+      orm_param5: "2026-06-19",
+    });
+
+    expect(() => isNull(null)).toThrow("isNull() expects a SQL expression");
+    expect(() => isNull(undefined)).toThrow("isNull() expects a SQL expression");
+    expect(() => isNull(1)).toThrow("isNull() expects a SQL expression");
+    expect(() => isNotNull(null)).toThrow("isNotNull() expects a SQL expression");
+    expect(() => isNotNull(undefined)).toThrow("isNotNull() expects a SQL expression");
+    expect(() => isNotNull("literal")).toThrow("isNotNull() expects a SQL expression");
+    expect(() => eq(typedEvents.optionalNote, null)).toThrow("does not accept bare null");
+    expect(() => ne(typedEvents.optionalNote, null)).toThrow("does not accept bare null");
+    expect(() => gt(typedEvents.optionalNote, undefined)).toThrow("does not accept bare undefined");
+    expect(() => gte(typedEvents.optionalNote, null)).toThrow("does not accept bare null");
+    expect(() => lt(typedEvents.optionalNote, undefined)).toThrow("does not accept bare undefined");
+    expect(() => lte(typedEvents.optionalNote, null)).toThrow("does not accept bare null");
+    expect(() => between(typedEvents.optionalNote, null, "x")).toThrow("does not accept bare null");
+    expect(() => between(typedEvents.optionalNote, "x", undefined)).toThrow("does not accept bare undefined");
+  });
+
+  it("rejects invalid predicate positions without rejecting boolean comparisons", function testPredicatePositionValidation() {
+    const db = createQueryClient();
+    const booleanComparison = buildCompiled(
+      db
+        .select({ id: arrayEvents.id })
+        .from(arrayEvents)
+        .where(eq(arrayEvents.active, false), arrayEvents.active, not(arrayEvents.active))
+        [compileQuerySymbol](),
+    );
+
+    expect(normalizeSql(booleanComparison.query)).toContain("`array_events`.`active` = {orm_param1:Bool}");
+    expect(normalizeSql(booleanComparison.query)).toContain(
+      "and `array_events`.`active` and not (`array_events`.`active`)",
+    );
+    expect(booleanComparison.params).toEqual({
+      orm_param1: false,
+    });
+
+    const skipped = buildCompiled(
+      db.select({ id: typedEvents.id }).from(typedEvents).where(undefined)[compileQuerySymbol](),
+    );
+    expect(normalizeSql(skipped.query)).not.toContain("where");
+
+    expect(() =>
+      db
+        .select()
+        .from(typedEvents)
+        .where(null as never),
+    ).toThrow("expects a SQL predicate or undefined");
+    expect(() =>
+      db
+        .select()
+        .from(typedEvents)
+        .where(false as never),
+    ).toThrow("use ck.eq(column, false)");
+    expect(() =>
+      db
+        .select()
+        .from(typedEvents)
+        .where(true as never),
+    ).toThrow("use ck.eq(column, true)");
+    expect(() =>
+      db
+        .select()
+        .from(typedEvents)
+        .where(0 as never),
+    ).toThrow("expects a SQL predicate or undefined");
+    expect(() =>
+      db
+        .select()
+        .from(typedEvents)
+        .where("" as never),
+    ).toThrow("expects a SQL predicate or undefined");
+    expect(() =>
+      db
+        .select()
+        .from(typedEvents)
+        .where({} as never),
+    ).toThrow("expects a SQL predicate or undefined");
+    expect(() =>
+      db
+        .select()
+        .from(typedEvents)
+        .having(null as never),
+    ).toThrow("expects a SQL predicate or undefined");
+    expect(() => and(eq(typedEvents.id, 1), false as never)).toThrow("use ck.eq(column, false)");
+    expect(() => or(eq(typedEvents.id, 1), 0 as never)).toThrow("expects a SQL predicate or undefined");
+
+    const rawPredicate = buildCompiled(
+      db
+        .select({ id: typedEvents.id })
+        .from(typedEvents)
+        .where(sql.raw("1 = 1") as never)
+        [compileQuerySymbol](),
+    );
+    expect(normalizeSql(rawPredicate.query)).toContain("where 1 = 1");
+    expect((and(sql.raw("1 = 1") as never) as unknown as { decoder(value: unknown): boolean }).decoder(0)).toBe(false);
+  });
+
+  it("validates limit, offset and limitBy primitive values on the client", function testLimitValidation() {
+    const db = createQueryClient();
+    const limited = buildCompiled(
+      db
+        .select({ id: typedEvents.id })
+        .from(typedEvents)
+        .limit(0)
+        .offset(5n)
+        .limitBy([typedEvents.id], sql.raw("2"))
+        [compileQuerySymbol](),
+    );
+
+    expect(normalizeSql(limited.query)).toContain("limit 2 by `typed_events`.`id`");
+    expect(normalizeSql(limited.query)).toContain("limit 0");
+    expect(normalizeSql(limited.query)).toContain("offset 5");
+    expect(limited.params).toEqual({});
+
+    expect(() =>
+      db
+        .select()
+        .from(typedEvents)
+        .limit(null as never)
+        [compileQuerySymbol](),
+    ).toThrow("expects a non-negative safe integer");
+    expect(() =>
+      db
+        .select()
+        .from(typedEvents)
+        .limit(undefined as never)
+        [compileQuerySymbol](),
+    ).toThrow("expects a non-negative safe integer");
+    expect(() => db.select().from(typedEvents).limit(1.5)[compileQuerySymbol]()).toThrow(
+      "expects a non-negative safe integer",
+    );
+    expect(() => db.select().from(typedEvents).offset(-1)[compileQuerySymbol]()).toThrow(
+      "expects a non-negative safe integer",
+    );
+    expect(() => db.select().from(typedEvents).limit(Number.NaN)[compileQuerySymbol]()).toThrow(
+      "expects a non-negative safe integer",
+    );
+    expect(() =>
+      db
+        .select()
+        .from(typedEvents)
+        .limitBy([typedEvents.id], "1" as never)
+        [compileQuerySymbol](),
+    ).toThrow("expects a non-negative safe integer");
+    expect(() =>
+      db
+        .select()
+        .from(typedEvents)
+        .limit(typedEvents.id as never)
+        [compileQuerySymbol](),
+    ).toThrow("expects a non-negative safe integer or SQL fragment");
+    expect(() =>
+      db
+        .select()
+        .from(typedEvents)
+        .limitBy([typedEvents.id], expr(sql.raw("2")) as never)
+        [compileQuerySymbol](),
+    ).toThrow("expects a non-negative safe integer or SQL fragment");
+  });
+
+  it("rejects nullish predicate values across collection and string helpers", function testNullishPredicateValues() {
+    expect(() => inArray(orders.id, [1, null])).toThrow("does not accept bare null");
+    expect(() => inArray(orders.id, [1, undefined])).toThrow("does not accept bare undefined");
+    expect(() => notInArray(orders.id, [null])).toThrow("does not accept bare null");
+    expect(() => inArray(orders.id, undefined as never)).toThrow("does not accept bare undefined");
+    expect(() => like(orders.name, null as never)).toThrow("does not accept bare null");
+    expect(() => notLike(orders.name, undefined as never)).toThrow("does not accept bare undefined");
+    expect(() => like(orders.name, 1 as never)).toThrow("expects a string predicate value or SQL expression");
+    expect(() => contains(orders.name, null as never)).toThrow("does not accept bare null");
+    expect(() => contains(orders.name, 1 as never)).toThrow("expects a string predicate value");
+    expect(() => startsWith(orders.name, undefined as never)).toThrow("does not accept bare undefined");
+    expect(() => endsWith(orders.name, null as never)).toThrow("does not accept bare null");
+    expect(() => containsIgnoreCase(orders.name, undefined as never)).toThrow("does not accept bare undefined");
+    expect(() => has(taggedOrders.tags, null)).toThrow("does not accept bare null");
+    expect(() => hasAll(taggedOrders.tags, ["vip", null])).toThrow("does not accept bare null");
+    expect(() => hasAny(taggedOrders.tags, ["vip", undefined])).toThrow("does not accept bare undefined");
+    expect(() => hasSubstr(taggedOrders.tags, undefined)).toThrow("does not accept bare undefined");
+
+    const db = createQueryClient();
+    const computedTags = expr<string[]>(sql.raw("['vip','pro']"), {
+      decoder: (value) => value as string[],
+      sqlType: "Array(String)",
+    });
+    const rawNullPredicates = buildCompiled(
+      db
+        .select({ id: taggedOrders.id })
+        .from(taggedOrders)
+        .where(
+          isNull(sql.raw("NULL")),
+          like(taggedOrders.tags, sql.raw("NULL")),
+          has(taggedOrders.tags, ["vip"]),
+          has(taggedOrders.tags, sql.raw("NULL")),
+          hasAny(taggedOrders.tags, sql.raw("[NULL]")),
+          hasAny(computedTags, ["vip"]),
+        )
+        [compileQuerySymbol](),
+    );
+
+    expect(normalizeSql(rawNullPredicates.query)).toContain("NULL is null");
+    expect(normalizeSql(rawNullPredicates.query)).toContain("`tagged_orders`.`tags` like NULL");
+    expect(normalizeSql(rawNullPredicates.query)).toContain("has(`tagged_orders`.`tags`, {orm_param1:Array(String)})");
+    expect(rawNullPredicates.params).toMatchObject({
+      orm_param1: ["vip"],
+      orm_param2: ["vip"],
+    });
+    expect(normalizeSql(rawNullPredicates.query)).toContain("has(`tagged_orders`.`tags`, NULL)");
+    expect(normalizeSql(rawNullPredicates.query)).toContain("hasAny(`tagged_orders`.`tags`, [NULL])");
+    expect(normalizeSql(rawNullPredicates.query)).toContain("hasAny(['vip','pro'], {orm_param2:Array(String)})");
+  });
+
+  it("compiles tuple param types, insert NULL/DEFAULT, and Nested subcolumn values", function testTupleAndNestedInsert() {
+    const db = createQueryClient();
+    const compiled = db
+      .insert(typedEvents)
+      .values({
+        id: 1,
+        businessDay: new Date("2026-06-15T08:00:00.000Z"),
+        optionalNote: null,
+        pair: ["login", 42],
+        entries: [
+          { name: "first", score: 10 },
+          { name: "second", score: 20 },
+        ],
+      })
+      [compileQuerySymbol]();
+
+    expect(normalizeSql(compiled.statement)).toContain(
+      "insert into `typed_events` (`id`, `businessDay`, `local_day`, `optionalNote`, `pair`, `entries`.`name`, `entries`.`score`)",
+    );
+    expect(normalizeSql(compiled.statement)).toContain(
+      "values ({orm_param1:Int32}, {orm_param2:Date}, DEFAULT, NULL, {orm_param3:Tuple(String, Int32)}, {orm_param4:Array(String)}, {orm_param5:Array(Int32)})",
+    );
+    expect(compiled.params).toEqual({
+      orm_param1: 1,
+      orm_param2: "2026-06-15",
+      orm_param3: ["login", 42],
+      orm_param4: ["first", "second"],
+      orm_param5: [10, 20],
+    });
+    expect(compiled.paramTypes).toEqual({
+      orm_param1: "Int32",
+      orm_param2: "Date",
+      orm_param3: "Tuple(String, Int32)",
+      orm_param4: "Array(String)",
+      orm_param5: "Array(Int32)",
+    });
+
+    const defaultNested = db
+      .insert(typedEvents)
+      .values({
+        id: 2,
+      })
+      [compileQuerySymbol]();
+    expect(normalizeSql(defaultNested.statement)).toContain(
+      "values ({orm_param1:Int32}, DEFAULT, DEFAULT, DEFAULT, DEFAULT, DEFAULT, DEFAULT)",
+    );
+
+    expect(() =>
+      db
+        .insert(typedEvents)
+        .values({
+          id: 3,
+          entries: "bad" as never,
+        })
+        [compileQuerySymbol](),
+    ).toThrow('Nested column "entries" expects an array of objects');
+    expect(() =>
+      db
+        .insert(typedEvents)
+        .values({
+          id: 4,
+          entries: [1 as never],
+        })
+        [compileQuerySymbol](),
+    ).toThrow('Nested column "entries" item 1 must be an object');
+    expect(() =>
+      db
+        .insert(typedEvents)
+        .values({
+          id: 2,
+          entries: [{ name: "missing-score" } as never],
+        })
+        [compileQuerySymbol](),
+    ).toThrow('Nested column "entries" item 1 is missing required field "score"');
   });
 
   it("rejects duplicate SQL aliases in explicit selections", function testDuplicateSelectionAliases() {
@@ -949,6 +1380,9 @@ describe("ck-orm query extras", function describeClickHouseORMQueryExtras() {
     expect(defaultCount.decoder(42)).toBe(42);
     expect(defaultCount.decoder("42")).toBe(42);
     expect(defaultCount.decoder(42n)).toBe(42);
+
+    const unsafeCount = defaultCount.toUnsafe();
+    expect(unsafeCount.decoder("42")).toBe(42);
 
     const safeCount = defaultCount.toSafe();
     expect(safeCount.decoder("42")).toBe("42");

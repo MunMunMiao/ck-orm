@@ -30,6 +30,10 @@ describe("ck-orm sql", function describeClickHouseORMSql() {
       orm_param1: 1,
       orm_param2: "alice",
     });
+    expect(built.paramTypes).toEqual({
+      orm_param1: "Int64",
+      orm_param2: "String",
+    });
 
     expect(compileSql(sql("SELECT 1")).query).toBe("SELECT 1");
   });
@@ -48,6 +52,11 @@ describe("ck-orm sql", function describeClickHouseORMSql() {
       orm_param1: [1, 2],
       orm_param2: { a: 1 },
       orm_param3: new Map([["k", 2]]),
+    });
+    expect(built.paramTypes).toEqual({
+      orm_param1: "Array(Int64)",
+      orm_param2: "Map(String, Int64)",
+      orm_param3: "Map(String, Int64)",
     });
   });
 

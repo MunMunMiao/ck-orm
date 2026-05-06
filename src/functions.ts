@@ -9,6 +9,7 @@ import {
 } from "./coercion";
 import type { AnyColumn } from "./columns";
 import { createClientValidationError, createDecodeError } from "./errors";
+import { normalizeClickHouseTypeLiteral } from "./internal/clickhouse-type";
 import {
   type CountMode,
   type CountModeResult,
@@ -216,17 +217,75 @@ const createStringLiteral = (label: string, value: unknown): SQLFragment => {
   return sql.raw(`'${escapeSqlSingleQuoted(value)}'`);
 };
 
-const TYPE_LITERAL_PATTERN = /^[A-Za-z0-9_(),\s.'+\-=/]+$/;
-const TYPE_LITERAL_DENYLIST = /;|--|\/\*|\*\/|`|"/;
+const createTupleElementIndexLiteral = (value: unknown): SQLFragment => {
+  if (typeof value === "string") {
+    if (value.length === 0) {
+      throw createClientValidationError(
+        `tupleElement indexOrName must be a positive safe integer or non-empty string, got ${String(value)}`,
+      );
+    }
+    return createStringLiteral("tupleElement indexOrName", value);
+  }
+
+  if (typeof value === "number") {
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      throw createClientValidationError(
+        `tupleElement indexOrName must be a positive safe integer or non-empty string, got ${String(value)}`,
+      );
+    }
+    return sql.raw(String(value));
+  }
+
+  if (typeof value === "bigint") {
+    if (value <= 0n) {
+      throw createClientValidationError(
+        `tupleElement indexOrName must be a positive safe integer or non-empty string, got ${String(value)}`,
+      );
+    }
+    return sql.raw(value.toString());
+  }
+
+  throw createClientValidationError(
+    `tupleElement indexOrName must be a positive safe integer or non-empty string, got ${String(value)}`,
+  );
+};
+
+const createConstIntegerLiteral = (
+  helperName: string,
+  value: unknown,
+  options: { positive?: boolean; nonNegative?: boolean },
+): SQLFragment => {
+  const assertBounds = (raw: number | bigint): void => {
+    if (options.positive && raw <= 0) {
+      throw createClientValidationError(`${helperName} expects a positive integer constant, got ${String(value)}`);
+    }
+    if (options.nonNegative && raw < 0) {
+      throw createClientValidationError(`${helperName} expects a non-negative integer constant, got ${String(value)}`);
+    }
+  };
+
+  if (typeof value === "number") {
+    if (!Number.isSafeInteger(value)) {
+      throw createClientValidationError(`${helperName} expects a safe integer constant, got ${String(value)}`);
+    }
+    assertBounds(value);
+    return sql.raw(String(value));
+  }
+
+  if (typeof value === "bigint") {
+    assertBounds(value);
+    return sql.raw(value.toString());
+  }
+
+  if (isSqlFragment(value)) {
+    return value;
+  }
+
+  throw createClientValidationError(`${helperName} requires a ClickHouse constant integer, got ${String(value)}`);
+};
 
 const createTypeLiteral = (value: unknown): SQLFragment => {
-  if (typeof value !== "string" || value.length === 0) {
-    throw createClientValidationError(`ClickHouse type literal must be a non-empty string, got ${String(value)}`);
-  }
-  if (!TYPE_LITERAL_PATTERN.test(value) || TYPE_LITERAL_DENYLIST.test(value)) {
-    throw createClientValidationError(`Invalid ClickHouse type literal: ${value}`);
-  }
-  return sql.raw(value);
+  return sql.raw(normalizeClickHouseTypeLiteral(value));
 };
 
 const INTERVAL_UNITS = new Set([
@@ -483,14 +542,14 @@ const createCastExpression = <TData>(
   targetType: string,
   decoder?: Decoder<TData>,
 ): Selection<TData> => {
-  createTypeLiteral(targetType);
+  const normalizedTargetType = normalizeClickHouseTypeLiteral(targetType);
   return createExpression<TData>({
     compile: (ctx) => {
       const compiledExpr = compileValue(expression, ctx);
-      return sql`CAST(${compiledExpr} AS ${createTypeLiteral(targetType)})`;
+      return sql`CAST(${compiledExpr} AS ${createTypeLiteral(normalizedTargetType)})`;
     },
     decoder: decoder ?? (passThroughDecoder as Decoder<TData>),
-    sqlType: targetType,
+    sqlType: normalizedTargetType,
   });
 };
 
@@ -504,19 +563,19 @@ const createTypeStringFunctionExpression = <TData>(
     readonly extraArgs?: readonly unknown[];
   },
 ): Selection<TData> => {
-  createTypeLiteral(targetType);
+  const normalizedTargetType = normalizeClickHouseTypeLiteral(targetType);
   return createExpression<TData>({
     compile: (ctx) => {
       assertValidSqlIdentifier(name, "function");
       const compiledArgs = [
         compileValue(expression, ctx),
-        createStringLiteral(`${name} type`, targetType),
+        createStringLiteral(`${name} type`, normalizedTargetType),
         ...(config?.extraArgs ?? []).map((argument) => compileValue(argument, ctx)),
       ];
       return sql`${sql.raw(name)}(${joinSqlParts(compiledArgs, ", ")})`;
     },
     decoder: config?.decoder ?? (passThroughDecoder as Decoder<TData>),
-    sqlType: config?.nullable ? `Nullable(${targetType})` : targetType,
+    sqlType: config?.nullable ? `Nullable(${normalizedTargetType})` : normalizedTargetType,
   });
 };
 
@@ -702,6 +761,14 @@ const scalarFns = {
   },
   formatRowNoNewline(format: unknown, ...args: unknown[]): Selection<string> {
     return createTypedConversionExpression("formatRowNoNewline", [format, ...args], stringDecoder, "String");
+  },
+  formatDateTime(expression: unknown, format: unknown, timezone?: unknown): Selection<string> {
+    return createTypedConversionExpression(
+      "formatDateTime",
+      withOptional([expression, format], timezone),
+      stringDecoder,
+      "String",
+    );
   },
   parseDateTime(expression: unknown, format: unknown, timezone?: unknown): Selection<Date> {
     return createTypedConversionExpression(
@@ -1661,21 +1728,37 @@ const scalarFns = {
     return createArrayExpression<number>("arrayEnumerateDense", [array], "Array(UInt32)");
   },
   arrayEnumerateDenseRanked(clearDepth: unknown, array: unknown, maxArrayDepth: unknown): Selection<number[]> {
-    return createArrayExpression<number>(
-      "arrayEnumerateDenseRanked",
-      [clearDepth, array, maxArrayDepth],
-      "Array(UInt32)",
-    );
+    return createExpression({
+      compile: (ctx) =>
+        sql`arrayEnumerateDenseRanked(${joinSqlParts(
+          [
+            createConstIntegerLiteral("arrayEnumerateDenseRanked clearDepth", clearDepth, { positive: true }),
+            compileValue(array, ctx),
+            createConstIntegerLiteral("arrayEnumerateDenseRanked maxArrayDepth", maxArrayDepth, { positive: true }),
+          ],
+          ", ",
+        )})`,
+      decoder: arrayDecoder<number>("arrayEnumerateDenseRanked"),
+      sqlType: "Array(UInt32)",
+    });
   },
   arrayEnumerateUniq(...arrays: unknown[]): Selection<number[]> {
     return createArrayExpression<number>("arrayEnumerateUniq", arrays, "Array(UInt32)");
   },
   arrayEnumerateUniqRanked(clearDepth: unknown, array: unknown, maxArrayDepth: unknown): Selection<number[]> {
-    return createArrayExpression<number>(
-      "arrayEnumerateUniqRanked",
-      [clearDepth, array, maxArrayDepth],
-      "Array(UInt32)",
-    );
+    return createExpression({
+      compile: (ctx) =>
+        sql`arrayEnumerateUniqRanked(${joinSqlParts(
+          [
+            createConstIntegerLiteral("arrayEnumerateUniqRanked clearDepth", clearDepth, { positive: true }),
+            compileValue(array, ctx),
+            createConstIntegerLiteral("arrayEnumerateUniqRanked maxArrayDepth", maxArrayDepth, { positive: true }),
+          ],
+          ", ",
+        )})`,
+      decoder: arrayDecoder<number>("arrayEnumerateUniqRanked"),
+      sqlType: "Array(UInt32)",
+    });
   },
   arrayExcept<TData = unknown>(source: unknown, except: unknown): Selection<TData[]> {
     return createArrayExpression<TData>("arrayExcept", [source, except]);
@@ -1802,7 +1885,17 @@ const scalarFns = {
     return createNumberExpression("arrayROCAUC", args);
   },
   arrayRandomSample<TData = unknown>(array: unknown, samples: unknown): Selection<TData[]> {
-    return createArrayExpression<TData>("arrayRandomSample", [array, samples]);
+    return createExpression({
+      compile: (ctx) =>
+        sql`arrayRandomSample(${joinSqlParts(
+          [
+            compileValue(array, ctx),
+            createConstIntegerLiteral("arrayRandomSample samples", samples, { nonNegative: true }),
+          ],
+          ", ",
+        )})`,
+      decoder: arrayDecoder<TData>("arrayRandomSample"),
+    });
   },
   arrayReduce<TData = unknown>(
     aggregateFunction: unknown,
@@ -1994,8 +2087,16 @@ const scalarFns = {
     indexOrName: JsonPathSegment,
     defaultValue?: unknown,
   ): Selection<TData> {
-    const args = defaultValue === undefined ? [tuple, indexOrName] : [tuple, indexOrName, defaultValue];
-    return createFunctionExpression<TData>("tupleElement", args);
+    return createExpression({
+      compile: (ctx) => {
+        const args =
+          defaultValue === undefined
+            ? [compileValue(tuple, ctx), createTupleElementIndexLiteral(indexOrName)]
+            : [compileValue(tuple, ctx), createTupleElementIndexLiteral(indexOrName), compileValue(defaultValue, ctx)];
+        return sql`tupleElement(${joinSqlParts(args, ", ")})`;
+      },
+      decoder: passThroughDecoder as Decoder<TData>,
+    });
   },
   not(expression: unknown): Selection<boolean> {
     return createFunctionExpression("not", [expression], {

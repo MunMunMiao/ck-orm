@@ -275,13 +275,19 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
         },
         async () => {
           if (compiled.mode === "command") {
-            await config.client.command(queryConfig.query, mergedOptions, queryConfig.query_params);
+            await config.client.command(
+              queryConfig.query,
+              mergedOptions,
+              queryConfig.query_params,
+              queryConfig.query_param_types,
+            );
             return { value: [] as TResult[] };
           }
 
           const result = await config.client.queryJSON<Record<string, unknown>>({
             statement: queryConfig.query,
             query_params: queryConfig.query_params,
+            query_param_types: queryConfig.query_param_types,
             options: mergedOptions,
             format: "JSON",
           });
@@ -309,11 +315,13 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
     compiled: CompiledQuery<TResult>,
     query: string,
     queryParams: QueryParams,
+    queryParamTypes: CompiledQuery<TResult>["paramTypes"],
     options: ClickHouseBaseQueryOptions,
   ): AsyncGenerator<TResult, void, unknown> {
     for await (const row of config.client.queryStream<Record<string, unknown>>({
       statement: query,
       query_params: queryParams,
+      query_param_types: queryParamTypes,
       options,
       format: "JSONEachRow",
     })) {
@@ -348,7 +356,14 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
           operation,
           tableName: compiled.metadata?.tableName,
         },
-        () => createStreamGenerator(compiled, queryConfig.query, queryConfig.query_params, mergedOptions),
+        () =>
+          createStreamGenerator(
+            compiled,
+            queryConfig.query,
+            queryConfig.query_params,
+            queryConfig.query_param_types,
+            mergedOptions,
+          ),
       ),
     );
   };
@@ -449,6 +464,7 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
             const result = await config.client.queryJSON<Record<string, unknown>>({
               statement: normalized.query,
               query_params: mergeQueryParams(normalized.params, mergedOptions.query_params),
+              query_param_types: normalized.paramTypes,
               options: mergedOptions,
               format: mergedOptions.format ?? "JSON",
             });
@@ -474,6 +490,7 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
         yield* config.client.queryStream<Record<string, unknown>>({
           statement: normalized.query,
           query_params: mergeQueryParams(normalized.params, mergedOptions.query_params),
+          query_param_types: normalized.paramTypes,
           options: mergedOptions,
           format: mergedOptions.format ?? "JSONEachRow",
         });
@@ -509,6 +526,7 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
               normalized.query,
               mergedOptions,
               mergeQueryParams(normalized.params, mergedOptions.query_params),
+              normalized.paramTypes,
             );
             return { value: undefined };
           },

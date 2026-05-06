@@ -1,5 +1,6 @@
 import { toBoolean, toDate, toIntegerNumber, toIntegerString, toNumber, toStringValue, toTimeDate } from "./coercion";
 import { createClientValidationError, createDecodeError, type DecodeError, isDecodeError } from "./errors";
+import { normalizeAggregateFunctionSignature, normalizeClickHouseTypeLiteral } from "./internal/clickhouse-type";
 import { assertDecimalParams, type DecimalParams, formatDecimalSqlType } from "./internal/decimal";
 import { assertValidSqlIdentifier } from "./internal/identifier";
 import { createExpression, type Decoder, type Encoder, type InferData, type SqlExpression } from "./query-shared";
@@ -35,6 +36,7 @@ export interface Column<
   readonly sqlType: TSqlType;
   readonly ddl?: ColumnDdlConfig;
   readonly decimalConfig?: DecimalParams;
+  readonly nestedShape?: Record<string, AnyColumn>;
   mapToDriverValue(value: TData): unknown;
   mapFromDriverValue(value: unknown): TData;
   cast(precision: number, scale: number): SQLFragment<string>;
@@ -69,6 +71,7 @@ type ColumnFactoryConfig<TData, TSqlType extends string> = {
   readonly mapToDriverValue?: Encoder<TData>;
   readonly ddl?: ColumnDdlConfig;
   readonly decimalConfig?: DecimalParams;
+  readonly nestedShape?: Record<string, AnyColumn>;
   readonly rejectObjectInput?: boolean;
 };
 
@@ -88,6 +91,10 @@ type PrecisionConfig = {
 };
 type DateTime64Config = PrecisionConfig & {
   readonly timezone?: string;
+};
+export type DateColumnEncode = "utc" | "local" | ((date: Date) => string);
+type DateColumnConfig = {
+  readonly encode: DateColumnEncode;
 };
 type QBitConfig = {
   readonly dimensions: number;
@@ -145,13 +152,36 @@ const parseNamedConfig = <TConfig extends object>(
     };
   }
 
-  if (isObjectRecord(first) && second === undefined) {
+  if (isObjectRecord(first) && second === undefined) return { config: first };
+
+  throw createClientValidationError(`${builderName}() requires a config object`);
+};
+
+const parseOptionalNamedConfig = <TConfig extends object>(
+  builderName: string,
+  first?: string | TConfig,
+  second?: TConfig,
+): {
+  readonly name?: string;
+  readonly config?: TConfig;
+} => {
+  if (first === undefined) {
+    return {};
+  }
+
+  if (typeof first === "string") {
+    if (second !== undefined && !isObjectRecord(second)) {
+      throw createClientValidationError(`${builderName}() config must be an object when provided`);
+    }
     return {
-      config: first,
+      name: normalizeConfiguredName(first),
+      config: second,
     };
   }
 
-  throw createClientValidationError(`${builderName}() requires a config object`);
+  if (isObjectRecord(first) && second === undefined) return { config: first };
+
+  throw createClientValidationError(`${builderName}() requires a column name, a config object, or both`);
 };
 
 const parseNamedValue = <TValue>(
@@ -216,14 +246,21 @@ const assertPrecision = (label: string, value: number): void => {
   }
 };
 
-const assertSafeAggregateTypeArg = (value: string): void => {
-  const trimmed = value.trim();
-  const hasUnsafeToken = /;|--|\/\*|\*\/|`|"|\n|\r/.test(trimmed);
-  const hasValidShape = /^[A-Za-z][A-Za-z0-9_]*(?:\([A-Za-z0-9_,\s'()+\-./:]*\))?$/.test(trimmed);
-  if (trimmed === "" || hasUnsafeToken || !hasValidShape) {
+const normalizeSafeAggregateTypeArg = (value: string): string => {
+  try {
+    return normalizeClickHouseTypeLiteral(value);
+  } catch {
     throw createClientValidationError(
       `Invalid AggregateFunction argument type: ${value}. Use ckType column helpers for complex types.`,
     );
+  }
+};
+
+const normalizeAggregateFunctionName = (value: string): string => {
+  try {
+    return normalizeAggregateFunctionSignature(value);
+  } catch {
+    throw createClientValidationError(`Invalid aggregate function name: ${value}`);
   }
 };
 
@@ -319,6 +356,7 @@ const createColumnFactory = <
     sqlType: config.sqlType,
     ddl: config.ddl,
     decimalConfig: config.decimalConfig,
+    nestedShape: config.nestedShape,
     mapFromDriverValue(value: unknown) {
       return config.mapFromDriverValue(value);
     },
@@ -544,10 +582,88 @@ export function decimal(first: string | DecimalConfig, second?: DecimalConfig): 
     rejectObjectInput: true,
   });
 }
-export const date = (name?: string): DateColumn<Date> =>
-  createColumnFactory(withConfiguredName({ sqlType: "Date", mapFromDriverValue: toDate }, name));
-export const date32 = (name?: string): Date32<Date> =>
-  createColumnFactory(withConfiguredName({ sqlType: "Date32", mapFromDriverValue: toDate }, name));
+
+const DATE_LITERAL_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+const padDatePart = (value: number) => String(value).padStart(2, "0");
+
+const assertDateLiteral = (value: string): string => {
+  const match = DATE_LITERAL_PATTERN.exec(value);
+  if (!match) {
+    throw createClientValidationError(`Date column values must use YYYY-MM-DD format, got ${value}`);
+  }
+  const [, yearRaw, monthRaw, dayRaw] = match;
+  const year = Number(yearRaw);
+  const month = Number(monthRaw);
+  const day = Number(dayRaw);
+  const dateValue = new Date(Date.UTC(year, month - 1, day));
+  if (dateValue.getUTCFullYear() !== year || dateValue.getUTCMonth() !== month - 1 || dateValue.getUTCDate() !== day) {
+    throw createClientValidationError(`Date column values must use a valid YYYY-MM-DD date, got ${value}`);
+  }
+  return value;
+};
+
+const encodeDateWithMode = (value: Date, mode: Exclude<DateColumnEncode, (date: Date) => string>): string => {
+  if (mode === "utc") {
+    return `${value.getUTCFullYear()}-${padDatePart(value.getUTCMonth() + 1)}-${padDatePart(value.getUTCDate())}`;
+  }
+  return `${value.getFullYear()}-${padDatePart(value.getMonth() + 1)}-${padDatePart(value.getDate())}`;
+};
+
+const createDateEncoder =
+  (columnType: "Date" | "Date32", encode: DateColumnEncode | undefined): Encoder<Date> =>
+  (value) => {
+    const input = value as unknown;
+    if (typeof input === "string") {
+      return assertDateLiteral(input);
+    }
+    if (!(input instanceof Date) || Number.isNaN(input.getTime())) {
+      throw createClientValidationError(`${columnType} column values must be a valid Date or YYYY-MM-DD string`);
+    }
+    if (!encode) {
+      throw createClientValidationError(
+        `${columnType} column values passed as JavaScript Date require ckType.${columnType === "Date" ? "date" : "date32"}({ encode: "utc" | "local" | fn })`,
+      );
+    }
+    const encoded = typeof encode === "function" ? encode(input) : encodeDateWithMode(input, encode);
+    return assertDateLiteral(encoded);
+  };
+
+export function date(): DateColumn<Date>;
+export function date(name: string): DateColumn<Date>;
+export function date(config: DateColumnConfig): DateColumn<Date>;
+export function date(name: string, config: DateColumnConfig): DateColumn<Date>;
+export function date(first?: string | DateColumnConfig, second?: DateColumnConfig): DateColumn<Date> {
+  const { name, config } = parseOptionalNamedConfig("date", first, second);
+  return createColumnFactory(
+    withConfiguredName(
+      {
+        sqlType: "Date",
+        mapFromDriverValue: toDate,
+        mapToDriverValue: createDateEncoder("Date", config?.encode),
+      },
+      name,
+    ),
+  );
+}
+
+export function date32(): Date32<Date>;
+export function date32(name: string): Date32<Date>;
+export function date32(config: DateColumnConfig): Date32<Date>;
+export function date32(name: string, config: DateColumnConfig): Date32<Date>;
+export function date32(first?: string | DateColumnConfig, second?: DateColumnConfig): Date32<Date> {
+  const { name, config } = parseOptionalNamedConfig("date32", first, second);
+  return createColumnFactory(
+    withConfiguredName(
+      {
+        sqlType: "Date32",
+        mapFromDriverValue: toDate,
+        mapToDriverValue: createDateEncoder("Date32", config?.encode),
+      },
+      name,
+    ),
+  );
+}
 export const time = (name?: string): Time<Date> =>
   createColumnFactory(withConfiguredName({ sqlType: "Time", mapFromDriverValue: toTimeDate }, name));
 export function time64(config: PrecisionConfig): Time64<Date>;
@@ -856,6 +972,7 @@ export function nested<TShape extends Record<string, AnyColumn>>(
         return `${key} ${value.sqlType}`;
       })
       .join(", ")})`,
+    nestedShape: shape,
     mapFromDriverValue: (value) => {
       if (!Array.isArray(value)) {
         throw createDecodeError(`Cannot convert value to nested: ${String(value)}`, value);
@@ -881,8 +998,14 @@ export function nested<TShape extends Record<string, AnyColumn>>(
     },
     mapToDriverValue: (value) =>
       value.map((item) => {
+        if (typeof item !== "object" || item === null) {
+          throw createClientValidationError(`Cannot convert nested item: ${String(item)}`);
+        }
         const record: Record<string, unknown> = {};
         for (const [key, column] of Object.entries(shape)) {
+          if (!Object.hasOwn(item as Record<string, unknown>, key)) {
+            throw createClientValidationError(`Nested item is missing required field "${key}"`);
+          }
           record[key] = (column as AnyColumn).mapToDriverValue((item as Record<string, unknown>)[key]);
         }
         return record;
@@ -903,17 +1026,14 @@ export function aggregateFunction<TData = string>(
 ): AggregateFunction<TData> {
   const namedConfig = rest.length === 1 && isAggregateFunctionConfig(rest[0]) ? rest[0] : undefined;
   const configuredName = namedConfig ? normalizeConfiguredName(first) : undefined;
-  const name = namedConfig ? String(namedConfig.name) : first;
+  const name = normalizeAggregateFunctionName(namedConfig ? String(namedConfig.name) : first);
   const args = namedConfig ? (namedConfig.args ?? []) : (rest as (AnyColumn | string)[]);
-  assertValidSqlIdentifier(name, "aggregate function");
-  for (const arg of args) {
-    if (typeof arg === "string") {
-      assertSafeAggregateTypeArg(arg);
-    }
-  }
+  const normalizedArgs = args.map((arg) =>
+    typeof arg === "string" ? normalizeSafeAggregateTypeArg(arg) : arg.sqlType,
+  );
   return createColumnFactory({
     configuredName,
-    sqlType: `AggregateFunction(${name}${args.length > 0 ? `, ${args.map((arg) => (typeof arg === "string" ? arg : arg.sqlType)).join(", ")}` : ""})`,
+    sqlType: `AggregateFunction(${name}${normalizedArgs.length > 0 ? `, ${normalizedArgs.join(", ")}` : ""})`,
     mapFromDriverValue: (input) => input as TData,
     mapToDriverValue: (input) => input,
   });

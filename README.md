@@ -67,24 +67,28 @@ The examples below use a single table so the main flow stays easy to follow.
 ```ts
 import { ckTable, ckType } from "ck-orm";
 
-export const orderRewardLog = ckTable(
-  "order_reward_log",
+export const probeTelemetry = ckTable(
+  "probe_telemetry",
   {
     id: ckType.int32(),
-    userId: ckType.string("user_id"),
-    campaignId: ckType.int32("campaign_id"),
-    orderId: ckType.int64("order_id"),
-    rewardPoints: ckType.decimal("reward_points", { precision: 20, scale: 5 }),
+    probeId: ckType.string("probe_id"),
+    missionId: ckType.int32("mission_id"),
+    sampleId: ckType.int64("sample_id"),
+    signalStrength: ckType.decimal("signal_strength", { precision: 20, scale: 5 }),
     status: ckType.int16(),
     createdAt: ckType.int32("created_at"),
-    peerdbSyncedAt: ckType.dateTime64("_peerdb_synced_at", { precision: 9 }),
-    peerdbIsDeleted: ckType.uint8("_peerdb_is_deleted"),
-    peerdbVersion: ckType.uint64("_peerdb_version"),
+    deletedAt: ckType.nullable(
+      "deleted_at",
+      ckType.dateTime64({ precision: 3, timezone: "UTC" }),
+    ),
+    ingestedAt: ckType.dateTime64("_ingested_at", { precision: 9 }),
+    isDeleted: ckType.uint8("_is_deleted"),
+    ingestVersion: ckType.uint64("_ingest_version"),
   },
   (table) => ({
     engine: "ReplacingMergeTree",
-    orderBy: [table.userId, table.createdAt, table.id],
-    versionColumn: table.peerdbVersion,
+    orderBy: [table.probeId, table.createdAt, table.id],
+    versionColumn: table.ingestVersion,
   }),
 );
 ```
@@ -96,7 +100,7 @@ import { clickhouseClient } from "ck-orm";
 
 export const db = clickhouseClient({
   host: "http://127.0.0.1:8123",
-  database: "demo_store",
+  database: "telemetry_lab",
   username: "default",
   password: "<password>",
   clickhouse_settings: {
@@ -111,19 +115,19 @@ export const db = clickhouseClient({
 ```ts
 import { ck, fn } from "ck-orm";
 import { db } from "./db";
-import { orderRewardLog } from "./schema";
+import { probeTelemetry } from "./schema";
 
 const query = db
   .select({
-    userId: orderRewardLog.userId,
-    totalRewardPoints: fn.sum(orderRewardLog.rewardPoints).as(
-      "total_reward_points",
+    probeId: probeTelemetry.probeId,
+    totalSignalStrength: fn.sum(probeTelemetry.signalStrength).as(
+      "total_signal_strength",
     ),
   })
-  .from(orderRewardLog)
-  .where(ck.eq(orderRewardLog.status, 1))
-  .groupBy(orderRewardLog.userId)
-  .orderBy(ck.desc(fn.sum(orderRewardLog.rewardPoints)))
+  .from(probeTelemetry)
+  .where(ck.eq(probeTelemetry.status, 1))
+  .groupBy(probeTelemetry.probeId)
+  .orderBy(ck.desc(fn.sum(probeTelemetry.signalStrength)))
   .limit(20);
 
 const rows = await query;
@@ -142,10 +146,15 @@ Start here by task:
 | Task | Example |
 | --- | --- |
 | Basic builder query, filters, aggregate, `FINAL` | [`examples/basic-select.ts`](./examples/basic-select.ts) |
+| Neutral probe telemetry schema covering Date/Date32, JSON, Tuple, Nested, Nullable | [`examples/schema/probe.ts`](./examples/schema/probe.ts) |
+| Dynamic filters, explicit NULL predicates, value-level `undefined` guardrails | [`examples/null-and-optional-filters.ts`](./examples/null-and-optional-filters.ts) |
+| Date/Date32 predicate encoders and DateTime formatting/conversion helpers | [`examples/date-time-formatting.ts`](./examples/date-time-formatting.ts) |
+| Nested, Nullable, Tuple, JSON, Array, and calendar-date writes | [`examples/nested-nullable-writes.ts`](./examples/nested-nullable-writes.ts) |
+| Tuple scopes and raw Tuple `query_params` | [`examples/tuple-params-and-scopes.ts`](./examples/tuple-params-and-scopes.ts) |
 | Schema options, column name mapping, column metadata, inferred row/insert types | [`examples/schema-and-types.ts`](./examples/schema-and-types.ts) |
 | Inserts, raw `query_params`, direct value binding | [`examples/params-and-insert.ts`](./examples/params-and-insert.ts) |
 | Raw SQL templates, identifiers, table functions | [`examples/raw-sql.ts`](./examples/raw-sql.ts) |
-| JSON extraction, array helpers, `arrayJoin(arrayZip(...))`, tuple scopes | [`examples/json-array-functions.ts`](./examples/json-array-functions.ts) |
+| Probe JSON extraction, array helpers, `arrayJoin(arrayZip(...))`, tuple scopes | [`examples/json-array-functions.ts`](./examples/json-array-functions.ts) |
 | CTEs, subqueries, joins | [`examples/cte-and-subquery.ts`](./examples/cte-and-subquery.ts) |
 | Left join null semantics and `withSettings()` | [`examples/joins-and-settings.ts`](./examples/joins-and-settings.ts) |
 | Session temporary tables | [`examples/session-temp-table.ts`](./examples/session-temp-table.ts) |
@@ -153,20 +162,18 @@ Start here by task:
 | Runtime methods, logger, instrumentation, endpoint helpers | [`examples/runtime-observability.ts`](./examples/runtime-observability.ts) |
 | Advanced compiled-query integration | [`examples/advanced-compiled-query.ts`](./examples/advanced-compiled-query.ts) |
 | Count modes and error guards | [`examples/count-and-errors.ts`](./examples/count-and-errors.ts) |
-| Cross-system enrichment with two ClickHouse clients | [`examples/cross-system-order-enrichment.ts`](./examples/cross-system-order-enrichment.ts) |
-| Multi-CTE analytical lifecycle query | [`examples/fulfillment-order-lifecycle.ts`](./examples/fulfillment-order-lifecycle.ts) |
 
 Public API coverage by guide:
 
 | API family | README section | Example files |
 | --- | --- | --- |
-| `ckType`, `ckTable`, `ckAlias`, model inference | [Schema DSL](#schema-dsl) | [`schema-and-types.ts`](./examples/schema-and-types.ts), [`schema/commerce.ts`](./examples/schema/commerce.ts), [`schema/fulfillment.ts`](./examples/schema/fulfillment.ts) |
+| `ckType`, `ckTable`, `ckAlias`, model inference | [Schema DSL](#schema-dsl) | [`schema-and-types.ts`](./examples/schema-and-types.ts), [`schema/probe.ts`](./examples/schema/probe.ts) |
 | `clickhouseClient`, connection config, settings | [Client configuration](#client-configuration) | [`basic-select.ts`](./examples/basic-select.ts), [`runtime-observability.ts`](./examples/runtime-observability.ts) |
-| `select`, joins, filters, grouping, ordering, `limitBy`, CTEs | [Query builder](#query-builder) | [`basic-select.ts`](./examples/basic-select.ts), [`cte-and-subquery.ts`](./examples/cte-and-subquery.ts), [`fulfillment-order-lifecycle.ts`](./examples/fulfillment-order-lifecycle.ts) |
+| `select`, joins, filters, grouping, ordering, `limitBy`, CTEs | [Query builder](#query-builder) | [`basic-select.ts`](./examples/basic-select.ts), [`cte-and-subquery.ts`](./examples/cte-and-subquery.ts), [`null-and-optional-filters.ts`](./examples/null-and-optional-filters.ts), [`tuple-params-and-scopes.ts`](./examples/tuple-params-and-scopes.ts) |
 | `count`, `count().toSafe()`, `count().toMixed()` | [`db.count()`](#dbcount) | [`count-and-errors.ts`](./examples/count-and-errors.ts) |
-| `insert`, `insertJsonEachRow` | [Writes](#writes) | [`params-and-insert.ts`](./examples/params-and-insert.ts), [`large-scope-session.ts`](./examples/large-scope-session.ts) |
-| `ckSql`, `ck.expr`, `query_params`, identifiers | [Raw SQL](#raw-sql) | [`raw-sql.ts`](./examples/raw-sql.ts), [`params-and-insert.ts`](./examples/params-and-insert.ts) |
-| `fn.*` scalar, aggregate, JSON, array, tuple, table helpers | [Functions and table functions](#functions-and-table-functions) | [`json-array-functions.ts`](./examples/json-array-functions.ts), [`raw-sql.ts`](./examples/raw-sql.ts), [`activity-monthly-export.ts`](./examples/activity-monthly-export.ts) |
+| `insert`, `insertJsonEachRow` | [Writes](#writes) | [`params-and-insert.ts`](./examples/params-and-insert.ts), [`nested-nullable-writes.ts`](./examples/nested-nullable-writes.ts), [`large-scope-session.ts`](./examples/large-scope-session.ts) |
+| `ckSql`, `ck.expr`, `query_params`, identifiers | [Raw SQL](#raw-sql) | [`raw-sql.ts`](./examples/raw-sql.ts), [`params-and-insert.ts`](./examples/params-and-insert.ts), [`tuple-params-and-scopes.ts`](./examples/tuple-params-and-scopes.ts) |
+| `fn.*` scalar, aggregate, JSON, array, tuple, table helpers | [Functions and table functions](#functions-and-table-functions) | [`json-array-functions.ts`](./examples/json-array-functions.ts), [`date-time-formatting.ts`](./examples/date-time-formatting.ts), [`tuple-params-and-scopes.ts`](./examples/tuple-params-and-scopes.ts), [`raw-sql.ts`](./examples/raw-sql.ts) |
 | `runInSession`, temporary tables, session concurrency | [Sessions and temporary tables](#sessions-and-temporary-tables) | [`session-temp-table.ts`](./examples/session-temp-table.ts), [`large-scope-session.ts`](./examples/large-scope-session.ts) |
 | `execute`, `stream`, `command`, `ping`, `replicasStatus`, `withSettings` | [Runtime methods](#runtime-methods) | [`runtime-observability.ts`](./examples/runtime-observability.ts), [`raw-sql.ts`](./examples/raw-sql.ts) |
 | `executeCompiled`, `iteratorCompiled`, `ck.decodeRow`, `ck.createSessionId`, `CompiledQuery` | [Runtime methods](#runtime-methods) | [`advanced-compiled-query.ts`](./examples/advanced-compiled-query.ts) |
@@ -203,33 +210,41 @@ import { ckTable, ckType, ckSql } from "ck-orm";
 ```
 
 ```ts
-const orderRewardLog = ckTable("order_reward_log", {
+const probeTelemetry = ckTable("probe_telemetry", {
   id: ckType.int32(),
-  userId: ckType.string("user_id"),
-  orderId: ckType.int64("order_id"),
-  rewardPoints: ckType.decimal("reward_points", { precision: 20, scale: 5 }),
+  probeId: ckType.string("probe_id"),
+  sampleId: ckType.int64("sample_id"),
+  signalStrength: ckType.decimal("signal_strength", { precision: 20, scale: 5 }),
   createdAt: ckType.int32("created_at"),
-  peerdbVersion: ckType.uint64("_peerdb_version"),
+  deletedAt: ckType.nullable(
+    "deleted_at",
+    ckType.dateTime64({ precision: 3, timezone: "UTC" }),
+  ),
+  ingestVersion: ckType.uint64("_ingest_version"),
 });
 ```
 
 The third argument can be a plain object or a factory function:
 
 ```ts
-const orderRewardLog = ckTable(
-  "order_reward_log",
+const probeTelemetry = ckTable(
+  "probe_telemetry",
   {
     id: ckType.int32(),
-    userId: ckType.string("user_id"),
-    orderId: ckType.int64("order_id"),
-    rewardPoints: ckType.decimal("reward_points", { precision: 20, scale: 5 }),
+    probeId: ckType.string("probe_id"),
+    sampleId: ckType.int64("sample_id"),
+    signalStrength: ckType.decimal("signal_strength", { precision: 20, scale: 5 }),
     createdAt: ckType.int32("created_at"),
-    peerdbVersion: ckType.uint64("_peerdb_version"),
+    deletedAt: ckType.nullable(
+      "deleted_at",
+      ckType.dateTime64({ precision: 3, timezone: "UTC" }),
+    ),
+    ingestVersion: ckType.uint64("_ingest_version"),
   },
   (table) => ({
     engine: "ReplacingMergeTree",
-    orderBy: [table.userId, table.createdAt, table.id],
-    versionColumn: table.peerdbVersion,
+    orderBy: [table.probeId, table.createdAt, table.id],
+    versionColumn: table.ingestVersion,
   }),
 );
 ```
@@ -265,8 +280,8 @@ It does not automatically migrate or synchronize production ClickHouse tables. K
 Example:
 
 ```ts
-const orderRewardLog = ckTable(
-  "order_reward_log",
+const probeTelemetry = ckTable(
+  "probe_telemetry",
   {
     id: ckType.int32(),
     createdAt: ckType.dateTime("created_at"),
@@ -290,11 +305,11 @@ Every table exposes:
 - `table.$inferInsert`
 
 ```ts
-type RewardLogRow = typeof orderRewardLog.$inferSelect;
-type RewardLogInsert = typeof orderRewardLog.$inferInsert;
+type TelemetryRow = typeof probeTelemetry.$inferSelect;
+type TelemetryInsert = typeof probeTelemetry.$inferInsert;
 
-const orderId: RewardLogRow["orderId"] = "900001";
-const peerdbVersion: RewardLogInsert["peerdbVersion"] = "1";
+const sampleId: TelemetryRow["sampleId"] = "900001";
+const ingestVersion: TelemetryInsert["ingestVersion"] = "1";
 ```
 
 For generic helpers, use:
@@ -307,14 +322,14 @@ For generic helpers, use:
 ```ts
 import type { InferInsertModel, InferSelectModel, InferSelectSchema } from "ck-orm";
 
-type RewardLogRow = InferSelectModel<typeof orderRewardLog>;
-type RewardLogInsert = InferInsertModel<typeof orderRewardLog>;
+type TelemetryRow = InferSelectModel<typeof probeTelemetry>;
+type TelemetryInsert = InferInsertModel<typeof probeTelemetry>;
 
-const commerceTables = {
-  orderRewardLog,
+const telemetryTables = {
+  probeTelemetry,
 };
 
-type CommerceRows = InferSelectSchema<typeof commerceTables>;
+type TelemetryRows = InferSelectSchema<typeof telemetryTables>;
 ```
 
 Schema objects used with `InferSelectSchema` and `InferInsertSchema` are plain TypeScript groupings. They are useful for shared model types and remain separate from client configuration.
@@ -326,7 +341,7 @@ Use `ckAlias()` when the same table needs to appear more than once in a query.
 ```ts
 import { fn, ck, ckAlias } from "ck-orm";
 
-const rewardLog = ckAlias(orderRewardLog, "reward_log");
+const telemetry = ckAlias(probeTelemetry, "telemetry");
 ```
 
 Columns returned by `ckAlias()` are rebound automatically to the alias.
@@ -336,28 +351,28 @@ Columns returned by `ckAlias()` are rebound automatically to the alias.
 The schema object key is the logical key used by TypeScript rows, decoded query results, and insert values. By default, that same key is also the ClickHouse column name:
 
 ```ts
-const rewardLog = ckTable("reward_log", {
-  rewardPoints: ckType.decimal({ precision: 20, scale: 5 }),
+const telemetry = ckTable("telemetry", {
+  signalStrength: ckType.decimal({ precision: 20, scale: 5 }),
 });
 ```
 
 When the database column uses a different name, pass that physical column name as the first argument:
 
 ```ts
-const rewardLog = ckTable("reward_log", {
-  userId: ckType.string("user_id"),
-  rewardPoints: ckType.decimal("reward_points", { precision: 20, scale: 5 }),
+const telemetry = ckTable("telemetry", {
+  probeId: ckType.string("probe_id"),
+  signalStrength: ckType.decimal("signal_strength", { precision: 20, scale: 5 }),
   createdAt: ckType.dateTime64("created_at", { precision: 9 }),
 });
 
-await db.insert(rewardLog).values({
-  userId: "u_100",
-  rewardPoints: "12.50000",
+await db.insert(telemetry).values({
+  probeId: "probe_alpha",
+  signalStrength: "12.50000",
   createdAt: new Date(),
 });
 ```
 
-SQL, DDL, filters, ordering, grouping, and write column lists use the physical names (`user_id`, `reward_points`, `created_at`). Inferred models, default select results, explicit projection keys, and insert values use the schema object keys (`userId`, `rewardPoints`, `createdAt`).
+SQL, DDL, filters, ordering, grouping, and write column lists use the physical names (`probe_id`, `signal_strength`, `created_at`). Inferred models, default select results, explicit projection keys, and insert values use the schema object keys (`probeId`, `signalStrength`, `createdAt`).
 
 Every public `ckType` builder supports an outer physical column name. Builders without extra configuration accept `name?`; builders with type configuration keep the optional physical column name first and put the type configuration in an object:
 
@@ -376,18 +391,21 @@ const typedColumns = ckTable("typed_columns", {
 
 ```ts
 ckType.aggregateFunction("sum", ckType.uint64());
+ckType.aggregateFunction("quantile(0.5)", ckType.float64());
 ckType.simpleAggregateFunction("sum", ckType.uint64());
 ```
+
+`AggregateFunction` accepts ClickHouse aggregate names with literal parameters, such as `quantile(0.5)` or `topK(10)`. `simpleAggregateFunction` stays stricter and uses a plain aggregate function name.
 
 Use object config when you also need a physical column name:
 
 ```ts
 const aggregateStateColumns = ckTable("aggregate_state_columns", {
-  rewardSumState: ckType.aggregateFunction("reward_sum_state", {
+  signalSumState: ckType.aggregateFunction("signal_sum_state", {
     name: "sum",
     args: [ckType.decimal({ precision: 20, scale: 5 })],
   }),
-  rewardSum: ckType.simpleAggregateFunction("reward_sum", {
+  signalSum: ckType.simpleAggregateFunction("signal_sum", {
     name: "sum",
     value: ckType.decimal({ precision: 20, scale: 5 }),
   }),
@@ -397,9 +415,9 @@ const aggregateStateColumns = ckTable("aggregate_state_columns", {
 `nested("items", shape)` names the outer `Nested(...)` column. Nested field names are the keys of `shape`; inner column `configuredName` values are not used for the nested field names:
 
 ```ts
-const orderLines = ckTable("order_lines", {
+const sensorPackets = ckTable("sensor_packets", {
   items: ckType.nested("items", {
-    productSku: ckType.string(),
+    componentId: ckType.string(),
     quantity: ckType.float64(),
   }),
 });
@@ -426,11 +444,15 @@ Builders with type configuration use object config, with the optional physical c
 
 ```ts
 ckType.decimal({ precision: 20, scale: 5 });
-ckType.decimal("reward_points", { precision: 20, scale: 5 });
+ckType.decimal("signal_strength", { precision: 20, scale: 5 });
 ckType.fixedString({ length: 8 });
+ckType.date({ encode: "utc" });
+ckType.date32("mission_day", { encode: (date) => date.toISOString().slice(0, 10) });
 ckType.dateTime64("created_at", { precision: 9, timezone: "UTC" });
 ckType.qbit("embedding", ckType.float32(), { dimensions: 8 });
 ```
+
+`Date` / `Date32` writes and schema-driven predicate values require an explicit encoder when the application passes a JavaScript `Date`. Use `"utc"`, `"local"`, or a custom `(date: Date) => "YYYY-MM-DD"` function. String values are accepted only when they already match a valid `YYYY-MM-DD` date. This keeps calendar-day semantics under the application schema instead of guessing from the runtime timezone.
 
 ### Column Type Cookbook
 
@@ -438,14 +460,14 @@ Common schema shapes and their TypeScript values:
 
 | ClickHouse shape | Schema | TypeScript value shape |
 | --- | --- | --- |
-| enum | `ckType.enum8<"new" | "paid">({ new: 1, paid: 2 })` | `"new" | "paid"` |
+| enum | `ckType.enum8<"idle" | "active">({ idle: 1, active: 2 })` | `"idle" | "active"` |
 | low-cardinality string | `ckType.lowCardinality(ckType.string())` | `string` |
 | nullable decimal | `ckType.nullable(ckType.decimal({ precision: 18, scale: 5 }))` | `string | null` |
 | array | `ckType.array(ckType.string())` | `string[]` |
 | nullable array item | `ckType.array(ckType.nullable(ckType.string()))` | `(string | null)[]` |
 | tuple | `ckType.tuple(ckType.string(), ckType.int32())` | `[string, number]` |
 | map | `ckType.map(ckType.string(), ckType.string())` | `Record<string, string>` |
-| nested object array | `ckType.nested({ sku: ckType.string(), quantity: ckType.float64() })` | `{ sku: string; quantity: number }[]` |
+| nested object array | `ckType.nested({ component: ckType.string(), quantity: ckType.float64() })` | `{ component: string; quantity: number }[]` |
 | variant | `ckType.variant(ckType.string(), ckType.int32())` | `string | number` |
 | JSON | `ckType.json<{ risk?: { score?: number } }>()` | `{ risk?: { score?: number } }` |
 
@@ -459,7 +481,7 @@ Create a client with `clickhouseClient()`:
 
 ```ts
 const db = clickhouseClient({
-  databaseUrl: "http://default:<password>@127.0.0.1:8123/demo_store",
+  databaseUrl: "http://default:<password>@127.0.0.1:8123/telemetry_lab",
 });
 ```
 
@@ -473,7 +495,7 @@ Use `databaseUrl` when you want a single connection string:
 
 ```ts
 const db = clickhouseClient({
-  databaseUrl: "http://default:secret@127.0.0.1:8123/demo_store",
+  databaseUrl: "http://default:secret@127.0.0.1:8123/telemetry_lab",
 });
 ```
 
@@ -492,7 +514,7 @@ Use explicit fields when you want each part configured separately:
 ```ts
 const db = clickhouseClient({
   host: "http://127.0.0.1:8123",
-  database: "demo_store",
+  database: "telemetry_lab",
   username: "default",
   password: "<password>",
 });
@@ -548,7 +570,7 @@ Official setting keys have TypeScript completion, and arbitrary keys remain vali
 ```ts
 import { clickhouseClient, type ClickHouseSettings } from "ck-orm";
 
-const reportSettings: ClickHouseSettings = {
+const labSettings: ClickHouseSettings = {
   allow_experimental_correlated_subqueries: 1,
   max_threads: 4,
   setting_added_by_future_clickhouse: "enabled",
@@ -556,15 +578,17 @@ const reportSettings: ClickHouseSettings = {
 
 const db = clickhouseClient({
   host: "http://127.0.0.1:8123",
-  database: "demo_store",
+  database: "telemetry_lab",
   username: "default",
   password: "<password>",
   request_timeout: 30_000,
-  clickhouse_settings: reportSettings,
+  clickhouse_settings: labSettings,
 });
 ```
 
 JSON parse/stringify behavior is managed by the fetch transport. The public client configuration keeps that behavior consistent across runtimes rather than exposing a `json` override.
+
+ck-orm forces a small wire-contract settings set on every request: `http_write_exception_in_output_format = 0`, `output_format_json_quote_64bit_integers = 1`, `output_format_json_quote_decimals = 1`, and `date_time_output_format = "iso"`. If caller settings conflict with those values, ck-orm logs a warning once and sends the forced value; workload/performance settings such as `max_threads` remain caller-controlled.
 
 ### Authentication
 
@@ -576,7 +600,7 @@ JSON parse/stringify behavior is managed by the fetch transport. The public clie
 
 ## Query builder
 
-The snippets below assume `db`, `orderRewardLog`, and the referenced helpers imported from `ck-orm`.
+The snippets below assume `db`, `probeTelemetry`, and the referenced helpers imported from `ck-orm`.
 
 ### `select()`
 
@@ -585,10 +609,10 @@ Explicit selection gives you an explicitly shaped result:
 ```ts
 const rows = await db
   .select({
-    userId: orderRewardLog.userId,
-    rewardPoints: orderRewardLog.rewardPoints,
+    probeId: probeTelemetry.probeId,
+    signalStrength: probeTelemetry.signalStrength,
   })
-  .from(orderRewardLog)
+  .from(probeTelemetry)
   .limit(10);
 ```
 
@@ -597,7 +621,7 @@ Projection objects are built from public `Selection` values or columns. In pract
 Implicit selection returns the full table model when there are no joins:
 
 ```ts
-const rows = await db.select().from(orderRewardLog).limit(10);
+const rows = await db.select().from(probeTelemetry).limit(10);
 ```
 
 With joins, implicit selection groups fields by source and returns nested objects.
@@ -607,19 +631,19 @@ With joins, implicit selection groups fields by source and returns nested object
 ```ts
 import { ckAlias, ck } from "ck-orm";
 
-const rewardLog = ckAlias(orderRewardLog, "reward_log");
-const matchedRewardLog = ckAlias(orderRewardLog, "matched_reward_log");
+const telemetry = ckAlias(probeTelemetry, "telemetry");
+const matchedTelemetry = ckAlias(probeTelemetry, "matched_telemetry");
 
 const rows = await db
   .select({
-    userId: rewardLog.userId,
-    rewardEventId: rewardLog.id,
-    matchedRewardEventId: matchedRewardLog.id,
+    probeId: telemetry.probeId,
+    telemetrySampleId: telemetry.id,
+    matchedTelemetrySampleId: matchedTelemetry.id,
   })
-  .from(rewardLog)
+  .from(telemetry)
   .leftJoin(
-    matchedRewardLog,
-    ck.eq(rewardLog.userId, matchedRewardLog.userId),
+    matchedTelemetry,
+    ck.eq(telemetry.probeId, matchedTelemetry.probeId),
   );
 ```
 
@@ -637,6 +661,8 @@ Public condition helpers:
 - `ck.lt`
 - `ck.lte`
 - `ck.between`
+- `ck.isNull`
+- `ck.isNotNull`
 - `ck.has`
 - `ck.hasAll`
 - `ck.hasAny`
@@ -655,21 +681,21 @@ Public condition helpers:
 - `ck.exists`
 - `ck.notExists`
 
-`.where(...predicates)` is a variadic `AND` entrypoint. It ignores `undefined`, so you can either pass multiple predicates directly or build grouped predicates with `ck.and(...)` and `ck.or(...)`.
+`.where(...predicates)` is a variadic `AND` entrypoint. It ignores `undefined` predicate objects, so you can either pass multiple predicates directly or build grouped predicates with `ck.and(...)` and `ck.or(...)`.
 
 ```ts
 import { ck } from "ck-orm";
 
 const query = db
   .select({
-    userId: orderRewardLog.userId,
-    rewardPoints: orderRewardLog.rewardPoints,
+    probeId: probeTelemetry.probeId,
+    signalStrength: probeTelemetry.signalStrength,
   })
-  .from(orderRewardLog)
+  .from(probeTelemetry)
   .where(
-    ck.eq(orderRewardLog.status, 1),
-    ck.inArray(orderRewardLog.campaignId, [10, 20, 30]),
-    ck.between(orderRewardLog.createdAt, 1710000000, 1719999999),
+    ck.eq(probeTelemetry.status, 1),
+    ck.inArray(probeTelemetry.missionId, [10, 20, 30]),
+    ck.between(probeTelemetry.createdAt, 1710000000, 1719999999),
   );
 ```
 
@@ -680,18 +706,47 @@ import { ck } from "ck-orm";
 
 const query = db
   .select({
-    id: orderRewardLog.id,
-    status: orderRewardLog.status,
+    id: probeTelemetry.id,
+    status: probeTelemetry.status,
   })
-  .from(orderRewardLog)
+  .from(probeTelemetry)
   .where(
     ck.and(
-      minId !== undefined ? ck.gt(orderRewardLog.id, minId) : undefined,
+      minId !== undefined ? ck.gt(probeTelemetry.id, minId) : undefined,
       status !== undefined
-        ? ck.or(ck.eq(orderRewardLog.status, status), ck.eq(orderRewardLog.status, 9))
+        ? ck.or(ck.eq(probeTelemetry.status, status), ck.eq(probeTelemetry.status, 9))
         : undefined,
     ),
   );
+```
+
+`undefined` is only skipped at the predicate level. Predicate values are strict: `ck.eq(column, undefined)` throws instead of silently widening the query. Bare `null`, `false`, `true`, `0`, and `""` are not predicates; use a SQL expression instead. `null` remains a valid data value for Nullable columns and writes, but NULL filtering must be explicit:
+
+```ts
+db.select()
+  .from(probeTelemetry)
+  .where(ck.isNull(probeTelemetry.deletedAt));
+```
+
+Boolean columns are still normal values and SQL expressions:
+
+```ts
+const healthChecks = ckTable("health_checks", {
+  id: ckType.int32(),
+  isPassing: ckType.bool("is_passing"),
+});
+
+db.select().from(healthChecks).where(ck.eq(healthChecks.isPassing, false));
+db.select().from(healthChecks).where(healthChecks.isPassing);
+```
+
+Do not put bare `null` inside normal comparisons or `IN` lists. Compose NULL logic explicitly:
+
+```ts
+ck.or(
+  ck.inArray(probeTelemetry.deletedAt, [new Date("2026-04-21T00:00:00.000Z")]),
+  ck.isNull(probeTelemetry.deletedAt),
+);
 ```
 
 For larger runtime-built filters, prefer `Predicate[]` plus variadic `.where(...predicates)`:
@@ -702,19 +757,19 @@ import { ck, type Predicate } from "ck-orm";
 const predicates: Predicate[] = [];
 
 if (minId !== undefined) {
-  predicates.push(ck.gt(orderRewardLog.id, minId));
+  predicates.push(ck.gt(probeTelemetry.id, minId));
 }
 
 if (status !== undefined) {
-  predicates.push(ck.or(ck.eq(orderRewardLog.status, status), ck.eq(orderRewardLog.status, 9)));
+  predicates.push(ck.or(ck.eq(probeTelemetry.status, status), ck.eq(probeTelemetry.status, 9)));
 }
 
 const query = db
   .select({
-    id: orderRewardLog.id,
-    status: orderRewardLog.status,
+    id: probeTelemetry.id,
+    status: probeTelemetry.status,
   })
-  .from(orderRewardLog)
+  .from(probeTelemetry)
   .where(...predicates);
 ```
 
@@ -722,7 +777,7 @@ const query = db
 
 `Selection` is the public name for reusable computed builder values such as `fn.sum(...)`, `fn.toString(...)`, and `ck.expr(ckSql...)`. Use `.as(...)` to alias them and `.mapWith(...)` to override decoding. `Order` is the clause object returned by `ck.asc(...)` and `ck.desc(...)`.
 
-`ck.has(...)`, `ck.hasAll(...)`, and `ck.hasAny(...)` map directly to the native ClickHouse functions and keep ClickHouse's array, map, and JSON semantics.
+`ck.has(...)`, `ck.hasAll(...)`, and `ck.hasAny(...)` map directly to the native ClickHouse functions and keep ClickHouse's array, map, and JSON semantics. When the left side is an array column, plain JavaScript values are encoded through that column first, so `Array(Date)` filters use the configured Date encoder before they become query parameters.
 
 `where(...)` is variadic, while `having(...)` takes a single predicate. For multi-clause `having`, compose the predicate first with `ck.and(...)` or `ck.or(...)`.
 
@@ -737,10 +792,10 @@ import { ck } from "ck-orm";
 
 const rows = await db
   .select({
-    userId: orderRewardLog.userId,
+    probeId: probeTelemetry.probeId,
   })
-  .from(orderRewardLog)
-  .where(ck.contains(orderRewardLog.userId, "user_100%"));
+  .from(probeTelemetry)
+  .where(ck.contains(probeTelemetry.probeId, "probe_alpha%"));
 ```
 
 Advanced pattern example:
@@ -750,10 +805,10 @@ import { ck } from "ck-orm";
 
 const rows = await db
   .select({
-    userId: orderRewardLog.userId,
+    probeId: probeTelemetry.probeId,
   })
-  .from(orderRewardLog)
-  .where(ck.like(orderRewardLog.userId, "user_%"));
+  .from(probeTelemetry)
+  .where(ck.like(probeTelemetry.probeId, "probe_%"));
 ```
 
 ### `groupBy()`, `having()`, `orderBy()`, `limit()`, `offset()`
@@ -761,24 +816,26 @@ const rows = await db
 ```ts
 import { ck, fn } from "ck-orm";
 
-const totalRewardPoints = fn.sum(orderRewardLog.rewardPoints).as(
-  "total_reward_points",
+const totalSignalStrength = fn.sum(probeTelemetry.signalStrength).as(
+  "total_signal_strength",
 );
 
 const query = db
   .select({
-    userId: orderRewardLog.userId,
-    totalRewardPoints,
+    probeId: probeTelemetry.probeId,
+    totalSignalStrength,
   })
-  .from(orderRewardLog)
-  .groupBy(orderRewardLog.userId)
-  .having(ck.gt(fn.sum(orderRewardLog.rewardPoints), "100.00000"))
-  .orderBy(ck.desc(orderRewardLog.createdAt))
+  .from(probeTelemetry)
+  .groupBy(probeTelemetry.probeId)
+  .having(ck.gt(fn.sum(probeTelemetry.signalStrength), "100.00000"))
+  .orderBy(ck.desc(probeTelemetry.createdAt))
   .limit(20)
   .offset(0);
 ```
 
 `groupBy()` and `limitBy([...])` accept columns and computed `Selection` values from helpers like `fn.*(...)` or `ck.expr(...)`.
+
+Primitive `limit()`, `offset()`, and `limitBy(..., limit)` values must be non-negative safe integers. Use `ckSql` only when you intentionally need a ClickHouse constant expression.
 
 `orderBy()` accepts:
 
@@ -791,7 +848,7 @@ const query = db
 Append table-level `FINAL` to a table query:
 
 ```ts
-const query = db.select().from(orderRewardLog).final();
+const query = db.select().from(probeTelemetry).final();
 ```
 
 For simple unaliased table reads, `ck-orm` emits `FROM table FINAL`. When the root table is aliased or the query joins additional sources, `ck-orm` wraps the finalized table in a subquery and keeps the alias on the outer source. This avoids ClickHouse analyzer edge cases around `FINAL`, table aliases, joins, and lambda expressions while preserving the same builder API.
@@ -807,12 +864,12 @@ import { ck } from "ck-orm";
 
 const query = db
   .select({
-    userId: orderRewardLog.userId,
-    createdAt: orderRewardLog.createdAt,
+    probeId: probeTelemetry.probeId,
+    createdAt: probeTelemetry.createdAt,
   })
-  .from(orderRewardLog)
-  .orderBy(ck.desc(orderRewardLog.createdAt))
-  .limitBy([orderRewardLog.userId], 1);
+  .from(probeTelemetry)
+  .orderBy(ck.desc(probeTelemetry.createdAt))
+  .limitBy([probeTelemetry.probeId], 1);
 ```
 
 ### Execution modes
@@ -820,7 +877,7 @@ const query = db
 Builder queries can be executed in three ways:
 
 ```ts
-const query = db.select().from(orderRewardLog).limit(10);
+const query = db.select().from(probeTelemetry).limit(10);
 
 const rows = await query;
 const sameRows = await query.execute();
@@ -839,15 +896,15 @@ Use `.execute()` in application examples when you want the execution point to be
 Use `.as("alias")` to turn a builder into a subquery:
 
 ```ts
-const latestRewardEvent = db
+const latestTelemetrySample = db
   .select({
-    userId: orderRewardLog.userId,
-    createdAt: orderRewardLog.createdAt,
+    probeId: probeTelemetry.probeId,
+    createdAt: probeTelemetry.createdAt,
   })
-  .from(orderRewardLog)
-  .orderBy(ck.desc(orderRewardLog.createdAt))
+  .from(probeTelemetry)
+  .orderBy(ck.desc(probeTelemetry.createdAt))
   .limit(10)
-  .as("latest_reward_event");
+  .as("latest_telemetry_sample");
 ```
 
 Use `$with()` and `with()` for CTEs:
@@ -855,61 +912,61 @@ Use `$with()` and `with()` for CTEs:
 ```ts
 import { ck, fn } from "ck-orm";
 
-const rankedUsers = db.$with("ranked_users").as(
+const rankedProbes = db.$with("ranked_probes").as(
   db
     .select({
-      userId: orderRewardLog.userId,
-      totalRewardPoints: fn.sum(orderRewardLog.rewardPoints).as(
-        "total_reward_points",
+      probeId: probeTelemetry.probeId,
+      totalSignalStrength: fn.sum(probeTelemetry.signalStrength).as(
+        "total_signal_strength",
       ),
     })
-    .from(orderRewardLog)
-    .groupBy(orderRewardLog.userId),
+    .from(probeTelemetry)
+    .groupBy(probeTelemetry.probeId),
 );
 
 const rows = await db
-  .with(rankedUsers)
+  .with(rankedProbes)
   .select({
-    userId: rankedUsers.userId,
-    totalRewardPoints: rankedUsers.totalRewardPoints,
+    probeId: rankedProbes.probeId,
+    totalSignalStrength: rankedProbes.totalSignalStrength,
   })
-  .from(rankedUsers);
+  .from(rankedProbes);
 ```
 
 ### `db.count()`
 
-Use `db.count(source, ...predicates)` for a Drizzle-style count helper. It follows the same predicate semantics as `.where(...predicates)`: multiple predicates are combined with `AND`, and `undefined` values are ignored.
+Use `db.count(source, ...predicates)` for a Drizzle-style count helper. It follows the same predicate semantics as `.where(...predicates)`: multiple predicates are combined with `AND`, and `undefined` predicate objects are skipped. Value-level `undefined` inside helpers such as `ck.eq(...)` still throws.
 
 ```ts
 import { ck } from "ck-orm";
 
 const total = await db.count(
-  orderRewardLog,
-  ck.eq(orderRewardLog.status, 1),
-  ck.gt(orderRewardLog.id, 1000),
+  probeTelemetry,
+  ck.eq(probeTelemetry.status, 1),
+  ck.gt(probeTelemetry.id, 1000),
 );
 ```
 
 For more complex result sets, count a subquery or CTE:
 
 ```ts
-const activeUsers = db
+const activeProbes = db
   .select({
-    userId: orderRewardLog.userId,
+    probeId: probeTelemetry.probeId,
   })
-  .from(orderRewardLog)
-  .where(ck.eq(orderRewardLog.status, 1))
-  .as("active_users");
+  .from(probeTelemetry)
+  .where(ck.eq(probeTelemetry.status, 1))
+  .as("active_probes");
 
-const total = await db.count(activeUsers);
+const total = await db.count(activeProbes);
 ```
 
 `db.count(...)` defaults to the numeric count mode: it renders `toFloat64(count())` and decodes to `number`. Very large counts can exceed JavaScript integer precision, so use the chainable modes when exactness or wire-shape fidelity matters:
 
 ```ts
-const approximateTotal = await db.count(activeUsers); // number
-const exactTotal = await db.count(activeUsers).toSafe(); // string
-const wireTotal = await db.count(activeUsers).toMixed(); // number | string
+const approximateTotal = await db.count(activeProbes); // number
+const exactTotal = await db.count(activeProbes).toSafe(); // string
+const wireTotal = await db.count(activeProbes).toMixed(); // number | string
 ```
 
 `.toSafe()` renders `toString(count())` and is intended for exact reads. If you use a safe count as a SQL expression, it has `String` semantics; use the default/`.toUnsafe()` or `.toMixed()` for numeric SQL comparisons. `.toMixed()` renders `toUInt64(count())` and preserves the driver/wire shape; with ck-orm's default lossless 64-bit JSON settings, real ClickHouse responses usually arrive as `string`.
@@ -940,17 +997,18 @@ The forced `join_use_nulls = 1` setting is preserved when a joined query is reus
 Use the builder when you want typed inserts that follow the table schema:
 
 ```ts
-await db.insert(orderRewardLog).values({
+await db.insert(probeTelemetry).values({
   id: 1,
-  userId: "user_100",
-  campaignId: 10,
-  orderId: "900001",
-  rewardPoints: "42.50000",
+  probeId: "probe_alpha",
+  missionId: 10,
+  sampleId: "900001",
+  signalStrength: "42.50000",
   status: 1,
   createdAt: 1710000000,
-  peerdbSyncedAt: new Date("2026-04-21T00:00:00.000Z"),
-  peerdbIsDeleted: 0,
-  peerdbVersion: "1",
+  deletedAt: null,
+  ingestedAt: new Date("2026-04-21T00:00:00.000Z"),
+  isDeleted: 0,
+  ingestVersion: "1",
 });
 ```
 
@@ -962,8 +1020,8 @@ Use `insertJsonEachRow()` when you already have object rows or an async row stre
 
 ```ts
 await db.insertJsonEachRow("tmp_scope", [
-  { user_id: "user_100" },
-  { user_id: "user_200" },
+  { probe_id: "probe_alpha" },
+  { probe_id: "probe_beta" },
 ]);
 ```
 
@@ -987,11 +1045,11 @@ import { ckSql, fn } from "ck-orm";
 
 const rows = await db.execute(ckSql`
   select
-    ${orderRewardLog.userId},
-    ${fn.sum(orderRewardLog.rewardPoints)} as total_reward_points
-  from ${orderRewardLog}
-  where ${orderRewardLog.id} > ${10}
-  group by ${orderRewardLog.userId}
+    ${probeTelemetry.probeId},
+    ${fn.sum(probeTelemetry.signalStrength)} as total_signal_strength
+  from ${probeTelemetry}
+  where ${probeTelemetry.id} > ${10}
+  group by ${probeTelemetry.probeId}
 `);
 ```
 
@@ -1001,12 +1059,12 @@ const rows = await db.execute(ckSql`
 import { ckSql } from "ck-orm";
 
 const fields = ckSql.join(
-  [ckSql.identifier("user_id"), ckSql.identifier("reward_points")],
+  [ckSql.identifier("probe_id"), ckSql.identifier("signal_strength")],
   ", ",
 );
 
 const rows = await db.execute(
-  ckSql`select ${fields} from ${ckSql.identifier("order_reward_log")}`,
+  ckSql`select ${fields} from ${ckSql.identifier("probe_telemetry")}`,
 );
 ```
 
@@ -1016,10 +1074,10 @@ const rows = await db.execute(
 import { ckSql } from "ck-orm";
 
 const rows = await db.execute(
-  ckSql`select user_id, reward_points from order_reward_log where user_id = {user_id:String} limit {limit:Int64}`,
+  ckSql`select probe_id, signal_strength from probe_telemetry where probe_id = {probe_id:String} limit {limit:Int64}`,
   {
     query_params: {
-      user_id: "user_100",
+      probe_id: "probe_alpha",
       limit: 10,
     },
   },
@@ -1030,7 +1088,7 @@ Parameter transport is chosen automatically. You do not need to configure multip
 
 `query_params` keys that start with `orm_param` are rejected. That prefix is reserved for parameters generated internally by `` ckSql`...` ``.
 
-The value formatter supports primitive values, `Date`, `NaN`, `Infinity`, arrays, objects, and `Map` values for ClickHouse typed placeholders such as `{ids:Array(UInt64)}` or `{attrs:Map(String, String)}`. Use ClickHouse's `Identifier` placeholder type when the parameter is a table or column name:
+The value formatter supports primitive values, `Date`, `NaN`, `Infinity`, arrays, tuple-shaped arrays, objects, and `Map` values for ClickHouse typed placeholders such as `{ids:Array(UInt64)}`, `{pair:Tuple(String, Int32)}`, or `{attrs:Map(String, String)}`. Use ClickHouse's `Identifier` placeholder type when the parameter is a table or column name:
 
 ```ts
 const rows = await db.execute(
@@ -1041,8 +1099,8 @@ const rows = await db.execute(
   `,
   {
     query_params: {
-      selected_column: "name",
-      target_table: "users",
+      selected_column: "probe_id",
+      target_table: "probe_telemetry",
       id: 1,
     },
   },
@@ -1086,18 +1144,18 @@ for await (const row of db.stream(ckSql`select 1`, {
 ```ts
 import { ckSql, ckTable, ckType, fn } from "ck-orm";
 
-const ledger = ckTable("ledger", {
-  amount: ckType.decimal({ precision: 18, scale: 5 }),
+const measurementLog = ckTable("measurement_log", {
+  value: ckType.decimal({ precision: 18, scale: 5 }),
 });
 
 // fn.sum / sumIf / min / max auto-cast to Decimal(P, S) and decode as string.
-db.select({ total: fn.sum(ledger.amount) }).from(ledger);
-// → CAST(sum(`ledger`.`amount`) AS Decimal(38, 5))   row.total: string
+db.select({ total: fn.sum(measurementLog.value) }).from(measurementLog);
+// → CAST(sum(`measurement_log`.`value`) AS Decimal(38, 5))   row.total: string
 
 // Explicit casts.
-fn.toDecimal128(ledger.amount, 5);     // toDecimal32 / 64 / 128 / 256
+fn.toDecimal128(measurementLog.value, 5); // toDecimal32 / 64 / 128 / 256
 ckSql.decimal(ckSql`sum(a) - sum(b)`, 20, 5);
-ledger.amount.cast(20, 2);             // column shortcut
+measurementLog.value.cast(20, 2); // column shortcut
 ```
 
 - `sum` / `sumIf` widen P to ≥ 38; `min` / `max` keep the column's P. Auto-cast also fires through `nullable(decimal(...))` and `lowCardinality(decimal(...))`.
@@ -1106,8 +1164,8 @@ ledger.amount.cast(20, 2);             // column shortcut
 - Inserts reject non-string/number objects (e.g. raw `decimal.js` instances) — pass `.toFixed(scale)`:
 
 ```ts
-db.insert(ledger).values({ amount: new Decimal("1.23").toFixed(5) });   // ✅
-db.insert(ledger).values({ amount: new Decimal("1.23") as never });     // ❌ throws
+db.insert(measurementLog).values({ value: new Decimal("1.23").toFixed(5) }); // ✅
+db.insert(measurementLog).values({ value: new Decimal("1.23") as never }); // ❌ throws
 ```
 
 ## Functions and table functions
@@ -1118,7 +1176,7 @@ Generic, conversion, aggregate, JSON, tuple, and table-related helpers include:
 
 - `fn.call()`
 - `fn.withParams()`
-- Type conversion helpers mirror the ClickHouse Type conversion page: `fn.cast()`, `fn.date()`, `fn.accurateCast*()`, `fn.reinterpret*()`, `fn.parseDateTime*()`, `fn.formatRow*()`, `fn.toString*()`, `fn.toBool()`, `fn.toInt*()`, `fn.toUInt*()`, `fn.toFloat*()`, `fn.toBFloat16*()`, `fn.toDecimal*()`, `fn.toDecimalString()`, `fn.toFixedString()`, `fn.toDate*()`, `fn.toDateTime*()`, `fn.toTime*()`, `fn.toTime64*()`, `fn.toInterval*()`, `fn.toLowCardinality()`, `fn.toNullable()`, and `fn.toUUID*()`.
+- Type conversion helpers mirror the ClickHouse Type conversion page: `fn.cast()`, `fn.date()`, `fn.accurateCast*()`, `fn.reinterpret*()`, `fn.parseDateTime*()`, `fn.formatDateTime()`, `fn.formatRow*()`, `fn.toString*()`, `fn.toBool()`, `fn.toInt*()`, `fn.toUInt*()`, `fn.toFloat*()`, `fn.toBFloat16*()`, `fn.toDecimal*()`, `fn.toDecimalString()`, `fn.toFixedString()`, `fn.toDate*()`, `fn.toDateTime*()`, `fn.toTime*()`, `fn.toTime64*()`, `fn.toInterval*()`, `fn.toLowCardinality()`, `fn.toNullable()`, and `fn.toUUID*()`.
 - 64-bit-and-wider integer conversions (`toInt64/128/256*`, `toUInt64/128/256*`, Unix timestamp 64 helpers) decode as `string`; narrower integer and floating conversions decode as `number`.
 - Literal-only ClickHouse arguments are validated and inlined where required: Decimal scale, DateTime64/Time64 precision, FixedString length, target type strings, and interval units.
 - `fn.toStartOfMonth()`
@@ -1247,19 +1305,19 @@ Array helper names mirror the canonical headings in the ClickHouse [Array functi
 
 `fn.jsonExtract(json, returnType, ...path)` only accepts `ckType.*` return types, so the ClickHouse return type and the TypeScript decoder stay together:
 
-The JSON and array snippets below use the richer example schema from [`examples/schema/commerce.ts`](./examples/schema/commerce.ts), where `orderRewardLog.metadata` is a `JSON` column and `orderRewardLog.tags` is `Array(String)`.
+The JSON and array snippets below assume the fictional `probeTelemetry` schema also has `metadata: JSON` and `tags: Array(String)` columns.
 
 ```ts
 import { ckType, ck, fn } from "ck-orm";
 
-const regulatory = fn.jsonExtract(
-  orderRewardLog.metadata,
+const alertCodes = fn.jsonExtract(
+  probeTelemetry.metadata,
   ckType.array(ckType.string()),
-  "regulatory",
+  "alerts",
 );
 
 const riskScore = fn.jsonExtract(
-  orderRewardLog.metadata,
+  probeTelemetry.metadata,
   ckType.nullable(ckType.float64()),
   "risk",
   "score",
@@ -1267,25 +1325,25 @@ const riskScore = fn.jsonExtract(
 
 const filtered = db
   .select({
-    orderId: orderRewardLog.orderId,
-    regulatoryRegions: regulatory.as("regulatory_regions"),
+    sampleId: probeTelemetry.sampleId,
+    alertCodes: alertCodes.as("alert_codes"),
     riskScore: riskScore.as("risk_score"),
   })
-  .from(orderRewardLog)
-  .where(ck.hasAny(regulatory, ["AU", "EU"]), ck.gte(riskScore, 80));
+  .from(probeTelemetry)
+  .where(ck.hasAny(alertCodes, ["battery", "thermal"]), ck.gte(riskScore, 80));
 ```
 
 Path segments are ClickHouse JSON path arguments. Use string keys for object fields and number or bigint indexes for array positions:
 
 ```ts
-// Reads metadata.orders[1].ticket from a JSON document such as:
-// { "orders": [{ "ticket": "900001" }, { "ticket": "900002" }] }
-const firstTicket = fn.jsonExtract(
-  orderRewardLog.metadata,
+// Reads metadata.samples[1].id from a JSON document such as:
+// { "samples": [{ "id": "900001" }, { "id": "900002" }] }
+const secondSampleId = fn.jsonExtract(
+  probeTelemetry.metadata,
   ckType.int64(),
-  "orders",
+  "samples",
   1,
-  "ticket",
+  "id",
 );
 ```
 
@@ -1323,53 +1381,53 @@ In that lambda, `${params.timeColumn}` and `params.scopeTable.startTsList` are s
 ```ts
 import { ck, fn } from "ck-orm";
 
-const orderIds = ["900001", "900002"];
-const userIds = ["user_100", "user_200"];
+const sampleIds = ["900001", "900002"];
+const probeIds = ["probe_alpha", "probe_beta"];
 
-const targetPairs = db.$with("target_pairs").as(
+const targetSamples = db.$with("target_samples").as(
   db.select({
-    pair: fn.arrayJoin(fn.arrayZip(orderIds, userIds)).as("pair"),
+    pair: fn.arrayJoin(fn.arrayZip(sampleIds, probeIds)).as("pair"),
   }),
 );
 
-const targetOrders = db.$with("target_orders").as(
+const targetTelemetry = db.$with("target_telemetry").as(
   db
-    .with(targetPairs)
+    .with(targetSamples)
     .select({
-      orderId: fn.tupleElement<string>(targetPairs.pair, 1).as("order_id"),
-      userId: fn.tupleElement<string>(targetPairs.pair, 2).as("user_id"),
+      sampleId: fn.tupleElement<string>(targetSamples.pair, 1).as("sample_id"),
+      probeId: fn.tupleElement<string>(targetSamples.pair, 2).as("probe_id"),
     })
-    .from(targetPairs),
+    .from(targetSamples),
 );
 
-const scopedPairs = db
+const scopedSamples = db
   .select({
-    pair: fn.tuple(targetOrders.orderId, targetOrders.userId).as("pair"),
+    pair: fn.tuple(targetTelemetry.sampleId, targetTelemetry.probeId).as("pair"),
   })
-  .from(targetOrders)
-  .as("scoped_pairs");
+  .from(targetTelemetry)
+  .as("scoped_samples");
 
 const query = db
-  .with(targetPairs, targetOrders)
+  .with(targetSamples, targetTelemetry)
   .select({
-    orderId: orderRewardLog.orderId,
-    userId: orderRewardLog.userId,
+    sampleId: probeTelemetry.sampleId,
+    probeId: probeTelemetry.probeId,
   })
-  .from(orderRewardLog)
+  .from(probeTelemetry)
   .where(
-    ck.inArray(fn.tuple(orderRewardLog.orderId, orderRewardLog.userId), scopedPairs),
+    ck.inArray(fn.tuple(probeTelemetry.sampleId, probeTelemetry.probeId), scopedSamples),
   );
 ```
 
-The important part is the semantics: `arrayZip(orderIds, userIds)` preserves positional pairs, `arrayJoin(...)` expands them into rows, and `tupleElement(..., 1/2)` reads each side of the pair.
+The important part is the semantics: `arrayZip(sampleIds, probeIds)` preserves positional pairs, `arrayJoin(...)` expands them into rows, and `tupleElement(..., 1/2)` reads each side of the pair.
 
 Use tuple membership for compound keys. Two independent `IN` predicates produce a cross product and can match pairs that were never requested:
 
 ```ts
-// Avoid this when orderId and userId must stay paired.
+// Avoid this when sampleId and probeId must stay paired.
 const wrong = ck.and(
-  ck.inArray(orderRewardLog.orderId, orderIds),
-  ck.inArray(orderRewardLog.userId, userIds),
+  ck.inArray(probeTelemetry.sampleId, sampleIds),
+  ck.inArray(probeTelemetry.probeId, probeIds),
 );
 ```
 
@@ -1377,8 +1435,8 @@ For pair semantics, compare one tuple against a tuple-producing subquery:
 
 ```ts
 const right = ck.inArray(
-  fn.tuple(orderRewardLog.orderId, orderRewardLog.userId),
-  scopedPairs,
+  fn.tuple(probeTelemetry.sampleId, probeTelemetry.probeId),
+  scopedSamples,
 );
 ```
 
@@ -1389,16 +1447,16 @@ import { ck, fn } from "ck-orm";
 
 const query = db
   .select({
-    firstTag: fn.arrayElement<string>(orderRewardLog.tags, 1).as("first_tag"),
-    maybeSecondTag: fn.arrayElementOrNull<string>(orderRewardLog.tags, 2).as(
+    firstTag: fn.arrayElement<string>(probeTelemetry.tags, 1).as("first_tag"),
+    maybeSecondTag: fn.arrayElementOrNull<string>(probeTelemetry.tags, 2).as(
       "maybe_second_tag",
     ),
-    topTags: fn.arraySlice<string>(orderRewardLog.tags, 1, 3).as("top_tags"),
-    tagCount: fn.length(orderRewardLog.tags).as("tag_count"),
-    hasTags: fn.notEmpty(orderRewardLog.tags).as("has_tags"),
+    topTags: fn.arraySlice<string>(probeTelemetry.tags, 1, 3).as("top_tags"),
+    tagCount: fn.length(probeTelemetry.tags).as("tag_count"),
+    hasTags: fn.notEmpty(probeTelemetry.tags).as("has_tags"),
   })
-  .from(orderRewardLog)
-  .where(ck.hasAny(orderRewardLog.tags, ["vip", "reward"]));
+  .from(probeTelemetry)
+  .where(ck.hasAny(probeTelemetry.tags, ["solar", "critical"]));
 ```
 
 ### `fn.count` / `fn.uniqExact` modes
@@ -1410,23 +1468,23 @@ import { ck, fn } from "ck-orm";
 
 const summary = db
   .select({
-    userId: orderRewardLog.userId,
+    probeId: probeTelemetry.probeId,
     // default — Selection<number>, renders toFloat64(count(...))
-    orderCount: fn.count(orderRewardLog.orderId).as("order_count"),
+    sampleCount: fn.count(probeTelemetry.sampleId).as("sample_count"),
     // exact — Selection<string>, renders toString(count(...))
-    auditedOrderCount: fn.count(orderRewardLog.orderId).toSafe().as("audited_order_count"),
+    auditedSampleCount: fn.count(probeTelemetry.sampleId).toSafe().as("audited_sample_count"),
     // wire-shape — Selection<number | string>, renders toUInt64(count(...))
-    rawOrderCount: fn.count(orderRewardLog.orderId).toMixed().as("raw_order_count"),
+    rawSampleCount: fn.count(probeTelemetry.sampleId).toMixed().as("raw_sample_count"),
     // countIf shares the same chainable modes
-    paidOrderCount: fn.countIf(ck.eq(orderRewardLog.status, 1)).as("paid_order_count"),
+    healthySampleCount: fn.countIf(ck.eq(probeTelemetry.status, 1)).as("healthy_sample_count"),
     // uniqExact is symmetric with count — same modes, same decoders
-    distinctCampaigns: fn.uniqExact(orderRewardLog.campaignId).as("distinct_campaigns"),
-    distinctCampaignsExact: fn.uniqExact(orderRewardLog.campaignId).toSafe().as("distinct_campaigns_exact"),
+    distinctMissions: fn.uniqExact(probeTelemetry.missionId).as("distinct_missions"),
+    distinctMissionsExact: fn.uniqExact(probeTelemetry.missionId).toSafe().as("distinct_missions_exact"),
   })
-  .from(orderRewardLog)
-  .groupBy(orderRewardLog.userId)
+  .from(probeTelemetry)
+  .groupBy(probeTelemetry.probeId)
   // mode chooses the SQL semantics used in HAVING, ORDER BY, and other comparisons
-  .having(ck.gt(fn.count(orderRewardLog.orderId), 0));
+  .having(ck.gt(fn.count(probeTelemetry.sampleId), 0));
 ```
 
 The decoders reject anything that is not a non-negative integer — booleans, `NaN`, decimals, and negative numbers throw `Failed to decode count() result: ...` — so corrupt server output fails fast instead of silently producing `0`.
@@ -1468,21 +1526,21 @@ Inside a session callback, `ck-orm` gives you:
 import { ckTable, ckType, ckSql } from "ck-orm";
 
 const tmpScope = ckTable("tmp_scope", {
-  user_id: ckType.string(),
+  probe_id: ckType.string(),
 });
 
 await db.runInSession(async (session) => {
   // Temporary tables live only inside this Session and are cleaned up automatically.
   await session.createTemporaryTable(tmpScope);
   await session.insertJsonEachRow(tmpScope, [
-    { user_id: "user_100" },
-    { user_id: "user_200" },
+    { probe_id: "probe_alpha" },
+    { probe_id: "probe_beta" },
   ]);
 
   return session.execute(ckSql`
-    SELECT user_id
-    FROM order_reward_log
-    WHERE user_id IN (SELECT user_id FROM tmp_scope)
+    SELECT probe_id
+    FROM probe_telemetry
+    WHERE probe_id IN (SELECT probe_id FROM tmp_scope)
   `);
 });
 ```
@@ -1494,7 +1552,7 @@ await db.runInSession(async (session) => {
   await session.command(ckSql`
     CREATE TEMPORARY TABLE tmp_external_scope
     (
-      user_id String
+      probe_id String
     )
     ENGINE = Memory
   `);
@@ -1502,7 +1560,7 @@ await db.runInSession(async (session) => {
   session.registerTempTable("tmp_external_scope");
 
   await session.insertJsonEachRow("tmp_external_scope", [
-    { user_id: "user_100" },
+    { probe_id: "probe_alpha" },
   ]);
 });
 ```
@@ -1515,7 +1573,7 @@ await db.runInSession(async (session) => {
     "tmp_raw_scope",
     `
       (
-        user_id String,
+        probe_id String,
         created_at DateTime64(3, 'UTC')
       )
       ENGINE = Memory
@@ -1648,7 +1706,7 @@ await db.runInSession(
       .execute(ckSql`SELECT 2`);
   },
   {
-    session_id: "report-session",
+    session_id: "probe-session",
     session_timeout: 120,
     clickhouse_settings: {
       allow_experimental_correlated_subqueries: 1,
@@ -1725,7 +1783,7 @@ const logger: ClickHouseORMLogger = {
 };
 
 const db = clickhouseClient({
-  databaseUrl: "http://127.0.0.1:8123/demo_store",
+  databaseUrl: "http://127.0.0.1:8123/telemetry_lab",
   logger,
   logLevel: "info",
 });
@@ -1738,7 +1796,7 @@ import { clickhouseClient } from "ck-orm";
 import { trace } from "@opentelemetry/api";
 
 const db = clickhouseClient({
-  databaseUrl: "http://127.0.0.1:8123/demo_store",
+  databaseUrl: "http://127.0.0.1:8123/telemetry_lab",
   tracing: {
     tracer: trace.getTracer("ck-orm-example"),
     includeStatement: false,
@@ -1769,7 +1827,7 @@ const instrumentation: ClickHouseORMInstrumentation = {
 };
 
 const db = clickhouseClient({
-  databaseUrl: "http://127.0.0.1:8123/demo_store",
+  databaseUrl: "http://127.0.0.1:8123/telemetry_lab",
   instrumentation: [instrumentation],
 });
 ```
@@ -1862,11 +1920,12 @@ Avoid returning `responseText` or the raw error `message` to untrusted clients. 
 The built-in protections include:
 
 - identifiers passed to `ckSql.identifier()` are validated and quoted
-- function names used by `fn.call(...)`, `fn.withParams(...)`, `ckType.aggregateFunction(...)`, `ckType.simpleAggregateFunction(...)`, and `ckType.nested({...})` keys are validated
+- function names used by `fn.call(...)`, `fn.withParams(...)`, `ckType.aggregateFunction(...)`, and `ckType.simpleAggregateFunction(...)` are validated; `AggregateFunction` parameters must be string or numeric literals
+- nested field keys passed to `ckType.nested({...})` are validated as ClickHouse identifiers
 - values interpolated into `` ckSql`...` `` become ClickHouse named parameters rather than raw SQL text
 - `query_params` keys that start with `orm_param` are rejected because that prefix is reserved for internal SQL-template parameters
 - only a single top-level statement is allowed per request
-- authorization headers derived from connection config cannot be overridden by user-supplied `http_headers`
+- authorization headers derived from connection config cannot be overridden by caller-supplied `http_headers`
 - structured connection config rejects credentials embedded in `host`
 - tracing destination data is normalized before it is attached to spans
 
@@ -1876,7 +1935,7 @@ For trusted temporary-table DDL that cannot be represented with `ckTable(...)`, 
 
 - `session.createTemporaryTableRaw(name, definition)`
 
-`fn.call(name, ...)` and `fn.withParams(name, ...)` validate `name`, but you should still treat dynamically chosen function names as developer-controlled input rather than end-user input.
+`fn.call(name, ...)` and `fn.withParams(name, ...)` validate `name`, but you should still treat dynamically chosen function names as developer-controlled input rather than untrusted runtime input.
 
 `ckSql.identifier(...)` validates on the compile/execute boundary. Constructing the fragment is cheap; the error appears when the fragment is compiled into a query.
 

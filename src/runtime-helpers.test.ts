@@ -471,6 +471,11 @@ describe("ck-orm runtime/config validation", function describeConfigValidation()
     expect(formatQueryParamValue(wholeSecond)).toBe(expectedWholeSecond);
     expect(formatQueryParamValue(fractionalSecond)).toBe(`${expectedWholeSecond}.123`);
     expect(formatQueryParamValue(["vip", null, false])).toBe("['vip',NULL,FALSE]");
+    expect(formatQueryParamValue(["login", 42], "Tuple(String, Int32)")).toBe("('login',42)");
+    expect(formatQueryParamValue([["login", 42]], "Array(Tuple(String, Int32))")).toBe("[('login',42)]");
+    expect(() => formatQueryParamValue(["login"], "Tuple(String, Int32)")).toThrow(
+      "Tuple query parameter expected 2 items, got 1",
+    );
     expect(formatQueryParamValue({ enabled: true, disabled: false })).toBe("{'enabled':TRUE,'disabled':FALSE}");
     expect(formatQueryParamValue([], { nested: true })).toBe("[]");
     expect(formatQueryParamValue(new Map())).toBe("{}");
@@ -598,14 +603,42 @@ describe("ck-orm runtime/config validation", function describeConfigValidation()
         }),
       ).toThrow("compression.response and clickhouse_settings.enable_http_compression must agree");
 
-      expect(() =>
+      const originalWarn = console.warn;
+      const warnings: string[] = [];
+      console.warn = (message?: unknown) => {
+        warnings.push(String(message));
+      };
+      try {
+        expect(
+          normalizeTransportSettings({
+            settings: {
+              output_format_json_quote_decimals: 0,
+            },
+            parseMode: "json",
+          }),
+        ).toMatchObject({
+          output_format_json_quote_decimals: 1,
+        });
+        expect(warnings[0]).toContain("clickhouse_settings.output_format_json_quote_decimals=0 is ignored");
+
         normalizeTransportSettings({
           settings: {
-            output_format_json_quote_64bit_integers: 0,
+            date_time_output_format: "simple",
           },
           parseMode: "json",
-        }),
-      ).toThrow("ck-orm requires output_format_json_quote_64bit_integers=1 for lossless 64-bit integer decoding");
+        });
+        normalizeTransportSettings({
+          settings: {
+            date_time_output_format: "simple",
+          },
+          parseMode: "json",
+        });
+        expect(
+          warnings.filter((message) => message.includes("date_time_output_format=simple is ignored")),
+        ).toHaveLength(1);
+      } finally {
+        console.warn = originalWarn;
+      }
 
       const headers = createHeaders({
         config: normalizeClientConfig({
@@ -641,8 +674,10 @@ describe("ck-orm runtime/config validation", function describeConfigValidation()
         }),
       ).toEqual({
         async_insert: 1,
+        date_time_output_format: "iso",
         http_write_exception_in_output_format: 0,
         output_format_json_quote_64bit_integers: 1,
+        output_format_json_quote_decimals: 1,
         wait_end_of_query: 1,
         wait_for_async_insert: 1,
       });

@@ -229,6 +229,8 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
     expect(calls[0]?.url.searchParams.get("wait_end_of_query")).toBe("1");
     expect(calls[0]?.url.searchParams.get("http_write_exception_in_output_format")).toBe("0");
     expect(calls[0]?.url.searchParams.get("output_format_json_quote_64bit_integers")).toBe("1");
+    expect(calls[0]?.url.searchParams.get("output_format_json_quote_decimals")).toBe("1");
+    expect(calls[0]?.url.searchParams.get("date_time_output_format")).toBe("iso");
     expect(calls[0]?.url.searchParams.getAll("role")).toEqual(["analyst"]);
 
     const form = calls[0]?.init.body;

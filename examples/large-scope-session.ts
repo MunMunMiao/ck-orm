@@ -1,57 +1,46 @@
-import { ckSql, ckTable, ckType, clickhouseClient } from "./ck-orm";
+import { ckSql, ckTable, ckType } from "./ck-orm";
+import { createProbeDb } from "./probe-client";
 
-const createCommerceDb = () => {
-  return clickhouseClient({
-    host: "http://127.0.0.1:8123",
-    database: "demo_store",
-    username: "default",
-    password: "<password>",
-    clickhouse_settings: {
-      max_execution_time: 10,
-    },
-  });
-};
-
-export const exportRewardSummaryForLargeUserScope = async (
-  userIds: string[],
+export const exportSignalSummaryForLargeProbeScope = async (
+  probeIds: string[],
   onRow: (row: Record<string, unknown>) => Promise<void> | void,
 ) => {
-  const commerceDb = createCommerceDb();
-  const tmpUserScope = ckTable("tmp_user_scope", {
-    user_id: ckType.string(),
+  const probeDb = createProbeDb();
+  const tmpProbeScope = ckTable("tmp_probe_scope", {
+    probe_id: ckType.string(),
   });
 
-  return commerceDb.runInSession(async (sessionDb) => {
+  return probeDb.runInSession(async (sessionDb) => {
     // Temporary tables stay scoped to this Session and disappear after cleanup.
-    await sessionDb.createTemporaryTable(tmpUserScope);
+    await sessionDb.createTemporaryTable(tmpProbeScope);
     await sessionDb.insertJsonEachRow(
-      tmpUserScope,
-      userIds.map((user_id) => ({ user_id })),
+      tmpProbeScope,
+      probeIds.map((probe_id) => ({ probe_id })),
       {
-        query_id: "reward_scope_seed",
+        query_id: "probe_scope_seed",
       },
     );
 
     const scopeSummary = await sessionDb.execute(ckSql`
       select
-        count() as scoped_user_count
-      from tmp_user_scope
+        count() as scoped_probe_count
+      from tmp_probe_scope
     `);
 
     for await (const row of sessionDb.stream(
       ckSql`
         SELECT
-          user_id,
-          sum(reward_points) AS total_reward_points,
+          probe_id,
+          sum(signal_strength) AS total_signal_strength,
           count() AS total_rows
-        FROM order_reward_log
-        WHERE user_id IN (SELECT user_id FROM tmp_user_scope)
-        GROUP BY user_id
-        ORDER BY total_reward_points DESC
+        FROM probe_telemetry
+        WHERE probe_id IN (SELECT probe_id FROM tmp_probe_scope)
+        GROUP BY probe_id
+        ORDER BY total_signal_strength DESC
       `,
       {
         format: "JSONEachRow",
-        query_id: "reward_scope_export",
+        query_id: "probe_scope_export",
       },
     )) {
       await onRow(row);

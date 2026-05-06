@@ -372,14 +372,12 @@ describe("ck-orm query compile", function describeClickHouseORMQueryCompile() {
       "where (`orl`.`user_id` = {orm_param1:String} and `orl`.`channel` in ({orm_param2:Int32}, {orm_param3:Int32}))",
     );
     expect(normalizeSql(built.query)).toContain("order by `orl`.`created_at` DESC");
-    expect(normalizeSql(built.query)).toContain("limit {orm_param4:Int64}");
-    expect(normalizeSql(built.query)).toContain("offset {orm_param5:Int64}");
+    expect(normalizeSql(built.query)).toContain("limit 20");
+    expect(normalizeSql(built.query)).toContain("offset 40");
     expect(built.params).toEqual({
       orm_param1: "u_100",
       orm_param2: 1,
       orm_param3: 2,
-      orm_param4: 20,
-      orm_param5: 40,
     });
   });
 
@@ -483,10 +481,8 @@ describe("ck-orm query compile", function describeClickHouseORMQueryCompile() {
     expect(normalizeSql(built.query)).toContain(
       "arrayZip(`shipment_orders`.`product_sku`, `shipment_orders`.`shipment_id`) as `zipped`",
     );
-    expect(normalizeSql(built.query)).toContain("limit {orm_param1:Int64} by `shipment_orders`.`user_id`");
-    expect(built.params).toEqual({
-      orm_param1: 1,
-    });
+    expect(normalizeSql(built.query)).toContain("limit 1 by `shipment_orders`.`user_id`");
+    expect(built.params).toEqual({});
   });
 
   it("compiles insert values using table schema types", function testCompileInsert() {

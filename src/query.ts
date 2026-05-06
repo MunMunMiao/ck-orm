@@ -1,5 +1,6 @@
 import type { AnyColumn } from "./columns";
 import { createClientValidationError, createInternalError } from "./errors";
+import { getArrayElementType } from "./internal/clickhouse-type";
 import { type CountMode, type CountModeResult, getCountDecoder, getCountSqlType, wrapCountSql } from "./internal/count";
 import { createUuid } from "./platform";
 import type { InferSelectionResult, NoJoinedSources, SelectionRecord } from "./query/types";
@@ -11,6 +12,7 @@ import {
   decodeValue,
   ensureExpression,
   getExpressionSourceKey,
+  isExpression,
   joinSqlParts,
   type Order,
   type Predicate,
@@ -24,7 +26,7 @@ import type { ClickHouseBaseQueryOptions } from "./runtime";
 import type { ClickHouseSettings, ClickHouseSettingValue } from "./runtime/settings";
 import type { AnyTable, Table } from "./schema";
 import { renderTableIdentifier } from "./schema";
-import { compileSql, type SQLFragment, sql, trustSqlSourceObject } from "./sql";
+import { compileSql, isSqlFragment, type QueryParamTypes, type SQLFragment, sql, trustSqlSourceObject } from "./sql";
 
 type QuerySource = AnyTable | AnySubquery | AnyCte | TableFunctionSource;
 type KnownQuerySource = AnyTable | AnySubquery | AnyCte;
@@ -46,6 +48,7 @@ type SourceColumns = Record<string, Selection<unknown>>;
 type QueryMode = "query" | "command";
 type JoinUseNulls = 0 | 1;
 type PredicateInput = Predicate | undefined;
+type PredicateSqlValue = SQLFragment<unknown> | Selection<unknown>;
 type CompileState = {
   forcedSettings?: MutableForcedSettings;
 };
@@ -55,7 +58,7 @@ export const compileWithContextSymbol = Symbol("clickhouseORMCompileWithContext"
 export const compileQuerySymbol = Symbol("clickhouseORMCompileQuery");
 const selectBuilderResultSymbol = Symbol("clickhouseORMSelectBuilderResult");
 
-type PrimitiveValue = string | number | bigint | boolean | null | Date;
+type LimitValue = number | bigint | SQLFragment<unknown>;
 type CountSource = AnyTable | AnySubquery | AnyCte;
 type InsertRowInput<TTable extends AnyTable> = Partial<TTable["$inferInsert"]>;
 
@@ -182,6 +185,7 @@ export interface CompiledQuery<_TResult = Record<string, unknown>> {
   readonly mode: QueryMode;
   readonly statement: string;
   readonly params: QueryParams;
+  readonly paramTypes?: QueryParamTypes;
   readonly selection: readonly SelectionMeta[];
   readonly forcedSettings?: ForcedSettings;
   readonly metadata?: CompiledQueryMetadata;
@@ -228,6 +232,7 @@ const createCompiledQuery = <TResult>(
   selection: readonly SelectionMeta[],
   mode: QueryMode,
   params: QueryParams,
+  paramTypes?: QueryParamTypes,
   forcedSettings?: ForcedSettings,
   metadata?: CompiledQueryMetadata,
 ): CompiledQuery<TResult> => {
@@ -236,6 +241,7 @@ const createCompiledQuery = <TResult>(
     mode,
     statement,
     params,
+    paramTypes,
     selection,
     forcedSettings,
     metadata,
@@ -325,6 +331,109 @@ const withCompileState = <TResult>(
 
 const isInsertRowRecord = (value: unknown): value is Record<string, unknown> => {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+};
+
+type InsertColumnEntry =
+  | {
+      readonly kind: "column";
+      readonly key: string;
+      readonly name: string;
+      readonly column: AnyColumn;
+      readonly sqlType: string;
+    }
+  | {
+      readonly kind: "nested-field";
+      readonly key: string;
+      readonly name: string;
+      readonly fieldKey: string;
+      readonly fieldColumn: AnyColumn;
+      readonly sqlType: string;
+    };
+
+const renderIdentifierPart = (name: string): string => compileSql(sql.identifier(name)).query;
+
+const renderInsertColumnIdentifier = (entry: InsertColumnEntry): SQLFragment => {
+  if (entry.kind === "nested-field") {
+    return sql.raw(`${renderIdentifierPart(entry.name)}.${renderIdentifierPart(entry.fieldKey)}`);
+  }
+  return sql.identifier(entry.name);
+};
+
+const createInsertColumnEntries = (table: AnyTable): InsertColumnEntry[] => {
+  const entries: InsertColumnEntry[] = [];
+  for (const [schemaKey, column] of Object.entries(table.columns)) {
+    if (column.ddl?.materialized !== undefined || column.ddl?.aliasExpr !== undefined) {
+      continue;
+    }
+    const key = column.key ?? schemaKey;
+    const name = column.name ?? schemaKey;
+    if (column.nestedShape) {
+      for (const [fieldKey, fieldColumn] of Object.entries(column.nestedShape)) {
+        entries.push({
+          kind: "nested-field",
+          key,
+          name,
+          fieldKey,
+          fieldColumn,
+          sqlType: `Array(${fieldColumn.sqlType})`,
+        });
+      }
+      continue;
+    }
+    entries.push({
+      kind: "column",
+      key,
+      name,
+      column,
+      sqlType: column.sqlType,
+    });
+  }
+  return entries;
+};
+
+const compileNestedInsertFieldValue = (
+  row: Record<string, unknown>,
+  entry: Extract<InsertColumnEntry, { kind: "nested-field" }>,
+  ctx: BuildContext,
+): SQLFragment => {
+  const value = row[entry.key];
+  if (value === undefined) {
+    return sql.raw("DEFAULT");
+  }
+  if (!Array.isArray(value)) {
+    throw createClientValidationError(`Nested column "${entry.key}" expects an array of objects`);
+  }
+  const encodedValues = value.map((item, index) => {
+    if (!isInsertRowRecord(item)) {
+      throw createClientValidationError(`Nested column "${entry.key}" item ${index + 1} must be an object`);
+    }
+    if (!Object.hasOwn(item, entry.fieldKey) || item[entry.fieldKey] === undefined) {
+      throw createClientValidationError(
+        `Nested column "${entry.key}" item ${index + 1} is missing required field "${entry.fieldKey}"`,
+      );
+    }
+    return entry.fieldColumn.mapToDriverValue(item[entry.fieldKey] as never);
+  });
+  return compileValue(encodedValues, ctx, entry.sqlType);
+};
+
+const compileInsertColumnValue = (
+  row: Record<string, unknown>,
+  entry: InsertColumnEntry,
+  ctx: BuildContext,
+): SQLFragment => {
+  if (entry.kind === "nested-field") {
+    return compileNestedInsertFieldValue(row, entry, ctx);
+  }
+
+  const value = row[entry.key];
+  if (value === undefined) {
+    return sql.raw("DEFAULT");
+  }
+  if (value === null) {
+    return sql.raw("NULL");
+  }
+  return compileValue(entry.column.mapToDriverValue(value as never), ctx, entry.sqlType);
 };
 
 const normalizeInsertRows = <TTable extends AnyTable>(
@@ -521,8 +630,29 @@ const normalizeSelectionRecord = (
   return selectionItems;
 };
 
-const normalizeLimitValue = (value: PrimitiveValue | Selection<unknown>, ctx: BuildContext) => {
-  return compileValue(value, ctx, "Int64");
+const MAX_SAFE_INTEGER_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
+
+const assertValidLimitValue = (value: unknown): void => {
+  if (isSqlFragment(value)) {
+    return;
+  }
+
+  const isValidNumber = typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+  const isValidBigInt = typeof value === "bigint" && value >= 0n && value <= MAX_SAFE_INTEGER_BIGINT;
+  if (!isValidNumber && !isValidBigInt) {
+    throw createClientValidationError(
+      `limit()/offset()/limitBy() expects a non-negative safe integer or SQL fragment, got ${String(value)}`,
+    );
+  }
+};
+
+const normalizeLimitValue = (value: LimitValue, ctx: BuildContext) => {
+  assertValidLimitValue(value);
+  if (isSqlFragment(value)) {
+    return compileValue(value, ctx, "Int64");
+  }
+
+  return sql.raw(String(value));
 };
 
 const renderCountExpression = (mode: CountMode): SQLFragment => {
@@ -541,13 +671,41 @@ const buildLogicalPredicate = (operator: "and" | "or", predicates: readonly SqlP
   });
 };
 
+const normalizePredicateInput = (helperName: string, predicate: PredicateInput): SqlPredicate | undefined => {
+  if (predicate === undefined) {
+    return undefined;
+  }
+  if (isExpression(predicate)) {
+    return predicate as SqlPredicate;
+  }
+  if (isSqlFragment(predicate)) {
+    return wrapSql<boolean>(predicate, {
+      decoder: (value) => Boolean(value),
+      sqlType: "Bool",
+    }) as SqlPredicate;
+  }
+  if (typeof predicate === "boolean") {
+    throw createClientValidationError(
+      `${helperName}() expects a SQL predicate or undefined; use ck.eq(column, ${String(predicate)}) to compare boolean columns`,
+    );
+  }
+  throw createClientValidationError(
+    `${helperName}() expects a SQL predicate or undefined; received ${String(predicate)}`,
+  );
+};
+
 const normalizePredicateGroup = (
+  helperName: string,
   operator: "and" | "or",
   predicates: readonly PredicateInput[],
 ): SqlPredicate | undefined => {
-  const filteredPredicates = predicates.filter((predicate): predicate is Predicate => predicate !== undefined) as
-    | SqlPredicate[]
-    | [];
+  const filteredPredicates: SqlPredicate[] = [];
+  for (const predicate of predicates) {
+    const normalized = normalizePredicateInput(helperName, predicate);
+    if (normalized) {
+      filteredPredicates.push(normalized);
+    }
+  }
 
   if (filteredPredicates.length === 0) {
     return undefined;
@@ -623,7 +781,7 @@ const createCountQuery = <TMode extends CountMode = "unsafe">(config: {
   type TResult = CountModeResult<TMode>;
   const mode = (config.mode ?? "unsafe") as TMode;
   const decoder = getCountDecoder(mode);
-  const condition = normalizePredicateGroup("and", config.predicates ?? []);
+  const condition = normalizePredicateGroup("count", "and", config.predicates ?? []);
 
   const expression = createExpression<TResult>({
     compile: (ctx) =>
@@ -665,6 +823,7 @@ const createCountQuery = <TMode extends CountMode = "unsafe">(config: {
       return {
         query: compiled.query,
         params: { ...compiled.params },
+        paramTypes: { ...compiled.paramTypes },
       };
     });
 
@@ -682,6 +841,7 @@ const createCountQuery = <TMode extends CountMode = "unsafe">(config: {
           ],
           "query",
           compiledResult.params,
+          compiledResult.paramTypes,
           forcedSettings,
           config.source.kind === "table"
             ? { rootSourceName: getSourceKey(config.source), tableName: config.source.originalName }
@@ -742,11 +902,11 @@ interface SelectBuilderConfig<_TResult extends Record<string, unknown>> {
   groupByItems?: SqlSelection[];
   havingClause?: SqlPredicate;
   orderByItems?: SqlOrder[];
-  limitValue?: PrimitiveValue | Selection<unknown>;
-  offsetValue?: PrimitiveValue | Selection<unknown>;
+  limitValue?: LimitValue;
+  offsetValue?: LimitValue;
   limitByValue?: {
     readonly columns: SqlSelection[];
-    readonly limit: PrimitiveValue | Selection<unknown>;
+    readonly limit: LimitValue;
   };
   useFinal?: boolean;
   joinUseNulls?: JoinUseNulls;
@@ -768,11 +928,11 @@ type SelectBuilderState<
   readonly groupByItems: SqlSelection[];
   readonly havingClause?: SqlPredicate;
   readonly orderByItems: SqlOrder[];
-  readonly limitValue?: PrimitiveValue | Selection<unknown>;
-  readonly offsetValue?: PrimitiveValue | Selection<unknown>;
+  readonly limitValue?: LimitValue;
+  readonly offsetValue?: LimitValue;
   readonly limitByValue?: {
     readonly columns: SqlSelection[];
-    readonly limit: PrimitiveValue | Selection<unknown>;
+    readonly limit: LimitValue;
   };
   readonly useFinal: boolean;
   readonly joinUseNulls: TJoinUseNulls;
@@ -867,16 +1027,12 @@ export interface SelectBuilder<
   orderBy(
     ...expressions: Array<Order | Selection<unknown>>
   ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>;
-  limit(
-    value: PrimitiveValue | Selection<unknown>,
-  ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>;
-  offset(
-    value: PrimitiveValue | Selection<unknown>,
-  ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>;
+  limit(value: LimitValue): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>;
+  offset(value: LimitValue): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>;
   final(): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>;
   limitBy(
     columns: Selection<unknown>[],
-    limit: PrimitiveValue | Selection<unknown>,
+    limit: LimitValue,
   ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>;
   [compileWithContextSymbol](ctx: BuildContext): CompiledQuery<TResult>;
   [compileQuerySymbol](): CompiledQuery<TResult>;
@@ -1107,7 +1263,7 @@ export const createSelectBuilder = <
       ...predicates: PredicateInput[]
     ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
       return clone({
-        whereClause: normalizePredicateGroup("and", predicates),
+        whereClause: normalizePredicateGroup("where", "and", predicates),
       });
     },
 
@@ -1121,7 +1277,7 @@ export const createSelectBuilder = <
 
     having(condition?: Predicate): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
       return clone({
-        havingClause: condition as SqlPredicate | undefined,
+        havingClause: normalizePredicateGroup("having", "and", [condition]),
       });
     },
 
@@ -1145,17 +1301,15 @@ export const createSelectBuilder = <
       });
     },
 
-    limit(
-      value: PrimitiveValue | Selection<unknown>,
-    ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
+    limit(value: LimitValue): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
+      assertValidLimitValue(value);
       return clone({
         limitValue: value,
       });
     },
 
-    offset(
-      value: PrimitiveValue | Selection<unknown>,
-    ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
+    offset(value: LimitValue): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
+      assertValidLimitValue(value);
       return clone({
         offsetValue: value,
       });
@@ -1169,8 +1323,9 @@ export const createSelectBuilder = <
 
     limitBy(
       columns: Selection<unknown>[],
-      limit: PrimitiveValue | Selection<unknown>,
+      limit: LimitValue,
     ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
+      assertValidLimitValue(limit);
       return clone({
         limitByValue: {
           columns: columns.map((column) => ensureExpression(column)),
@@ -1289,6 +1444,7 @@ export const createSelectBuilder = <
         result.selection,
         "query",
         { ...result.compiled.params },
+        { ...result.compiled.paramTypes },
         forcedSettings,
         result.metadata,
       );
@@ -1367,14 +1523,7 @@ export const createInsertBuilder = <TTable extends AnyTable>(
       if (rows.length === 0) {
         throw createClientValidationError("insert().values() must be called with at least one row before execute()");
       }
-      const columnEntries = Object.entries(table.columns)
-        .filter(([, column]) => column.ddl?.materialized === undefined && column.ddl?.aliasExpr === undefined)
-        .map(([schemaKey, column]) => ({
-          key: column.key ?? schemaKey,
-          name: column.name ?? schemaKey,
-          column,
-        }));
-      const columnTypes = columnEntries.map(({ column }) => column.sqlType);
+      const columnEntries = createInsertColumnEntries(table);
       const ctx: BuildContext = {
         params: {},
         nextParamIndex: 0,
@@ -1382,18 +1531,12 @@ export const createInsertBuilder = <TTable extends AnyTable>(
       const valueRows = rows.map(
         (row) =>
           sql`(${joinSqlParts(
-            columnEntries.map(({ key, column }, index) => {
-              const value = (row as Record<string, unknown>)[key];
-              if (value === undefined) {
-                return sql.raw("DEFAULT");
-              }
-              return compileValue(column.mapToDriverValue(value as never), ctx, columnTypes[index]);
-            }),
+            columnEntries.map((entry) => compileInsertColumnValue(row as Record<string, unknown>, entry, ctx)),
             ", ",
           )})`,
       );
       const statement = sql`insert into ${renderTableIdentifier(table)} (${joinSqlParts(
-        columnEntries.map(({ name }) => sql.identifier(name)),
+        columnEntries.map((entry) => renderInsertColumnIdentifier(entry)),
         ", ",
       )}) values ${joinSqlParts(valueRows, ", ")}`;
       const compiled = compileSql(statement, ctx);
@@ -1404,6 +1547,9 @@ export const createInsertBuilder = <TTable extends AnyTable>(
         "command",
         {
           ...compiled.params,
+        },
+        {
+          ...compiled.paramTypes,
         },
         undefined,
         {
@@ -1568,11 +1714,122 @@ const ensureComparableExpression = (value: unknown): SqlSelection<unknown> => {
   return ensureExpression(value);
 };
 
+const isBareNullish = (value: unknown): value is null | undefined => value === null || value === undefined;
+
+const assertPredicateExpressionInput = (value: unknown, helperName: string): void => {
+  if (isBareNullish(value)) {
+    throw createClientValidationError(`${helperName}() expects a SQL expression; received ${String(value)}`);
+  }
+  if (!isExpression(value) && !isSqlFragment(value)) {
+    throw createClientValidationError(`${helperName}() expects a SQL expression; received a literal value`);
+  }
+};
+
+const assertPredicateValue = (value: unknown, helperName: string): void => {
+  if (isExpression(value) || isSqlFragment(value)) {
+    return;
+  }
+  if (isBareNullish(value)) {
+    throw createClientValidationError(
+      `${helperName}() does not accept bare ${String(value)} as a predicate value; ` +
+        `use isNull()/isNotNull() for NULL checks or omit the predicate at where()/and()/or() level for dynamic filters`,
+    );
+  }
+};
+
+function assertStringPredicateValue(value: unknown, helperName: string): asserts value is string {
+  assertPredicateValue(value, helperName);
+  if (typeof value !== "string") {
+    throw createClientValidationError(`${helperName}() expects a string predicate value`);
+  }
+}
+
+const assertStringOrSqlPredicateValue = (value: unknown, helperName: string): void => {
+  assertPredicateValue(value, helperName);
+  if (isExpression(value) || isSqlFragment(value)) {
+    return;
+  }
+  if (typeof value !== "string") {
+    throw createClientValidationError(`${helperName}() expects a string predicate value or SQL expression`);
+  }
+};
+
+const assertPredicateValueArray = (
+  values: readonly unknown[],
+  helperName: string,
+  options: { allowSqlFragments?: boolean } = {},
+): void => {
+  for (const [index, value] of values.entries()) {
+    if (options.allowSqlFragments && (isExpression(value) || isSqlFragment(value))) {
+      continue;
+    }
+    if (isBareNullish(value)) {
+      throw createClientValidationError(
+        `${helperName}() does not accept bare ${String(value)} at array index ${index}; ` +
+          `use isNull()/isNotNull() or compose an explicit OR predicate for NULL checks`,
+      );
+    }
+  }
+};
+
+const isColumnExpression = (value: unknown): value is AnyColumn => {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { kind?: unknown }).kind === "column" &&
+    typeof (value as { mapToDriverValue?: unknown }).mapToDriverValue === "function"
+  );
+};
+
+const encodePredicateValue = (left: unknown, value: unknown): unknown => {
+  if (isExpression(value) || isSqlFragment(value)) {
+    return value;
+  }
+  return isColumnExpression(left) ? left.mapToDriverValue(value as never) : value;
+};
+
+const compilePredicateValue = (
+  left: unknown,
+  value: unknown,
+  ctx: BuildContext,
+  sqlType: string | undefined,
+): SQLFragment => {
+  return compileValue(encodePredicateValue(left, value), ctx, sqlType);
+};
+
+const createNullPredicateExpression = (operator: "is null" | "is not null", left: unknown): Predicate => {
+  assertPredicateExpressionInput(left, operator === "is null" ? "isNull" : "isNotNull");
+  const leftExpression = ensureComparableExpression(left);
+  return createExpression<boolean>({
+    compile: (ctx) => sql`${leftExpression.compile(ctx)}${sql.raw(` ${operator}`)}`,
+    decoder: (value) => Boolean(value),
+    sqlType: "Bool",
+  });
+};
+
+export const isNull = (expression: unknown): Predicate => createNullPredicateExpression("is null", expression);
+
+export const isNotNull = (expression: unknown): Predicate => createNullPredicateExpression("is not null", expression);
+
 const createBinaryExpression = (operator: string, left: unknown, right: unknown): Predicate => {
+  const helperNameByOperator: Record<string, string> = {
+    "=": "eq",
+    "!=": "ne",
+    ">": "gt",
+    ">=": "gte",
+    "<": "lt",
+    "<=": "lte",
+  };
+  assertPredicateValue(right, helperNameByOperator[operator] ?? operator);
   const leftExpression = ensureComparableExpression(left);
   return createExpression<boolean>({
     compile: (ctx) =>
-      sql`${leftExpression.compile(ctx)}${sql.raw(` ${operator} `)}${compileValue(right, ctx, leftExpression.sqlType)}`,
+      sql`${leftExpression.compile(ctx)}${sql.raw(` ${operator} `)}${compilePredicateValue(
+        left,
+        right,
+        ctx,
+        leftExpression.sqlType,
+      )}`,
     decoder: (value) => Boolean(value),
     sqlType: "Bool",
   });
@@ -1582,14 +1839,14 @@ export function and(): undefined;
 export function and(...conditions: [Predicate, ...PredicateInput[]]): Predicate;
 export function and(...conditions: PredicateInput[]): Predicate | undefined;
 export function and(...conditions: PredicateInput[]): Predicate | undefined {
-  return normalizePredicateGroup("and", conditions);
+  return normalizePredicateGroup("and", "and", conditions);
 }
 
 export function or(): undefined;
 export function or(...conditions: [Predicate, ...PredicateInput[]]): Predicate;
 export function or(...conditions: PredicateInput[]): Predicate | undefined;
 export function or(...conditions: PredicateInput[]): Predicate | undefined {
-  return normalizePredicateGroup("or", conditions);
+  return normalizePredicateGroup("or", "or", conditions);
 }
 
 export const not = (condition: Predicate): Predicate => {
@@ -1635,7 +1892,8 @@ const toLiteralLikePattern = (value: string, mode: LikeLiteralMode): string => {
   return `%${escaped}%`;
 };
 
-const createLikePredicate = (left: unknown, right: string, operator: LikeOperator): Predicate => {
+const createLikePredicate = (left: unknown, right: unknown, operator: LikeOperator): Predicate => {
+  assertStringOrSqlPredicateValue(right, operator);
   const leftExpression = ensureComparableExpression(left);
   return createExpression<boolean>({
     compile: (ctx) =>
@@ -1645,83 +1903,148 @@ const createLikePredicate = (left: unknown, right: string, operator: LikeOperato
   });
 };
 
-export const like = (left: unknown, right: string): Predicate => createLikePredicate(left, right, "like");
+export const like = (left: unknown, right: string | PredicateSqlValue): Predicate =>
+  createLikePredicate(left, right, "like");
 
-export const notLike = (left: unknown, right: string): Predicate => {
+export const notLike = (left: unknown, right: string | PredicateSqlValue): Predicate => {
   return createLikePredicate(left, right, "not like");
 };
 
-export const ilike = (left: unknown, right: string): Predicate => createLikePredicate(left, right, "ilike");
+export const ilike = (left: unknown, right: string | PredicateSqlValue): Predicate =>
+  createLikePredicate(left, right, "ilike");
 
-export const notIlike = (left: unknown, right: string): Predicate => {
+export const notIlike = (left: unknown, right: string | PredicateSqlValue): Predicate => {
   return createLikePredicate(left, right, "not ilike");
 };
 
 export const contains = (left: unknown, right: string): Predicate => {
+  assertStringPredicateValue(right, "contains");
   return like(left, toLiteralLikePattern(right, "contains"));
 };
 
 export const startsWith = (left: unknown, right: string): Predicate => {
+  assertStringPredicateValue(right, "startsWith");
   return like(left, toLiteralLikePattern(right, "startsWith"));
 };
 
 export const endsWith = (left: unknown, right: string): Predicate => {
+  assertStringPredicateValue(right, "endsWith");
   return like(left, toLiteralLikePattern(right, "endsWith"));
 };
 
 export const containsIgnoreCase = (left: unknown, right: string): Predicate => {
+  assertStringPredicateValue(right, "containsIgnoreCase");
   return ilike(left, toLiteralLikePattern(right, "contains"));
 };
 
 export const startsWithIgnoreCase = (left: unknown, right: string): Predicate => {
+  assertStringPredicateValue(right, "startsWithIgnoreCase");
   return ilike(left, toLiteralLikePattern(right, "startsWith"));
 };
 
 export const endsWithIgnoreCase = (left: unknown, right: string): Predicate => {
+  assertStringPredicateValue(right, "endsWithIgnoreCase");
   return ilike(left, toLiteralLikePattern(right, "endsWith"));
 };
 
 export const between = (expression: unknown, start: unknown, end: unknown): Predicate => {
   const wrapped = ensureComparableExpression(expression);
+  assertPredicateValue(start, "between");
+  assertPredicateValue(end, "between");
   return createExpression<boolean>({
     compile: (ctx) =>
-      sql`${wrapped.compile(ctx)}${sql.raw(" between ")}${compileValue(start, ctx, wrapped.sqlType)}${sql.raw(" and ")}${compileValue(end, ctx, wrapped.sqlType)}`,
+      sql`${wrapped.compile(ctx)}${sql.raw(" between ")}${compilePredicateValue(
+        expression,
+        start,
+        ctx,
+        wrapped.sqlType,
+      )}${sql.raw(" and ")}${compilePredicateValue(expression, end, ctx, wrapped.sqlType)}`,
     decoder: (value) => Boolean(value),
     sqlType: "Bool",
   });
-};
-
-const isArraySqlType = (sqlType?: string): sqlType is `Array(${string})` => {
-  return typeof sqlType === "string" && sqlType.startsWith("Array(") && sqlType.endsWith(")");
 };
 
 const compilePredicateFunction = (name: string, args: SQLFragment[]): SQLFragment => {
   return sql`${sql.raw(name)}(${joinSqlParts(args, ", ")})`;
 };
 
-const compileArrayFunctionArg = (value: unknown, ctx: BuildContext, leftExpression: SqlSelection<unknown>) => {
-  if (Array.isArray(value) && isArraySqlType(leftExpression.sqlType)) {
-    return compileValue(value, ctx, leftExpression.sqlType);
+const encodeArrayColumnValues = (left: unknown, value: readonly unknown[]): readonly unknown[] | undefined => {
+  if (!isColumnExpression(left) || !getArrayElementType(left.sqlType)) {
+    return undefined;
+  }
+  return left.mapToDriverValue(value as never) as readonly unknown[];
+};
+
+const compileHasNeedle = (
+  haystack: unknown,
+  needle: unknown,
+  ctx: BuildContext,
+  haystackExpression: SqlSelection<unknown>,
+): SQLFragment => {
+  assertPredicateValue(needle, "has");
+  if (Array.isArray(needle)) {
+    assertPredicateValueArray(needle, "has");
+  }
+
+  const elementType = getArrayElementType(haystackExpression.sqlType);
+  const shouldUseElementEncoder =
+    elementType !== undefined &&
+    isColumnExpression(haystack) &&
+    (!Array.isArray(needle) || getArrayElementType(elementType));
+  if (shouldUseElementEncoder) {
+    const encoded = encodeArrayColumnValues(haystack, [needle]);
+    return compileValue(encoded?.[0] ?? needle, ctx, elementType);
+  }
+
+  return compileValue(needle, ctx, Array.isArray(needle) ? haystackExpression.sqlType : elementType);
+};
+
+const compileArrayFunctionArg = (
+  left: unknown,
+  value: unknown,
+  ctx: BuildContext,
+  leftExpression: SqlSelection<unknown>,
+  helperName: string,
+) => {
+  assertPredicateValue(value, helperName);
+  if (Array.isArray(value)) {
+    assertPredicateValueArray(value, helperName);
+  }
+  if (Array.isArray(value) && getArrayElementType(leftExpression.sqlType)) {
+    const encoded = encodeArrayColumnValues(left, value);
+    return compileValue(encoded ?? value, ctx, leftExpression.sqlType);
   }
   return compileValue(value, ctx);
 };
 
 export const has = (haystack: unknown, needle: unknown): Predicate => {
+  assertPredicateValue(needle, "has");
+  if (Array.isArray(needle)) {
+    assertPredicateValueArray(needle, "has");
+  }
   const haystackExpression = ensureComparableExpression(haystack);
   return createExpression<boolean>({
-    compile: (ctx) => compilePredicateFunction("has", [haystackExpression.compile(ctx), compileValue(needle, ctx)]),
+    compile: (ctx) =>
+      compilePredicateFunction("has", [
+        haystackExpression.compile(ctx),
+        compileHasNeedle(haystack, needle, ctx, haystackExpression),
+      ]),
     decoder: (value) => Boolean(value),
     sqlType: "Bool",
   });
 };
 
 export const hasAll = (set: unknown, subset: unknown): Predicate => {
+  assertPredicateValue(subset, "hasAll");
+  if (Array.isArray(subset)) {
+    assertPredicateValueArray(subset, "hasAll");
+  }
   const setExpression = ensureComparableExpression(set);
   return createExpression<boolean>({
     compile: (ctx) =>
       compilePredicateFunction("hasAll", [
         setExpression.compile(ctx),
-        compileArrayFunctionArg(subset, ctx, setExpression),
+        compileArrayFunctionArg(set, subset, ctx, setExpression, "hasAll"),
       ]),
     decoder: (value) => Boolean(value),
     sqlType: "Bool",
@@ -1729,12 +2052,16 @@ export const hasAll = (set: unknown, subset: unknown): Predicate => {
 };
 
 export const hasAny = (arrX: unknown, arrY: unknown): Predicate => {
+  assertPredicateValue(arrY, "hasAny");
+  if (Array.isArray(arrY)) {
+    assertPredicateValueArray(arrY, "hasAny");
+  }
   const arrXExpression = ensureComparableExpression(arrX);
   return createExpression<boolean>({
     compile: (ctx) =>
       compilePredicateFunction("hasAny", [
         arrXExpression.compile(ctx),
-        compileArrayFunctionArg(arrY, ctx, arrXExpression),
+        compileArrayFunctionArg(arrX, arrY, ctx, arrXExpression, "hasAny"),
       ]),
     decoder: (value) => Boolean(value),
     sqlType: "Bool",
@@ -1742,12 +2069,16 @@ export const hasAny = (arrX: unknown, arrY: unknown): Predicate => {
 };
 
 export const hasSubstr = (array: unknown, needle: unknown): Predicate => {
+  assertPredicateValue(needle, "hasSubstr");
+  if (Array.isArray(needle)) {
+    assertPredicateValueArray(needle, "hasSubstr");
+  }
   const arrayExpression = ensureComparableExpression(array);
   return createExpression<boolean>({
     compile: (ctx) =>
       compilePredicateFunction("hasSubstr", [
         arrayExpression.compile(ctx),
-        compileArrayFunctionArg(needle, ctx, arrayExpression),
+        compileArrayFunctionArg(array, needle, ctx, arrayExpression, "hasSubstr"),
       ]),
     decoder: (value) => Boolean(value),
     sqlType: "Bool",
@@ -1759,6 +2090,11 @@ const createInExpression = (
   left: unknown,
   right: readonly unknown[] | AnySubquery | AnyCte,
 ): Predicate => {
+  const helperName = negate ? "notInArray" : "inArray";
+  assertPredicateValue(right, helperName);
+  if (Array.isArray(right)) {
+    assertPredicateValueArray(right, helperName, { allowSqlFragments: true });
+  }
   const leftExpression = ensureComparableExpression(left);
   const operator = negate ? " not in (" : " in (";
   const emptyArrayLiteral = negate ? "1" : "0";
@@ -1768,7 +2104,7 @@ const createInExpression = (
         if (right.length === 0) {
           return sql.raw(emptyArrayLiteral);
         }
-        const parts = right.map((value) => compileValue(value, ctx, leftExpression.sqlType));
+        const parts = right.map((value) => compilePredicateValue(left, value, ctx, leftExpression.sqlType));
         return sql`${leftExpression.compile(ctx)}${sql.raw(operator)}${joinSqlParts(parts, ", ")}${sql.raw(")")}`;
       }
 

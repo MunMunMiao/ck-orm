@@ -1,6 +1,6 @@
 import { expect, it } from "bun:test";
-import { ck, ckSql, ckType, fn } from "./ck-orm";
-import { createE2EDb, schemaPrimitives, users, webEvents } from "./shared";
+import { ck, ckSql, ckTable, ckType, fn } from "./ck-orm";
+import { createE2EDb, createTempTableName, schemaPrimitives, users, webEvents } from "./shared";
 import { describeE2E, expectDate, expectPresent, expectRejectsWithClickhouseError } from "./test-helpers";
 
 describeE2E("ck-orm e2e functions", function describeFunctions() {
@@ -100,6 +100,30 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
     expect(presentQuantileRow.medianUserId).toBeLessThan(3000);
   });
 
+  it("supports parameterized AggregateFunction type literals in real DDL", async function testParameterizedAggregateFunctionType() {
+    const db = createE2EDb();
+    const tempTable = createTempTableName("agg_quantile_scope");
+    const scope = ckTable(tempTable, {
+      state: ckType.aggregateFunction("quantile(0.5)", ckType.float64()),
+    });
+
+    await db.runInSession(async (session) => {
+      await session.createTemporaryTable(scope);
+      await session.command(ckSql`
+        INSERT INTO ${scope}
+        SELECT quantileState(0.5)(toFloat64(number))
+        FROM numbers(3)
+      `);
+
+      const [row] = await session.execute(ckSql`
+        SELECT toFloat64(quantileMerge(0.5)(state)) AS value
+        FROM ${scope}
+      `);
+
+      expect(Number(expectPresent(row, "quantile row").value)).toBe(1);
+    });
+  });
+
   it("supports ClickHouse type conversion helper families against real clickhouse", async function testTypeConversionHelpers() {
     const db = createE2EDb();
 
@@ -160,6 +184,9 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
       parsedDateTime64JodaNull: fn
         .parseDateTime64InJodaSyntaxOrNull("bad", ckSql`'yyyy-MM-dd HH:mm:ss.SSS'`, "UTC")
         .as("parsed_date_time64_joda_null"),
+      formattedDateTime: fn
+        .formatDateTime(ckSql`toDateTime('2026-01-12 01:02:03', 'UTC')`, "%Y-%m-%d", "UTC")
+        .as("formatted_date_time"),
       formattedRow: fn.formatRow(ckSql`'CSV'`, 7, "good").as("formatted_row"),
       formattedRowNoNewline: fn.formatRowNoNewline(ckSql`'CSV'`, 7, "good").as("formatted_row_no_newline"),
       lowCardinalityValue: fn.toLowCardinality<string>("vip").as("low_cardinality_value"),
@@ -202,6 +229,7 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
     expect(presentRow.dateTime64Null).toBeNull();
     expect(presentRow.parsedDateTimeNull).toBeNull();
     expect(presentRow.parsedDateTime64JodaNull).toBeNull();
+    expect(presentRow.formattedDateTime).toBe("2026-01-12");
     expect(presentRow.formattedRow).toBe('7,"good"\n');
     expect(presentRow.formattedRowNoNewline).toBe('7,"good"');
     expect(presentRow.lowCardinalityValue).toBe("vip");
@@ -594,7 +622,9 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
 
     const targetOrderTuples = db.$with("target_order_tuples").as(
       db.select({
-        targetOrder: fn.arrayJoin(fn.arrayZip([10001, 10002], [9001, 9002])).as("target_order"),
+        targetOrder: fn
+          .arrayJoin(fn.arrayZip([10001, 10002], [9001, 9002], ["alpha", "beta"], [1, 2]))
+          .as("target_order"),
       }),
     );
 
@@ -603,6 +633,8 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
       .select({
         orderTicket: fn.tupleElement<string>(targetOrderTuples.targetOrder, 1).as("order_ticket"),
         login: fn.tupleElement<string>(targetOrderTuples.targetOrder, 2).as("login"),
+        source: fn.tupleElement<string>(targetOrderTuples.targetOrder, 3).as("source"),
+        shard: fn.tupleElement<string>(targetOrderTuples.targetOrder, 4).as("shard"),
       })
       .from(targetOrderTuples);
 
@@ -610,10 +642,14 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
       {
         orderTicket: "10001",
         login: "9001",
+        source: "alpha",
+        shard: "1",
       },
       {
         orderTicket: "10002",
         login: "9002",
+        source: "beta",
+        shard: "2",
       },
     ]);
 
@@ -865,9 +901,9 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
       shuffledSorted: fn
         .arraySort<number>(fn.arrayShuffle<number>([3, 1, 2], ckSql`toUInt64(42)`))
         .as("shuffled_sorted"),
-      randomSampleSize: fn
-        .length(fn.arrayRandomSample<number>([1, 2, 3, 4], ckSql`toUInt8(2)`))
-        .as("random_sample_size"),
+      randomSampleSize: fn.length(fn.arrayRandomSample<number>([1, 2, 3, 4], 2)).as("random_sample_size"),
+      denseRanked: fn.arrayEnumerateDenseRanked(1, [[1, 2]], 2).as("dense_ranked"),
+      uniqRanked: fn.arrayEnumerateUniqRanked(1, [[1, 2]], 2).as("uniq_ranked"),
       partialShuffleSize: fn
         .length(fn.arrayPartialShuffle<number>([1, 2, 3, 4], ckSql`toUInt8(2)`, ckSql`toUInt64(42)`))
         .as("partial_shuffle_size"),
@@ -890,6 +926,8 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
       partialReverseSortedHead: ["5", "3"],
       shuffledSorted: ["1", "2", "3"],
       randomSampleSize: "2",
+      denseRanked: [[1, 2]],
+      uniqRanked: [[1, 1]],
       partialShuffleSize: "4",
       rotatedRight: ["3", "1", "2"],
       shiftedRight: ["0", "1", "2"],

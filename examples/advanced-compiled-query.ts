@@ -1,14 +1,6 @@
-import { type CompiledQuery, ck, ckSql, clickhouseClient, fn } from "./ck-orm";
-import { customerInvoice } from "./schema/commerce";
-
-const createCommerceDb = () => {
-  return clickhouseClient({
-    host: "http://127.0.0.1:8123",
-    database: "demo_store",
-    username: "default",
-    password: "<password>",
-  });
-};
+import { type CompiledQuery, ck, ckSql, fn } from "./ck-orm";
+import { createProbeDb } from "./probe-client";
+import { probeSignalRollup } from "./schema/probe";
 
 const oneQuery = {
   kind: "compiled-query",
@@ -31,19 +23,19 @@ const oneQuery = {
 } satisfies CompiledQuery<{ one: number }>;
 
 export const runExecuteCompiledExample = async () => {
-  const commerceDb = createCommerceDb();
+  const probeDb = createProbeDb();
   const sessionId = ck.createSessionId();
 
-  return commerceDb.executeCompiled<{ one: number }>(oneQuery, {
+  return probeDb.executeCompiled<{ one: number }>(oneQuery, {
     session_id: sessionId,
   });
 };
 
 export const runIteratorCompiledExample = async () => {
-  const commerceDb = createCommerceDb();
+  const probeDb = createProbeDb();
   const rows: Array<{ one: number }> = [];
 
-  for await (const row of commerceDb.iteratorCompiled<{ one: number }>(oneQuery)) {
+  for await (const row of probeDb.iteratorCompiled<{ one: number }>(oneQuery)) {
     rows.push(row);
   }
 
@@ -62,18 +54,22 @@ export const decodeCompiledRowExample = () => {
  * - The decoded row keeps the value as `string`, ready for `decimal.js` on the consumer side.
  */
 export const runDecimalPrecisionAggregate = async () => {
-  const commerceDb = createCommerceDb();
+  const probeDb = createProbeDb();
 
-  const summary = await commerceDb
+  const summary = await probeDb
     .select({
-      userId: customerInvoice.userId,
-      grossTotal: fn.sum(customerInvoice.totalAmount).as("gross_total"),
-      netTotal: ckSql
-        .decimal(ckSql`sum(${customerInvoice.totalAmount}) - sum(${customerInvoice.feeAmount})`, 20, 5)
-        .as("net_total"),
+      probeId: probeSignalRollup.probeId,
+      totalSignalStrength: fn.sum(probeSignalRollup.totalSignalStrength).as("total_signal_strength"),
+      avgSignalPerSample: ckSql
+        .decimal(
+          ckSql`sum(${probeSignalRollup.totalSignalStrength}) / nullIf(sum(${probeSignalRollup.sampleCount}), 0)`,
+          20,
+          5,
+        )
+        .as("avg_signal_per_sample"),
     })
-    .from(customerInvoice)
-    .groupBy(customerInvoice.userId)
+    .from(probeSignalRollup)
+    .groupBy(probeSignalRollup.probeId)
     .execute();
 
   return summary;

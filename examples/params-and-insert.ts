@@ -1,28 +1,17 @@
-import { ck, ckSql, clickhouseClient } from "./ck-orm";
-import { customerInvoice, orderRewardLog } from "./schema/commerce";
-
-const createCommerceDb = () => {
-  return clickhouseClient({
-    host: "http://127.0.0.1:8123",
-    database: "demo_store",
-    username: "default",
-    password: "<password>",
-    clickhouse_settings: {
-      max_execution_time: 10,
-    },
-  });
-};
+import { ck, ckSql } from "./ck-orm";
+import { createProbeDb } from "./probe-client";
+import { probeSignalRollup, probeTelemetry } from "./schema/probe";
 
 export const buildDirectValueQueryExample = () => {
-  const commerceDb = createCommerceDb();
+  const probeDb = createProbeDb();
 
-  const query = commerceDb
+  const query = probeDb
     .select({
-      userId: orderRewardLog.userId,
-      rewardPoints: orderRewardLog.rewardPoints,
+      probeId: probeTelemetry.probeId,
+      signalStrength: probeTelemetry.signalStrength,
     })
-    .from(orderRewardLog)
-    .where(ck.eq(orderRewardLog.userId, "user_100"))
+    .from(probeTelemetry)
+    .where(ck.eq(probeTelemetry.probeId, "probe_alpha"))
     .limit(10);
 
   return {
@@ -36,13 +25,13 @@ export const runDirectValueQueryExample = async () => {
 };
 
 export const runRawQueryParamsExample = async () => {
-  const commerceDb = createCommerceDb();
+  const probeDb = createProbeDb();
 
-  return commerceDb.execute(
-    ckSql`select user_id, reward_points from order_reward_log where user_id = {user_id:String} limit {limit:Int64}`,
+  return probeDb.execute(
+    ckSql`select probe_id, signal_strength from probe_telemetry where probe_id = {probe_id:String} limit {limit:Int64}`,
     {
       query_params: {
-        user_id: "user_100",
+        probe_id: "probe_alpha",
         limit: 10,
       },
     },
@@ -50,21 +39,15 @@ export const runRawQueryParamsExample = async () => {
 };
 
 export const buildInsertExample = () => {
-  const commerceDb = createCommerceDb();
-  const insert = commerceDb.insert(customerInvoice).values({
-    id: 1,
-    invoiceNumber: "INV_EXAMPLE_001",
-    userId: "user_100",
-    channelId: 1,
-    status: 1,
-    subtotalAmount: "100.00000",
-    feeAmount: "5.00000",
-    totalAmount: "105.00000",
-    createdAt: 1710000000,
-    updatedAt: 1710000000,
-    peerdbSyncedAt: new Date("2026-04-21T00:00:00.000Z"),
-    peerdbIsDeleted: 0,
-    peerdbVersion: "1",
+  const probeDb = createProbeDb();
+  const insert = probeDb.insert(probeSignalRollup).values({
+    probeId: "probe_alpha",
+    bucketStart: new Date("2026-04-24T00:00:00.000Z"),
+    bucketDay: new Date("2026-04-24T00:00:00.000Z"),
+    totalSignalStrength: "142.50000",
+    sampleCount: "12",
+    updatedAt: new Date("2026-04-24T00:05:00.000Z"),
+    ingestVersion: "1",
   });
 
   return {
