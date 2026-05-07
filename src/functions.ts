@@ -1261,11 +1261,7 @@ const scalarFns = {
   toDateTimeOrDefault(expression: unknown, timezone?: unknown, defaultValue?: unknown): Selection<Date> {
     return createTypedConversionExpression(
       "toDateTimeOrDefault",
-      [
-        expression,
-        ...(timezone === undefined ? [] : [timezone]),
-        ...(defaultValue === undefined ? [] : [defaultValue]),
-      ],
+      withOptional(withOptional([expression], timezone), defaultValue),
       dateDecoder,
       "DateTime",
     );
@@ -1406,12 +1402,7 @@ const scalarFns = {
   },
   tuple(...args: unknown[]): Selection<unknown[]> {
     return createFunctionExpression("tuple", args, {
-      decoder: (value) => {
-        if (!Array.isArray(value)) {
-          throw createDecodeError(`Cannot convert value to tuple array: ${String(value)}`, value);
-        }
-        return value;
-      },
+      decoder: arrayDecoder<unknown>("tuple"),
       sqlType: "Tuple",
     });
   },
