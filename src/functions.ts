@@ -220,37 +220,36 @@ const createStringLiteral = (label: string, value: unknown): SQLFragment => {
   return sql.raw(`'${escapeSqlSingleQuoted(value)}'`);
 };
 
+// Hoisted so all four rejection branches in `createTupleElementIndexLiteral`
+// surface the exact same diagnostic without copy-pasting the format string.
+const createTupleElementIndexError = (value: unknown) =>
+  createClientValidationError(
+    `tupleElement indexOrName must be a positive safe integer or non-empty string, got ${String(value)}`,
+  );
+
 const createTupleElementIndexLiteral = (value: unknown): SQLFragment => {
   if (typeof value === "string") {
     if (value.length === 0) {
-      throw createClientValidationError(
-        `tupleElement indexOrName must be a positive safe integer or non-empty string, got ${String(value)}`,
-      );
+      throw createTupleElementIndexError(value);
     }
     return createStringLiteral("tupleElement indexOrName", value);
   }
 
   if (typeof value === "number") {
     if (!Number.isSafeInteger(value) || value <= 0) {
-      throw createClientValidationError(
-        `tupleElement indexOrName must be a positive safe integer or non-empty string, got ${String(value)}`,
-      );
+      throw createTupleElementIndexError(value);
     }
     return sql.raw(String(value));
   }
 
   if (typeof value === "bigint") {
     if (value <= 0n) {
-      throw createClientValidationError(
-        `tupleElement indexOrName must be a positive safe integer or non-empty string, got ${String(value)}`,
-      );
+      throw createTupleElementIndexError(value);
     }
     return sql.raw(value.toString());
   }
 
-  throw createClientValidationError(
-    `tupleElement indexOrName must be a positive safe integer or non-empty string, got ${String(value)}`,
-  );
+  throw createTupleElementIndexError(value);
 };
 
 const createConstIntegerLiteral = (
@@ -302,8 +301,11 @@ const INTERVAL_UNITS = new Set([
 ]);
 
 const createIntervalUnitLiteral = (value: unknown): SQLFragment => {
+  // `createStringLiteral` already enforces non-empty string; the `typeof`
+  // re-check after it would be dead code. Once we know we have a string,
+  // the only remaining check is whether it's a recognised CH unit.
   const unitLiteral = createStringLiteral("toInterval unit", value);
-  if (typeof value !== "string" || !INTERVAL_UNITS.has(value.toLowerCase())) {
+  if (!INTERVAL_UNITS.has((value as string).toLowerCase())) {
     throw createClientValidationError(`toInterval unit must be a valid ClickHouse interval unit, got ${String(value)}`);
   }
   return unitLiteral;

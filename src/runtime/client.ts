@@ -212,16 +212,21 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
     });
   };
 
+  // Both wrappers share the same per-call query metadata shape — define it
+  // once so changes (e.g. adding a new field that observability cares about)
+  // only have to land in one place.
+  type InstrumentationContext = {
+    mode: ClickHouseORMQueryMode;
+    queryKind: ClickHouseORMQueryKind;
+    statement: string;
+    options: ClickHouseBaseQueryOptions;
+    format?: ClickHouseQueryOptions["format"] | ClickHouseStreamOptions["format"];
+    tableName?: string;
+    operation?: string;
+  };
+
   const executeWithInstrumentation = async <TValue>(
-    input: {
-      mode: ClickHouseORMQueryMode;
-      queryKind: ClickHouseORMQueryKind;
-      statement: string;
-      options: ClickHouseBaseQueryOptions;
-      format?: ClickHouseQueryOptions["format"] | ClickHouseStreamOptions["format"];
-      tableName?: string;
-      operation?: string;
-    },
+    input: InstrumentationContext,
     operation: () => Promise<{ value: TValue; rowCount?: number; statistics?: ClickHouseORMQueryStatistics }>,
   ): Promise<TValue> => {
     const event = buildQueryEvent(input);
@@ -241,15 +246,7 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
   };
 
   const streamWithInstrumentation = async function* <TValue>(
-    input: {
-      mode: ClickHouseORMQueryMode;
-      queryKind: ClickHouseORMQueryKind;
-      statement: string;
-      options: ClickHouseBaseQueryOptions;
-      format?: ClickHouseQueryOptions["format"] | ClickHouseStreamOptions["format"];
-      tableName?: string;
-      operation?: string;
-    },
+    input: InstrumentationContext,
     operation: () => AsyncGenerator<TValue, void, unknown>,
   ): AsyncGenerator<TValue, void, unknown> {
     const event = buildQueryEvent(input);

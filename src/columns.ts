@@ -302,13 +302,16 @@ const createColumnFactory = <
     binding?.name && binding?.tableName
       ? sql.identifier({ table: binding.tableAlias ?? binding.tableName, column: binding.name })
       : undefined;
-  const expression = createExpression<TData>({
-    compile: () => {
-      if (!identifierFragment) {
+  // Pick the compile callback at factory time too — bound columns get a
+  // straight `() => identifierFragment`, unbound columns get a thrower. Saves
+  // a per-compile branch for the common bound case.
+  const compile: () => SQLFragment = identifierFragment
+    ? () => identifierFragment
+    : () => {
         throw new Error(`Unbound column cannot be compiled: ${config.sqlType}`);
-      }
-      return identifierFragment;
-    },
+      };
+  const expression = createExpression<TData>({
+    compile,
     decoder: config.mapFromDriverValue,
     sqlType: config.sqlType,
     sourceKey: (binding?.tableAlias ?? binding?.tableName) as ResolveSourceKey<TTableName, TTableAlias>,

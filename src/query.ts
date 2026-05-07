@@ -391,6 +391,9 @@ type InsertColumnEntry =
       readonly name: string;
       readonly column: AnyColumn;
       readonly sqlType: string;
+      // Pre-rendered `name` identifier — built once when the table metadata
+      // is cached so each insert compile just hands back the cached fragment.
+      readonly identifierFragment: SQLFragment;
     }
   | {
       readonly kind: "nested-field";
@@ -399,14 +402,11 @@ type InsertColumnEntry =
       readonly fieldKey: string;
       readonly fieldColumn: AnyColumn;
       readonly sqlType: string;
+      // Pre-rendered `name.fieldKey` dotted identifier.
+      readonly identifierFragment: SQLFragment;
     };
 
-const renderInsertColumnIdentifier = (entry: InsertColumnEntry): SQLFragment => {
-  if (entry.kind === "nested-field") {
-    return sql.raw(`${quoteIdentifier(entry.name)}.${quoteIdentifier(entry.fieldKey)}`);
-  }
-  return sql.identifier(entry.name);
-};
+const renderInsertColumnIdentifier = (entry: InsertColumnEntry): SQLFragment => entry.identifierFragment;
 
 type InsertTableMetadata = {
   readonly entries: readonly InsertColumnEntry[];
@@ -437,6 +437,7 @@ const getInsertTableMetadata = (table: AnyTable): InsertTableMetadata => {
     }
     const name = column.name ?? schemaKey;
     if (column.nestedShape) {
+      const nestedNameQuoted = quoteIdentifier(name);
       for (const [fieldKey, fieldColumn] of Object.entries(column.nestedShape)) {
         entries.push({
           kind: "nested-field",
@@ -445,6 +446,7 @@ const getInsertTableMetadata = (table: AnyTable): InsertTableMetadata => {
           fieldKey,
           fieldColumn,
           sqlType: `Array(${fieldColumn.sqlType})`,
+          identifierFragment: sql.raw(`${nestedNameQuoted}.${quoteIdentifier(fieldKey)}`),
         });
       }
       continue;
@@ -455,6 +457,7 @@ const getInsertTableMetadata = (table: AnyTable): InsertTableMetadata => {
       name,
       column,
       sqlType: column.sqlType,
+      identifierFragment: sql.identifier(name),
     });
   }
 

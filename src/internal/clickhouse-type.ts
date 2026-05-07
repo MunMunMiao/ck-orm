@@ -51,15 +51,12 @@ const SIMPLE_TYPES = new Set([
 
 const isValidIdentifier = (value: string): boolean => TYPE_IDENTIFIER.test(value);
 
-const hasControlCharacter = (value: string): boolean => {
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code <= 0x1f || code === 0x7f) {
-      return true;
-    }
-  }
-  return false;
-};
+// ASCII control characters (C0 + DEL) — the whole point of this guard is to
+// reject inputs that contain them, so the lint warning about literal control
+// chars in a regex is exactly the intent.
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the point of this guard.
+const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/;
+const hasControlCharacter = (value: string): boolean => CONTROL_CHARACTER_PATTERN.test(value);
 
 const ensureSafeTypeCharacters = (value: string, label = "ClickHouse type literal"): void => {
   if (
