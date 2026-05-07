@@ -713,8 +713,23 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
           host: "http://localhost:8123",
           request_timeout,
         }),
-      ).toThrow("clickhouseClient() request_timeout must be a finite positive number");
+      ).toThrow("clickhouseClient() request_timeout must be a positive number");
     }
+
+    for (const request_timeout of [undefined, null]) {
+      expect(() =>
+        clickhouseClient({
+          host: "http://localhost:8123",
+          request_timeout: request_timeout as number | undefined,
+        }),
+      ).not.toThrow();
+    }
+
+    expect(() =>
+      clickhouseClient({
+        host: "http://localhost:8123",
+      }),
+    ).not.toThrow();
   });
 
   it("supports ping and replicasStatus through GET endpoint helpers", async function testSystemEndpointHelpers() {

@@ -155,6 +155,34 @@ describe("ck-orm runtime/abort", function describeAbort() {
     cleanup();
     cleanup();
   });
+
+  it("does not schedule a timeout when requestTimeout is undefined", function testNoTimeoutWhenUndefined() {
+    const original = AbortSignal.timeout;
+    let calls = 0;
+    AbortSignal.timeout = ((ms: number) => {
+      calls += 1;
+      return original.call(AbortSignal, ms);
+    }) as typeof AbortSignal.timeout;
+    try {
+      const { signal, cleanup } = createAbortController(undefined);
+      expect(calls).toBe(0);
+      expect(signal.aborted).toBe(false);
+      cleanup();
+    } finally {
+      AbortSignal.timeout = original;
+    }
+  });
+
+  it("translates the AbortSignal.timeout reason into a ck-orm timeout error", async function testTimeoutReasonTranslation() {
+    const { signal } = createAbortController(5);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(signal.aborted).toBe(true);
+    expect(isClickHouseORMError(signal.reason)).toBe(true);
+    const reason = signal.reason as ClickHouseORMError;
+    expect(reason.kind).toBe("timeout");
+    expect(reason.requestTimeoutMs).toBe(5);
+    expect(reason.message).toContain("timed out after 5ms");
+  });
 });
 
 const makeResponse = (body: string, init?: ResponseInit) => new Response(body, init);
@@ -275,6 +303,28 @@ describe("ck-orm runtime/json-stream", function describeJsonStream() {
       collected.push(line);
     }
     expect(collected).toEqual(["first", "second"]);
+  });
+
+  it("createLineStream compacts the buffer after the head crosses the threshold", async function testLineStreamCompaction() {
+    // LINE_STREAM_COMPACT_THRESHOLD is 64 * 1024; emit ~80 KB of two-byte
+    // lines across multiple chunks so that `start` advances past the
+    // threshold and the inner branch that re-slices the buffer is hit.
+    const lineCount = 40_000;
+    const encoder = new TextEncoder();
+    const halfPayload = encoder.encode("x\n".repeat(lineCount / 2));
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(halfPayload);
+        controller.enqueue(halfPayload);
+        controller.close();
+      },
+    });
+    const response = new Response(stream);
+    let received = 0;
+    for await (const _line of createLineStream(response)) {
+      received += 1;
+    }
+    expect(received).toBe(lineCount);
   });
 
   it("creates stable JSONEachRow request bodies for empty arrays and empty async iterables", async function testEmptyJsonEachRowBodies() {
@@ -473,6 +523,8 @@ describe("ck-orm runtime/config validation", function describeConfigValidation()
     expect(() => formatQueryParamValue(["login"], "Tuple(String, Int32)")).toThrow(
       "Tuple query parameter expected 2 items, got 1",
     );
+    expect(() => formatQueryParamValue(Symbol("rejected"))).toThrow("Unsupported query parameter value");
+    expect(() => formatQueryParamValue(() => "rejected")).toThrow("Unsupported query parameter value");
     expect(formatQueryParamValue({ enabled: true, disabled: false })).toBe("{'enabled':TRUE,'disabled':FALSE}");
     expect(formatQueryParamValue([], { nested: true })).toBe("[]");
     expect(formatQueryParamValue(new Map())).toBe("{}");

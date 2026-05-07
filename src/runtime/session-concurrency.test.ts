@@ -331,4 +331,21 @@ describe("session concurrency controller", function describeSessionConcurrencyCo
     gates[2].resolve();
     await expect(Promise.all([second, third])).resolves.toEqual(["second", "third"]);
   });
+
+  it("compacts the waiter queue once the dequeued head crosses the threshold", async function testQueueCompaction() {
+    const controller = createSessionConcurrencyController(1);
+    const total = 18;
+    const gates = Array.from({ length: total }, () => createDeferred<void>());
+    const promises = gates.map((gate, index) =>
+      controller.run("compact_session", async () => {
+        await gate.promise;
+        return index;
+      }),
+    );
+
+    for (let index = 0; index < total; index += 1) {
+      gates[index]?.resolve();
+      await expect(promises[index]).resolves.toBe(index);
+    }
+  });
 });

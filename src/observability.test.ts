@@ -414,7 +414,7 @@ describe("ck-orm observability", function describeClickHouseORMObservability() {
       databaseName: "url_db",
       serverAddress: "clickhouse.example",
       serverPort: 443,
-      requestTimeoutMs: 30_000,
+      requestTimeoutMs: undefined,
       querySummary: "SELECT",
       tableName: undefined,
     });

@@ -536,7 +536,7 @@ Most projects only need a small subset of client fields:
 
 | Field | Purpose |
 | --- | --- |
-| `request_timeout` | Default request timeout in milliseconds |
+| `request_timeout` | Optional per-request wall-clock timeout in milliseconds. When omitted, ck-orm does not enforce any client-side timeout — request lifetime is controlled by the underlying fetch / platform / server / `abort_signal`. For long-running streaming queries, leave this unset and apply a wall-clock budget through `abort_signal` (e.g. `AbortSignal.timeout(30_000)`) instead. |
 | `clickhouse_settings` | Default ClickHouse session/query settings |
 | `application` | Set the ClickHouse application name |
 

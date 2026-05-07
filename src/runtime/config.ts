@@ -156,11 +156,21 @@ type StructuredConnectionConfig = {
 
 type SharedClientConfigOptions = {
   /**
-   * Default per-request timeout in milliseconds. Defaults to `30_000`
-   * (30 seconds). The timeout starts when the request is dispatched
-   * and aborts the underlying fetch (and any in-flight stream reader)
-   * if the response is not fully received in time. Per-request
-   * `abort_signal` is composed with this; whichever fires first wins.
+   * Optional per-request timeout in milliseconds. When set, the
+   * request is aborted after this many milliseconds regardless of
+   * streaming progress (wall-clock semantics). When omitted, ck-orm
+   * does not schedule any timer — request lifetime is controlled by
+   * the underlying fetch implementation, the server (e.g. ClickHouse
+   * `max_execution_time`), the platform default socket timeout, or
+   * the caller via `abort_signal`.
+   *
+   * For long-running streaming queries, prefer leaving this unset and
+   * applying a wall-clock budget through `abort_signal` (e.g.
+   * `AbortSignal.timeout(...)`) instead — that way the timeout does
+   * not kill an in-flight stream the caller may still want to drain.
+   *
+   * Per-request `abort_signal` is composed with this; whichever fires
+   * first wins.
    */
   readonly request_timeout?: number;
   readonly compression?: {
@@ -210,7 +220,7 @@ export type RawQueryInput = SQLFragment;
 
 export type NormalizedClientConfig = {
   readonly url: URL;
-  readonly request_timeout: number;
+  readonly request_timeout: number | undefined;
   readonly compression: {
     readonly response: boolean;
   };
@@ -483,24 +493,19 @@ export const formatQueryParamValue = (
     }
     return `[${parts.join(",")}]`;
   }
-  if (value instanceof Map) {
-    // Iterate the Map directly instead of `[...value.entries()].map(...)` —
-    // skips the materialised intermediate array.
-    const parts: string[] = [];
-    for (const [key, entryValue] of value) {
-      parts.push(`${formatQueryParamValue(key, nestedOptions)}:${formatQueryParamValue(entryValue, nestedOptions)}`);
-    }
-    return `{${parts.join(",")}}`;
-  }
-  if (typeof value === "object") {
-    const parts: string[] = [];
-    for (const [key, entryValue] of Object.entries(value)) {
-      parts.push(`${formatQueryParamValue(key, nestedOptions)}:${formatQueryParamValue(entryValue, nestedOptions)}`);
-    }
-    return `{${parts.join(",")}}`;
+  if (!(value instanceof Map || typeof value === "object")) {
+    throw createClientValidationError(`Unsupported query parameter value: ${String(value)}`);
   }
 
-  throw createClientValidationError(`Unsupported query parameter value: ${String(value)}`);
+  // Map and plain-object parameters share the same wire shape. Iterate Map
+  // directly (skipping `[...value.entries()]`'s materialised intermediate
+  // array); fall back to `Object.entries` for plain objects.
+  const entries: Iterable<readonly [unknown, unknown]> = value instanceof Map ? value : Object.entries(value);
+  const parts: string[] = [];
+  for (const [key, entryValue] of entries) {
+    parts.push(`${formatQueryParamValue(key, nestedOptions)}:${formatQueryParamValue(entryValue, nestedOptions)}`);
+  }
+  return `{${parts.join(",")}}`;
 };
 
 export const buildSearchParams = (input: {
@@ -686,9 +691,9 @@ export const normalizeClientConfig = (config: ClickHouseFetchConfigOptions): Nor
   if (!Number.isInteger(sessionMaxConcurrentRequests) || sessionMaxConcurrentRequests < 1) {
     throw createClientValidationError("clickhouseClient() session_max_concurrent_requests must be a positive integer");
   }
-  const requestTimeout = config.request_timeout ?? 30_000;
-  if (!Number.isFinite(requestTimeout) || requestTimeout <= 0) {
-    throw createClientValidationError("clickhouseClient() request_timeout must be a finite positive number");
+  const requestTimeout = config.request_timeout ?? undefined;
+  if (requestTimeout !== undefined && (!Number.isFinite(requestTimeout) || requestTimeout <= 0)) {
+    throw createClientValidationError("clickhouseClient() request_timeout must be a positive number");
   }
 
   return {
