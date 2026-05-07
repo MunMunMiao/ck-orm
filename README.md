@@ -1,4 +1,7 @@
-# ck-orm
+## ⚠️ Before version 0.1.0, there will be significant API adjustments. If needed, please pin the version number.
+
+
+# CK-ORM
 
 <p align="center">
   <img src="bunner.png" alt="ck-orm - TypeScript ORM for ClickHouse" width="100%" />
