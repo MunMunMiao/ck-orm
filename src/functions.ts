@@ -165,6 +165,15 @@ const uint32Decoder = createIntegerNumberDecoder(0, 4294967295);
 const intStringDecoder: Decoder<string> = (value) => toIntegerStringCoercion(value);
 const uintStringDecoder: Decoder<string> = (value) => toIntegerStringCoercion(value, { unsigned: true });
 
+// Pre-rendered name fragments for hot aggregate / extract builtins. Hoisting
+// them here avoids re-running `assertValidSqlIdentifier` and re-allocating a
+// `sql.raw(...)` fragment on every `count()` / `countIf()` / `uniqExact()` /
+// `jsonExtract()` builder call.
+const COUNT_FN_FRAGMENT = renderFunctionName("count");
+const COUNT_IF_FN_FRAGMENT = renderFunctionName("countIf");
+const UNIQ_EXACT_FN_FRAGMENT = renderFunctionName("uniqExact");
+const JSON_EXTRACT_FN_FRAGMENT = renderFunctionName("JSONExtract");
+
 const FIXED_WIDTH_DECIMAL_PRECISION = {
   toDecimal32: 9,
   toDecimal64: 18,
@@ -278,10 +287,6 @@ const createConstIntegerLiteral = (
   throw createClientValidationError(`${helperName} requires a ClickHouse constant integer, got ${String(value)}`);
 };
 
-const createTypeLiteral = (value: unknown): SQLFragment => {
-  return sql.raw(normalizeClickHouseTypeLiteral(value));
-};
-
 const INTERVAL_UNITS = new Set([
   "nanosecond",
   "microsecond",
@@ -349,15 +354,19 @@ const createFixedWidthDecimalCast = <TData = string>(
   // so we inline it instead of binding through the parameter channel (which
   // would produce `{orm_paramN:Int64}` and trigger ILLEGAL_TYPE_OF_ARGUMENT).
   const sqlType = `Decimal(${precision}, ${scale})`;
+  // `fnName` and `scale` are fixed for this expression — pre-render the
+  // matching fragments at builder time so the compile callback skips the
+  // identifier validation and `sql.raw` allocation per query.
+  const fnNameFragment = renderFunctionName(fnName);
+  const scaleFragment = sql.raw(String(scale));
   return createExpression<TData>({
     compile: (ctx) => {
-      assertValidSqlIdentifier(fnName, "function");
       const compiledArgs = [
         compileValue(expression, ctx),
-        sql.raw(String(scale)),
+        scaleFragment,
         ...(config?.extraArgs ?? []).map((argument) => compileValue(argument, ctx)),
       ];
-      return sql`${sql.raw(fnName)}(${joinSqlParts(compiledArgs, ", ")})`;
+      return sql`${fnNameFragment}(${joinSqlParts(compiledArgs, ", ")})`;
     },
     decoder: config?.decoder ?? (stringDecoder as Decoder<TData>),
     sqlType,
@@ -366,13 +375,13 @@ const createFixedWidthDecimalCast = <TData = string>(
 
 const createDateTime64Cast = (expression: unknown, scale: unknown, timezone?: unknown): Selection<Date> => {
   assertDateTime64Scale(scale);
+  const scaleFragment = sql.raw(String(scale));
   return createExpression<Date>({
     compile: (ctx) => {
-      assertValidSqlIdentifier("toDateTime64", "function");
       const compiledArgs =
         timezone === undefined
-          ? [compileValue(expression, ctx), sql.raw(String(scale))]
-          : [compileValue(expression, ctx), sql.raw(String(scale)), compileValue(timezone, ctx)];
+          ? [compileValue(expression, ctx), scaleFragment]
+          : [compileValue(expression, ctx), scaleFragment, compileValue(timezone, ctx)];
       return sql`toDateTime64(${joinSqlParts(compiledArgs, ", ")})`;
     },
     decoder: dateDecoder,
@@ -415,11 +424,14 @@ const buildDecimalAwareAggregate = (
   if (!params) return undefined;
   const target = config?.widenForSum ? widenForSum(params) : params;
   const sqlType = `Decimal(${target.precision}, ${target.scale})`;
+  // `name` and `sqlType` are fixed once we know the column's decimal shape;
+  // skip the per-compile validation + fragment allocation.
+  const nameFragment = renderFunctionName(name);
+  const sqlTypeFragment = sql.raw(sqlType);
   return createExpression<string>({
     compile: (ctx) => {
-      assertValidSqlIdentifier(name, "function");
       const compiledArg = compileValue(expression, ctx);
-      return sql`CAST(${sql.raw(name)}(${compiledArg}) AS ${sql.raw(sqlType)})`;
+      return sql`CAST(${nameFragment}(${compiledArg}) AS ${sqlTypeFragment})`;
     },
     decoder: stringDecoder,
     sqlType,
@@ -431,12 +443,12 @@ const buildDecimalAwareSumIf = (expression: unknown, condition: unknown): Select
   if (!params) return undefined;
   const target = widenForSum(params);
   const sqlType = `Decimal(${target.precision}, ${target.scale})`;
+  const sqlTypeFragment = sql.raw(sqlType);
   return createExpression<string>({
     compile: (ctx) => {
-      assertValidSqlIdentifier("sumIf", "function");
       const compiledExpr = compileValue(expression, ctx);
       const compiledCond = compileValue(condition, ctx);
-      return sql`CAST(sumIf(${compiledExpr}, ${compiledCond}) AS ${sql.raw(sqlType)})`;
+      return sql`CAST(sumIf(${compiledExpr}, ${compiledCond}) AS ${sqlTypeFragment})`;
     },
     decoder: stringDecoder,
     sqlType,
@@ -687,11 +699,12 @@ const createCastExpression = <TData>(
   decoder?: Decoder<TData>,
 ): Selection<TData> => {
   const normalizedTargetType = normalizeClickHouseTypeLiteral(targetType);
+  // `normalizedTargetType` already passed the heavy parser-validation; render
+  // it directly instead of re-running `createTypeLiteral` (which re-normalises
+  // every compile).
+  const targetTypeFragment = sql.raw(normalizedTargetType);
   return createExpression<TData>({
-    compile: (ctx) => {
-      const compiledExpr = compileValue(expression, ctx);
-      return sql`CAST(${compiledExpr} AS ${createTypeLiteral(normalizedTargetType)})`;
-    },
+    compile: (ctx) => sql`CAST(${compileValue(expression, ctx)} AS ${targetTypeFragment})`,
     decoder: decoder ?? (passThroughDecoder as Decoder<TData>),
     sqlType: normalizedTargetType,
   });
@@ -708,15 +721,18 @@ const createTypeStringFunctionExpression = <TData>(
   },
 ): Selection<TData> => {
   const normalizedTargetType = normalizeClickHouseTypeLiteral(targetType);
+  // `name` and the type-literal string are fixed for this expression: pre-
+  // render both so each compile only has to splice in the runtime arguments.
+  const nameFragment = renderFunctionName(name);
+  const typeStringLiteral = createStringLiteral(`${name} type`, normalizedTargetType);
   return createExpression<TData>({
     compile: (ctx) => {
-      assertValidSqlIdentifier(name, "function");
       const compiledArgs = [
         compileValue(expression, ctx),
-        createStringLiteral(`${name} type`, normalizedTargetType),
+        typeStringLiteral,
         ...(config?.extraArgs ?? []).map((argument) => compileValue(argument, ctx)),
       ];
-      return sql`${sql.raw(name)}(${joinSqlParts(compiledArgs, ", ")})`;
+      return sql`${nameFragment}(${joinSqlParts(compiledArgs, ", ")})`;
     },
     decoder: config?.decoder ?? (passThroughDecoder as Decoder<TData>),
     sqlType: config?.nullable ? `Nullable(${normalizedTargetType})` : normalizedTargetType,
@@ -865,7 +881,7 @@ const createJsonExtractExpression = <TColumn extends AnyColumn>(
   path: readonly JsonPathSegment[],
 ): Selection<InferData<TColumn>> => {
   return createExpression({
-    compile: (ctx) => compileFunctionCall("JSONExtract", [json, ...path, returnType.sqlType], ctx),
+    compile: (ctx) => compileFunctionCall(JSON_EXTRACT_FN_FRAGMENT, [json, ...path, returnType.sqlType], ctx),
     decoder: (value) => returnType.mapFromDriverValue(value) as InferData<TColumn>,
     sqlType: returnType.sqlType,
   });
@@ -1230,10 +1246,11 @@ const scalarFns = {
   ...defineFixedWidthDecimalFamily("toDecimal256"),
   toDecimalString(expression: unknown, scale: number): Selection<string> {
     assertNonNegativeInteger("toDecimalString scale", scale);
+    const scaleFragment = sql.raw(String(scale));
     return createExpression<string>({
       compile: (ctx) => {
         const compiledExpr = compileValue(expression, ctx);
-        return sql`toDecimalString(${compiledExpr}, ${sql.raw(String(scale))})`;
+        return sql`toDecimalString(${compiledExpr}, ${scaleFragment})`;
       },
       decoder: stringDecoder,
       sqlType: "String",
@@ -1864,10 +1881,10 @@ const createCountSelection = <TMode extends CountMode>(
 const aggregateFns = {
   count(expression?: unknown): CountSelection {
     const args = expression === undefined ? [] : [expression];
-    return createCountSelection((ctx) => compileFunctionCall("count", args, ctx), "unsafe");
+    return createCountSelection((ctx) => compileFunctionCall(COUNT_FN_FRAGMENT, args, ctx), "unsafe");
   },
   countIf(condition: unknown): CountSelection {
-    return createCountSelection((ctx) => compileFunctionCall("countIf", [condition], ctx), "unsafe");
+    return createCountSelection((ctx) => compileFunctionCall(COUNT_IF_FN_FRAGMENT, [condition], ctx), "unsafe");
   },
   sum(expression: unknown): Selection<number | string> {
     const decimalAware = buildDecimalAwareAggregate("sum", expression, { widenForSum: true });
@@ -1915,7 +1932,7 @@ const aggregateFns = {
     });
   },
   uniqExact(expression: unknown): CountSelection {
-    return createCountSelection((ctx) => compileFunctionCall("uniqExact", [expression], ctx), "unsafe");
+    return createCountSelection((ctx) => compileFunctionCall(UNIQ_EXACT_FN_FRAGMENT, [expression], ctx), "unsafe");
   },
 };
 

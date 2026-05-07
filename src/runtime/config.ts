@@ -721,9 +721,11 @@ export const buildRequestUrl = (baseUrl: URL, searchParams: URLSearchParams) => 
   return next;
 };
 
+const TRAILING_SLASH_PATTERN = /\/+$/g;
+
 export const buildEndpointUrl = (baseUrl: URL, path: string) => {
   const next = new URL(baseUrl);
-  const basePath = next.pathname === "/" ? "" : next.pathname.replace(/\/+$/g, "");
+  const basePath = next.pathname === "/" ? "" : next.pathname.replace(TRAILING_SLASH_PATTERN, "");
   const suffix = path.startsWith("/") ? path : `/${path}`;
   next.pathname = `${basePath}${suffix}` || "/";
   next.search = "";

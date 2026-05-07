@@ -127,8 +127,10 @@ const renderSettings = (settings: TableOptions["settings"]) => {
   return `SETTINGS ${entries.join(", ")}`;
 };
 
+const ENGINE_NAME_PATTERN = /^\s*([A-Za-z_][A-Za-z0-9_]*)/;
+
 const extractEngineName = (value: string) => {
-  const match = /^\s*([A-Za-z_][A-Za-z0-9_]*)/.exec(value);
+  const match = ENGINE_NAME_PATTERN.exec(value);
   return match?.[1];
 };
 

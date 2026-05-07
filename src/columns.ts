@@ -229,6 +229,12 @@ const normalizeAggregateFunctionName = (value: string): string => {
   }
 };
 
+// Strip the `[ck-orm] ` prefix and trailing ` (at path)` suffix that
+// `createDecodeError` already added — we re-attach a richer path further
+// up the container's decode chain.
+const DECODE_ERROR_PREFIX_PATTERN = /^\[ck-orm\]\s*/;
+const DECODE_ERROR_PATH_SUFFIX_PATTERN = /\s*\(at .*\)$/;
+
 const rethrowDecodeWithPath = (error: unknown, segment: string, originalValue: unknown): DecodeError => {
   if (isDecodeError(error)) {
     const innerPath = error.path ?? "";
@@ -238,7 +244,7 @@ const rethrowDecodeWithPath = (error: unknown, segment: string, originalValue: u
         ? `${segment}.${innerPath}`
         : segment;
     return createDecodeError(
-      error.message.replace(/^\[ck-orm\]\s*/, "").replace(/\s*\(at .*\)$/, ""),
+      error.message.replace(DECODE_ERROR_PREFIX_PATTERN, "").replace(DECODE_ERROR_PATH_SUFFIX_PATTERN, ""),
       error.causeValue,
       {
         path: combined,

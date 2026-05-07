@@ -282,15 +282,17 @@ export const ckAlias = <TTable extends AnyTable, TAlias extends string>(
   >;
 };
 
-export const renderTableIdentifier = (table: AnyTable) => {
-  if (table.alias) {
-    return sql.identifier({
-      table: table.originalName,
-      as: table.alias,
-    });
-  }
+// Tables are immutable, so the rendered identifier fragment is stable for
+// the table's lifetime. WeakMap-keyed cache means a table that's garbage-
+// collected drops its fragment with it.
+const tableIdentifierCache = new WeakMap<AnyTable, SQLFragment>();
 
-  return sql.identifier({
-    table: table.originalName,
-  });
+export const renderTableIdentifier = (table: AnyTable): SQLFragment => {
+  const cached = tableIdentifierCache.get(table);
+  if (cached) return cached;
+  const fragment = table.alias
+    ? sql.identifier({ table: table.originalName, as: table.alias })
+    : sql.identifier({ table: table.originalName });
+  tableIdentifierCache.set(table, fragment);
+  return fragment;
 };

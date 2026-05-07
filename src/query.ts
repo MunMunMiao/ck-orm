@@ -71,6 +71,10 @@ const SQL_DESC = sql.raw(" DESC");
 const SQL_LEADING_FROM = sql.raw(" from ");
 const SQL_BETWEEN = sql.raw(" between ");
 const SQL_AND = sql.raw(" and ");
+const SQL_IN_OPEN = sql.raw(" in (");
+const SQL_NOT_IN_OPEN = sql.raw(" not in (");
+const SQL_FALSE_LITERAL = sql.raw("0");
+const SQL_TRUE_LITERAL = sql.raw("1");
 
 type QuerySource = AnyTable | AnySubquery | AnyCte | TableFunctionSource;
 type KnownQuerySource = AnyTable | AnySubquery | AnyCte;
@@ -586,7 +590,15 @@ const renderSource = (source: QuerySource, ctx: BuildContext): SQLFragment => {
   }
 };
 
+// `final()` against a table that's also reused as a join source produces
+// the same `(select … from t final) as alias` fragment every time. Cache it
+// so wide tables don't re-walk their column shape per query.
+const tableFinalSubqueryCache = new WeakMap<AnyTable, SQLFragment>();
+
 const renderTableFinalSubquery = (table: AnyTable): SQLFragment => {
+  const cached = tableFinalSubqueryCache.get(table);
+  if (cached) return cached;
+
   const sourceAlias = table.alias ?? table.originalName;
   const selectionParts = Object.entries(table.columns).map(([schemaKey, column]) => {
     const physicalName = column.name ?? schemaKey;
@@ -596,9 +608,11 @@ const renderTableFinalSubquery = (table: AnyTable): SQLFragment => {
     })}${SQL_AS}${sql.identifier(physicalName)}`;
   });
 
-  return sql`${SQL_OPEN_PAREN}${SQL_SELECT}${joinSqlParts(selectionParts, ", ")}${SQL_LEADING_FROM}${sql.identifier({
-    table: table.originalName,
-  })}${SQL_FINAL_PAREN_AS}${sql.identifier(sourceAlias)}`;
+  const fragment = sql`${SQL_OPEN_PAREN}${SQL_SELECT}${joinSqlParts(selectionParts, ", ")}${SQL_LEADING_FROM}${sql.identifier(
+    { table: table.originalName },
+  )}${SQL_FINAL_PAREN_AS}${sql.identifier(sourceAlias)}`;
+  tableFinalSubqueryCache.set(table, fragment);
+  return fragment;
 };
 
 const renderRootSource = (
@@ -2125,20 +2139,23 @@ const createInExpression = (
     assertPredicateValueArray(right, helperName, { allowSqlFragments: true });
   }
   const leftExpression = ensureComparableExpression(left);
-  const operator = negate ? " not in (" : " in (";
-  const emptyArrayLiteral = negate ? "1" : "0";
+  // Both branches are decided once at builder time — pick the matching
+  // pre-built keyword fragment and `0`/`1` literal instead of building them
+  // anew on every compile.
+  const operatorFragment = negate ? SQL_NOT_IN_OPEN : SQL_IN_OPEN;
+  const emptyArrayFragment = negate ? SQL_TRUE_LITERAL : SQL_FALSE_LITERAL;
   return createExpression<boolean>({
     compile: (ctx) => {
       if (Array.isArray(right)) {
         if (right.length === 0) {
-          return sql.raw(emptyArrayLiteral);
+          return emptyArrayFragment;
         }
         const parts = right.map((value) => compilePredicateValue(left, value, ctx, leftExpression.sqlType));
-        return sql`${leftExpression.compile(ctx)}${sql.raw(operator)}${joinSqlParts(parts, ", ")}${SQL_CLOSE_PAREN}`;
+        return sql`${leftExpression.compile(ctx)}${operatorFragment}${joinSqlParts(parts, ", ")}${SQL_CLOSE_PAREN}`;
       }
 
       const querySource = (right as AnySubquery | AnyCte).query;
-      return sql`${leftExpression.compile(ctx)}${sql.raw(operator)}${sql.raw(compileNestedQuery(querySource, ctx).statement)}${SQL_CLOSE_PAREN}`;
+      return sql`${leftExpression.compile(ctx)}${operatorFragment}${sql.raw(compileNestedQuery(querySource, ctx).statement)}${SQL_CLOSE_PAREN}`;
     },
     decoder: booleanCastDecoder,
     sqlType: "Bool",
