@@ -569,4 +569,94 @@ describe("ck-orm observability", function describeClickHouseORMObservability() {
     await emitQueryError([flaky], createQueryErrorEvent(event, new Error("boom"), 7));
     expect(calls).toEqual(["start", "success", "error"]);
   });
+
+  it("skips instrumentations that do not declare a matching lifecycle hook", async function testPartialHookSkip() {
+    const calls: string[] = [];
+    const tagged = (tag: string): ClickHouseORMInstrumentation => ({
+      onQueryStart() {
+        calls.push(`${tag}:start`);
+      },
+      onQuerySuccess() {
+        calls.push(`${tag}:success`);
+      },
+      onQueryError() {
+        calls.push(`${tag}:error`);
+      },
+    });
+    // Three instrumentations exercising every skip branch:
+    //   - `full` declares all three hooks
+    //   - `empty` declares none (every emit must skip it)
+    //   - `noError` declares start + success but not onQueryError (the previously
+    //     uncovered observability.ts:201-202 continue branch)
+    const full = tagged("full");
+    const empty: ClickHouseORMInstrumentation = {};
+    const noError: ClickHouseORMInstrumentation = {
+      onQueryStart() {
+        calls.push("noError:start");
+      },
+      onQuerySuccess() {
+        calls.push("noError:success");
+      },
+    };
+    const instrumentations = [full, empty, noError];
+
+    const event = createQueryEvent({
+      mode: "query",
+      queryKind: "typed",
+      statement: "select 1",
+      operation: "SELECT",
+      startedAt: 0,
+    });
+
+    await emitQueryStart(instrumentations, event);
+    await emitQuerySuccess(instrumentations, createQuerySuccessEvent(event, 1));
+    await emitQueryError(instrumentations, createQueryErrorEvent(event, new Error("boom"), 2));
+
+    // `emitQueryStart` walks instrumentations forwards; `emitQuerySuccess` and
+    // `emitQueryError` walk in reverse so wrap-around tracers close their span
+    // after inner hooks complete. Encode that contract into the assertion so a
+    // future ordering regression fails this test instead of silently flipping
+    // span boundaries.
+    expect(calls).toEqual(["full:start", "noError:start", "noError:success", "full:success", "full:error"]);
+  });
+
+  it("attaches db.session.id and ck_orm.session_id to tracing spans when the event carries sessionId", async function testTracingSessionAttributes() {
+    const tracer = createCapturedTracer();
+    const instrumentation = createTracingInstrumentation({
+      tracer: tracer.tracer,
+    });
+
+    const event = createQueryEvent({
+      mode: "query",
+      queryKind: "typed",
+      statement: "select 1",
+      operation: "SELECT",
+      startedAt: 0,
+      sessionId: "session_abc",
+    });
+
+    await instrumentation.onQueryStart?.(event);
+
+    const attributes = tracer.spans[0]?.attributes;
+    expect(attributes?.["db.session.id"]).toBe("session_abc");
+    expect(attributes?.["ck_orm.session_id"]).toBe("session_abc");
+
+    // Cross-check: events without sessionId must not surface either attribute
+    // — guarding the `event.sessionId !== undefined` gate from regressing into
+    // an always-on `?? null` shape.
+    const sessionlessTracer = createCapturedTracer();
+    const sessionlessInstrumentation = createTracingInstrumentation({
+      tracer: sessionlessTracer.tracer,
+    });
+    const sessionlessEvent = createQueryEvent({
+      mode: "query",
+      queryKind: "typed",
+      statement: "select 1",
+      operation: "SELECT",
+      startedAt: 0,
+    });
+    await sessionlessInstrumentation.onQueryStart?.(sessionlessEvent);
+    expect(sessionlessTracer.spans[0]?.attributes["db.session.id"]).toBeUndefined();
+    expect(sessionlessTracer.spans[0]?.attributes["ck_orm.session_id"]).toBeUndefined();
+  });
 });
