@@ -287,23 +287,21 @@ const createColumnFactory = <
   config: ColumnFactoryConfig<TData, TSqlType>,
   binding?: ColumnBinding<string, string | undefined>,
 ): Column<TData, TSqlType, TTableName, TTableAlias> => {
+  // Build the bound `table.column` SQL fragment once at column-definition
+  // time — the `binding` is fixed for the lifetime of this column, so the
+  // compile callback only needs to hand back the cached fragment. A wide
+  // SELECT over 50 columns now skips 50 `sql.identifier({...})` allocations
+  // per query.
+  const identifierFragment =
+    binding?.name && binding?.tableName
+      ? sql.identifier({ table: binding.tableAlias ?? binding.tableName, column: binding.name })
+      : undefined;
   const expression = createExpression<TData>({
     compile: () => {
-      if (!binding?.name || !binding?.tableName) {
+      if (!identifierFragment) {
         throw new Error(`Unbound column cannot be compiled: ${config.sqlType}`);
       }
-
-      if (binding.tableAlias) {
-        return sql.identifier({
-          table: binding.tableAlias,
-          column: binding.name,
-        });
-      }
-
-      return sql.identifier({
-        table: binding.tableName,
-        column: binding.name,
-      });
+      return identifierFragment;
     },
     decoder: config.mapFromDriverValue,
     sqlType: config.sqlType,

@@ -46,6 +46,8 @@ const toFiniteNumber = (value: unknown): number | undefined => {
   return undefined;
 };
 
+type WritableStatistics = { -readonly [K in keyof ClickHouseORMQueryStatistics]: ClickHouseORMQueryStatistics[K] };
+
 export const extractClickHouseJsonStatistics = <T>(
   response: ClickHouseJsonResponse<T>,
 ): ClickHouseORMQueryStatistics | undefined => {
@@ -54,19 +56,33 @@ export const extractClickHouseJsonStatistics = <T>(
   const readBytes = toFiniteNumber(response.statistics?.bytes_read);
   const resultRows = toFiniteNumber(response.rows);
   const rowsBeforeLimitAtLeast = toFiniteNumber(response.rows_before_limit_at_least);
-  const statistics: ClickHouseORMQueryStatistics = {
-    ...(elapsedSeconds === undefined ? {} : { serverElapsedMs: elapsedSeconds * 1000 }),
-    ...(readRows === undefined ? {} : { readRows }),
-    ...(readBytes === undefined ? {} : { readBytes }),
-    ...(resultRows === undefined ? {} : { resultRows }),
-    ...(rowsBeforeLimitAtLeast === undefined ? {} : { rowsBeforeLimitAtLeast }),
-  };
 
-  return Object.keys(statistics).length === 0 ? undefined : statistics;
-};
+  // Imperative build-up — runs on every successful query response, so skip
+  // the five throwaway empty-object spreads and assign in place instead.
+  const statistics: WritableStatistics = {};
+  let hasAny = false;
+  if (elapsedSeconds !== undefined) {
+    statistics.serverElapsedMs = elapsedSeconds * 1000;
+    hasAny = true;
+  }
+  if (readRows !== undefined) {
+    statistics.readRows = readRows;
+    hasAny = true;
+  }
+  if (readBytes !== undefined) {
+    statistics.readBytes = readBytes;
+    hasAny = true;
+  }
+  if (resultRows !== undefined) {
+    statistics.resultRows = resultRows;
+    hasAny = true;
+  }
+  if (rowsBeforeLimitAtLeast !== undefined) {
+    statistics.rowsBeforeLimitAtLeast = rowsBeforeLimitAtLeast;
+    hasAny = true;
+  }
 
-const readResponseText = async (response: Response) => {
-  return await response.text();
+  return hasAny ? statistics : undefined;
 };
 
 export const readValidatedResponseText = async (input: {
@@ -77,7 +93,7 @@ export const readValidatedResponseText = async (input: {
 }) => {
   let text: string;
   try {
-    text = await readResponseText(input.response);
+    text = await input.response.text();
   } catch (error) {
     throw normalizeTransportError(error, {
       queryId: input.queryId,

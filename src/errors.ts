@@ -89,9 +89,19 @@ const make = (
   });
 };
 
+// `(NAMED_TAG)` exception markers — multiple may appear in one ClickHouse
+// error message; we want the rightmost one. Scanning the iterator and keeping
+// the last match avoids spreading every match into a temporary array.
+const CLICKHOUSE_EXCEPTION_NAME_PATTERN = /\(([A-Z][A-Z0-9_]+)\)/g;
+const CLICKHOUSE_EXCEPTION_HEADER_PATTERN = /(?:^|\n)\s*Code:\s*\d+\.\s*DB::[A-Za-z]/m;
+const CLICKHOUSE_ERROR_CODE_PATTERN = /\bCode:\s*(\d+)\b/;
+
 const extractClickHouseName = (text: string) => {
-  const matches = [...text.matchAll(/\(([A-Z][A-Z0-9_]+)\)/g)];
-  return matches.at(-1)?.[1];
+  let lastName: string | undefined;
+  for (const match of text.matchAll(CLICKHOUSE_EXCEPTION_NAME_PATTERN)) {
+    lastName = match[1];
+  }
+  return lastName;
 };
 
 export const isClickHouseORMError = (error: unknown): error is ClickHouseORMError => {
@@ -208,12 +218,12 @@ export const extractClickHouseException = (text: string) => {
   const responseText = text.trim();
   if (
     responseText === "" ||
-    (!/(?:^|\n)\s*Code:\s*\d+\.\s*DB::[A-Za-z]/m.test(responseText) && !responseText.includes("__exception__"))
+    (!CLICKHOUSE_EXCEPTION_HEADER_PATTERN.test(responseText) && !responseText.includes("__exception__"))
   ) {
     return undefined;
   }
 
-  const codeMatch = responseText.match(/\bCode:\s*(\d+)\b/);
+  const codeMatch = CLICKHOUSE_ERROR_CODE_PATTERN.exec(responseText);
   const clickhouseCode = codeMatch ? Number(codeMatch[1]) : undefined;
   const clickhouseName = extractClickHouseName(responseText);
 

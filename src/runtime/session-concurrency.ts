@@ -3,15 +3,24 @@ import { createAbortedError } from "../errors";
 type SessionQueueEntry = {
   activeCount: number;
   waiters: SessionWaiter[];
+  // Head index — first non-yet-shifted waiter slot. Avoids `Array.shift()`
+  // in the drain loop, which is O(N) per call (memmove of every later
+  // element); under a long backlog the loop would degrade to O(N²).
+  head: number;
 };
 
-// `cancelled` waiters are tombstones drained on the next `releaseSlot`. We
-// favour O(1) marking over O(n) `splice` removal so abort storms on a
-// busy session don't degrade to quadratic shifting.
+// `cancelled` waiters are tombstones skipped at drain time. We favour O(1)
+// flag-flipping over O(N) `splice` removal so abort storms on a busy
+// session don't degrade to quadratic queue maintenance.
 type SessionWaiter = {
   cancelled: boolean;
   resume(): void;
 };
+
+// Compact the waiter array once `head` has eaten through enough of it that
+// we'd otherwise grow without bound. Threshold tuned to keep the drained
+// prefix cheap to discard while only running on already-busy sessions.
+const SESSION_QUEUE_COMPACT_THRESHOLD = 16;
 
 export type SessionConcurrencyController = {
   run<TValue>(
@@ -29,6 +38,7 @@ export type SessionConcurrencyController = {
 const createSessionQueueEntry = (): SessionQueueEntry => ({
   activeCount: 0,
   waiters: [],
+  head: 0,
 });
 
 export const createIdempotentRelease = (releaseSlot: () => void): (() => void) => {
@@ -49,15 +59,23 @@ export const createSessionConcurrencyController = (maxConcurrentRequests: number
   const releaseSlot = (sessionId: string, entry: SessionQueueEntry) => {
     entry.activeCount -= 1;
 
-    while (entry.activeCount < maxConcurrentRequests && entry.waiters.length > 0) {
-      const waiter = entry.waiters.shift();
+    while (entry.activeCount < maxConcurrentRequests && entry.head < entry.waiters.length) {
+      const waiter = entry.waiters[entry.head];
+      entry.head += 1;
       // Skip tombstones from cancelled waiters; do not consume a slot for them.
       if (waiter && !waiter.cancelled) {
         waiter.resume();
       }
     }
 
-    if (entry.activeCount === 0 && entry.waiters.length === 0) {
+    // Compact when the head has chewed through a non-trivial prefix so the
+    // backing array doesn't grow indefinitely on long-lived sessions.
+    if (entry.head >= SESSION_QUEUE_COMPACT_THRESHOLD && entry.head * 2 >= entry.waiters.length) {
+      entry.waiters = entry.waiters.slice(entry.head);
+      entry.head = 0;
+    }
+
+    if (entry.activeCount === 0 && entry.head >= entry.waiters.length) {
       sessions.delete(sessionId);
     }
   };
@@ -84,14 +102,14 @@ export const createSessionConcurrencyController = (maxConcurrentRequests: number
     }
 
     if (abortSignal?.aborted) {
-      if (entry.activeCount === 0 && entry.waiters.length === 0) {
+      if (entry.activeCount === 0 && entry.head >= entry.waiters.length) {
         sessions.delete(sessionId);
       }
       throw createQueuedAbortError(abortSignal);
     }
 
     const signal = abortSignal;
-    return await new Promise<() => void>((resolve, reject) => {
+    return new Promise<() => void>((resolve, reject) => {
       let settled = false;
       const cleanup = () => {
         signal?.removeEventListener("abort", onAbort);

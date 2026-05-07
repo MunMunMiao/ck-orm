@@ -38,6 +38,40 @@ import {
   trustSqlSourceObject,
 } from "./sql";
 
+// SQL keyword/punctuation fragments. These are byte-identical and used by
+// every query compile, so building them once at module load saves a
+// `SQLFragment` allocation per occurrence per query.
+const SQL_OPEN_PAREN = sql.raw("(");
+const SQL_CLOSE_PAREN = sql.raw(")");
+const SQL_PAREN_AS = sql.raw(") as ");
+const SQL_AS = sql.raw(" as ");
+const SQL_AS_OPEN = sql.raw(" as (");
+const SQL_SELECT = sql.raw("select ");
+const SQL_FROM = sql.raw("from ");
+const SQL_WHERE = sql.raw("where ");
+const SQL_GROUP_BY = sql.raw("group by ");
+const SQL_HAVING = sql.raw("having ");
+const SQL_ORDER_BY = sql.raw("order by ");
+const SQL_LIMIT = sql.raw("limit ");
+const SQL_OFFSET = sql.raw("offset ");
+const SQL_LIMIT_BY = sql.raw(" by ");
+const SQL_ON = sql.raw(" on ");
+const SQL_FINAL = sql.raw(" final");
+const SQL_FINAL_PAREN_AS = sql.raw(" final) as ");
+const SQL_INNER_JOIN = sql.raw("inner join ");
+const SQL_LEFT_JOIN = sql.raw("left join ");
+const SQL_DEFAULT = sql.raw("DEFAULT");
+const SQL_NULL = sql.raw("NULL");
+const SQL_COUNT = sql.raw("count()");
+const SQL_WITH = sql.raw("with ");
+const SQL_EXISTS_OPEN = sql.raw("exists (");
+const SQL_NOT_OPEN = sql.raw("not (");
+const SQL_ASC = sql.raw(" ASC");
+const SQL_DESC = sql.raw(" DESC");
+const SQL_LEADING_FROM = sql.raw(" from ");
+const SQL_BETWEEN = sql.raw(" between ");
+const SQL_AND = sql.raw(" and ");
+
 type QuerySource = AnyTable | AnySubquery | AnyCte | TableFunctionSource;
 type KnownQuerySource = AnyTable | AnySubquery | AnyCte;
 type ForcedSettings = Readonly<ClickHouseSettings>;
@@ -426,7 +460,7 @@ const compileNestedInsertFieldValue = (
 ): SQLFragment => {
   const value = row[entry.key];
   if (value === undefined) {
-    return sql.raw("DEFAULT");
+    return SQL_DEFAULT;
   }
   if (!Array.isArray(value)) {
     throw createClientValidationError(`Nested column "${entry.key}" expects an array of objects`);
@@ -456,10 +490,10 @@ const compileInsertColumnValue = (
 
   const value = row[entry.key];
   if (value === undefined) {
-    return sql.raw("DEFAULT");
+    return SQL_DEFAULT;
   }
   if (value === null) {
-    return sql.raw("NULL");
+    return SQL_NULL;
   }
   return compileValue(entry.column.mapToDriverValue(value as never), ctx, entry.sqlType);
 };
@@ -509,12 +543,12 @@ const createReferenceExpression = <TData, TSourceKey extends string>(
   decoder: Decoder<TData>,
   sqlType?: string,
 ): SqlSelection<TData, TSourceKey> => {
+  // Subquery / CTE references are immutable — pre-build the
+  // `sourceAlias.columnName` fragment once instead of paying for
+  // `sql.identifier({ ... })` on every compile of the same reference.
+  const identifierFragment = sql.identifier({ table: sourceAlias, column: columnName });
   return createExpression({
-    compile: () =>
-      sql.identifier({
-        table: sourceAlias,
-        column: columnName,
-      }),
+    compile: () => identifierFragment,
     decoder,
     sqlType,
     sourceKey: sourceAlias,
@@ -544,7 +578,7 @@ const renderSource = (source: QuerySource, ctx: BuildContext): SQLFragment => {
     case "table":
       return renderTableIdentifier(source);
     case "subquery":
-      return sql`${sql.raw("(")}${sql.raw(compileNestedQuery(source.query, ctx).statement)}${sql.raw(") as ")}${sql.identifier(source.alias)}`;
+      return sql`${SQL_OPEN_PAREN}${sql.raw(compileNestedQuery(source.query, ctx).statement)}${SQL_PAREN_AS}${sql.identifier(source.alias)}`;
     case "cte":
       return sql.identifier(source.name);
     case "table-function":
@@ -559,14 +593,12 @@ const renderTableFinalSubquery = (table: AnyTable): SQLFragment => {
     return sql`${sql.identifier({
       table: table.originalName,
       column: physicalName,
-    })}${sql.raw(" as ")}${sql.identifier(physicalName)}`;
+    })}${SQL_AS}${sql.identifier(physicalName)}`;
   });
 
-  return sql`${sql.raw("(")}${sql.raw("select ")}${joinSqlParts(selectionParts, ", ")}${sql.raw(" from ")}${sql.identifier(
-    {
-      table: table.originalName,
-    },
-  )}${sql.raw(" final) as ")}${sql.identifier(sourceAlias)}`;
+  return sql`${SQL_OPEN_PAREN}${SQL_SELECT}${joinSqlParts(selectionParts, ", ")}${SQL_LEADING_FROM}${sql.identifier({
+    table: table.originalName,
+  })}${SQL_FINAL_PAREN_AS}${sql.identifier(sourceAlias)}`;
 };
 
 const renderRootSource = (
@@ -586,7 +618,7 @@ const renderRootSource = (
   }
 
   if (!source.alias && !hasJoins) {
-    return sql`${renderTableIdentifier(source)}${sql.raw(" final")}`;
+    return sql`${renderTableIdentifier(source)}${SQL_FINAL}`;
   }
 
   return renderTableFinalSubquery(source);
@@ -625,7 +657,7 @@ const getSingleTableName = (source: QuerySource | undefined, joins: readonly Joi
 
 const renderSelection = (selectionItems: readonly SelectionItem[], ctx: BuildContext) => {
   const selectionParts = selectionItems.map((item) => {
-    return sql`${item.expression.compile(ctx)}${sql.raw(" as ")}${sql.identifier(item.sqlAlias)}`;
+    return sql`${item.expression.compile(ctx)}${SQL_AS}${sql.identifier(item.sqlAlias)}`;
   });
 
   return joinSqlParts(selectionParts, ", ");
@@ -685,7 +717,7 @@ const normalizeLimitValue = (value: LimitValue, ctx: BuildContext) => {
 };
 
 const renderCountExpression = (mode: CountMode): SQLFragment => {
-  return wrapCountSql(sql.raw("count()"), mode);
+  return wrapCountSql(SQL_COUNT, mode);
 };
 
 // Cast-to-boolean decoder shared by every predicate-building helper. Hoisting
@@ -696,10 +728,10 @@ const booleanCastDecoder: Decoder<boolean> = (value) => Boolean(value);
 const buildLogicalPredicate = (operator: "and" | "or", predicates: readonly SqlPredicate[]): SqlPredicate => {
   return createExpression<boolean>({
     compile: (ctx) =>
-      sql`${sql.raw("(")}${sql.join(
+      sql`${SQL_OPEN_PAREN}${sql.join(
         predicates.map((predicate) => predicate.compile(ctx)),
         sql.raw(` ${operator} `),
-      )}${sql.raw(")")}`,
+      )}${SQL_CLOSE_PAREN}`,
     decoder: booleanCastDecoder,
     sqlType: "Bool",
   });
@@ -768,10 +800,10 @@ const renderCtes = (ctes: readonly AnyCte[], ctx: BuildContext): SQLFragment | u
   }
 
   const cteParts = ctes.map((cte) => {
-    return sql`${sql.identifier(cte.name)}${sql.raw(" as (")}${sql.raw(compileNestedQuery(cte.query, ctx).statement)}${sql.raw(")")}`;
+    return sql`${sql.identifier(cte.name)}${SQL_AS_OPEN}${sql.raw(compileNestedQuery(cte.query, ctx).statement)}${SQL_CLOSE_PAREN}`;
   });
 
-  return sql`${sql.raw("with ")}${joinSqlParts(cteParts, ", ")}`;
+  return sql`${SQL_WITH}${joinSqlParts(cteParts, ", ")}`;
 };
 
 const buildCountStatement = (
@@ -793,13 +825,13 @@ const buildCountStatement = (
 
   queryParts.push(
     config.outputAlias
-      ? sql`${sql.raw("select ")}${renderCountExpression(config.mode)}${sql.raw(" as ")}${sql.identifier(config.outputAlias)}`
-      : sql`${sql.raw("select ")}${renderCountExpression(config.mode)}`,
+      ? sql`${SQL_SELECT}${renderCountExpression(config.mode)}${SQL_AS}${sql.identifier(config.outputAlias)}`
+      : sql`${SQL_SELECT}${renderCountExpression(config.mode)}`,
   );
-  queryParts.push(sql`${sql.raw("from ")}${renderSource(config.source, ctx)}`);
+  queryParts.push(sql`${SQL_FROM}${renderSource(config.source, ctx)}`);
 
   if (config.condition) {
-    queryParts.push(sql`${sql.raw("where ")}${config.condition.compile(ctx)}`);
+    queryParts.push(sql`${SQL_WHERE}${config.condition.compile(ctx)}`);
   }
 
   return sql`${joinSqlParts(queryParts, " ")}`;
@@ -819,12 +851,12 @@ const createCountQuery = <TMode extends CountMode = "unsafe">(config: {
 
   const expression = createExpression<TResult>({
     compile: (ctx) =>
-      sql`${sql.raw("(")}${buildCountStatement(ctx, {
+      sql`${SQL_OPEN_PAREN}${buildCountStatement(ctx, {
         ctes: config.ctes,
         source: config.source,
         condition,
         mode,
-      })}${sql.raw(")")}`,
+      })}${SQL_CLOSE_PAREN}`,
     decoder,
     sqlType: getCountSqlType(mode),
   });
@@ -1380,29 +1412,27 @@ export const createSelectBuilder = <
           queryParts.push(cteFragment);
         }
 
-        queryParts.push(sql`${sql.raw("select ")}${renderSelection(selectionItems, ctx)}`);
+        queryParts.push(sql`${SQL_SELECT}${renderSelection(selectionItems, ctx)}`);
 
         if (state.fromSource) {
           const fromSource = renderRootSource(state.fromSource, ctx, state.useFinal, state.joins.length > 0);
-          queryParts.push(sql`${sql.raw("from ")}${fromSource}`);
+          queryParts.push(sql`${SQL_FROM}${fromSource}`);
         }
 
         if (state.joins.length > 0) {
           for (const join of state.joins) {
-            const joinKeyword = join.type === "inner" ? "inner join" : "left join";
-            queryParts.push(
-              sql`${sql.raw(`${joinKeyword} `)}${renderSource(join.source, ctx)}${sql.raw(" on ")}${join.on.compile(ctx)}`,
-            );
+            const joinKeyword = join.type === "inner" ? SQL_INNER_JOIN : SQL_LEFT_JOIN;
+            queryParts.push(sql`${joinKeyword}${renderSource(join.source, ctx)}${SQL_ON}${join.on.compile(ctx)}`);
           }
         }
 
         if (state.whereClause) {
-          queryParts.push(sql`${sql.raw("where ")}${state.whereClause.compile(ctx)}`);
+          queryParts.push(sql`${SQL_WHERE}${state.whereClause.compile(ctx)}`);
         }
 
         if (state.groupByItems.length > 0) {
           queryParts.push(
-            sql`${sql.raw("group by ")}${joinSqlParts(
+            sql`${SQL_GROUP_BY}${joinSqlParts(
               state.groupByItems.map((item) => item.compile(ctx)),
               ", ",
             )}`,
@@ -1410,19 +1440,20 @@ export const createSelectBuilder = <
         }
 
         if (state.havingClause) {
-          queryParts.push(sql`${sql.raw("having ")}${state.havingClause.compile(ctx)}`);
+          queryParts.push(sql`${SQL_HAVING}${state.havingClause.compile(ctx)}`);
         }
 
         if (state.orderByItems.length > 0) {
           const orderByParts = state.orderByItems.map((item) => {
-            return sql`${item.expression.compile(ctx)}${sql.raw(` ${item.direction.toUpperCase()}`)}`;
+            const directionFragment = item.direction === "asc" ? SQL_ASC : SQL_DESC;
+            return sql`${item.expression.compile(ctx)}${directionFragment}`;
           });
-          queryParts.push(sql`${sql.raw("order by ")}${joinSqlParts(orderByParts, ", ")}`);
+          queryParts.push(sql`${SQL_ORDER_BY}${joinSqlParts(orderByParts, ", ")}`);
         }
 
         if (state.limitByValue) {
           queryParts.push(
-            sql`${sql.raw("limit ")}${normalizeLimitValue(state.limitByValue.limit, ctx)}${sql.raw(" by ")}${joinSqlParts(
+            sql`${SQL_LIMIT}${normalizeLimitValue(state.limitByValue.limit, ctx)}${SQL_LIMIT_BY}${joinSqlParts(
               state.limitByValue.columns.map((column) => column.compile(ctx)),
               ", ",
             )}`,
@@ -1430,11 +1461,11 @@ export const createSelectBuilder = <
         }
 
         if (state.limitValue !== undefined) {
-          queryParts.push(sql`${sql.raw("limit ")}${normalizeLimitValue(state.limitValue, ctx)}`);
+          queryParts.push(sql`${SQL_LIMIT}${normalizeLimitValue(state.limitValue, ctx)}`);
         }
 
         if (state.offsetValue !== undefined) {
-          queryParts.push(sql`${sql.raw("offset ")}${normalizeLimitValue(state.offsetValue, ctx)}`);
+          queryParts.push(sql`${SQL_OFFSET}${normalizeLimitValue(state.offsetValue, ctx)}`);
         }
 
         const statement = sql`${joinSqlParts(queryParts, " ")}`;
@@ -1887,7 +1918,7 @@ export function or(...conditions: PredicateInput[]): Predicate | undefined {
 export const not = (condition: Predicate): Predicate => {
   const wrapped = condition as SqlPredicate;
   return createExpression<boolean>({
-    compile: (ctx) => sql`${sql.raw("not (")}${wrapped.compile(ctx)}${sql.raw(")")}`,
+    compile: (ctx) => sql`${SQL_NOT_OPEN}${wrapped.compile(ctx)}${SQL_CLOSE_PAREN}`,
     decoder: booleanCastDecoder,
     sqlType: "Bool",
   });
@@ -1976,12 +2007,12 @@ export const between = (expression: unknown, start: unknown, end: unknown): Pred
   assertPredicateValue(end, "between");
   return createExpression<boolean>({
     compile: (ctx) =>
-      sql`${wrapped.compile(ctx)}${sql.raw(" between ")}${compilePredicateValue(
+      sql`${wrapped.compile(ctx)}${SQL_BETWEEN}${compilePredicateValue(
         expression,
         start,
         ctx,
         wrapped.sqlType,
-      )}${sql.raw(" and ")}${compilePredicateValue(expression, end, ctx, wrapped.sqlType)}`,
+      )}${SQL_AND}${compilePredicateValue(expression, end, ctx, wrapped.sqlType)}`,
     decoder: booleanCastDecoder,
     sqlType: "Bool",
   });
@@ -2103,11 +2134,11 @@ const createInExpression = (
           return sql.raw(emptyArrayLiteral);
         }
         const parts = right.map((value) => compilePredicateValue(left, value, ctx, leftExpression.sqlType));
-        return sql`${leftExpression.compile(ctx)}${sql.raw(operator)}${joinSqlParts(parts, ", ")}${sql.raw(")")}`;
+        return sql`${leftExpression.compile(ctx)}${sql.raw(operator)}${joinSqlParts(parts, ", ")}${SQL_CLOSE_PAREN}`;
       }
 
       const querySource = (right as AnySubquery | AnyCte).query;
-      return sql`${leftExpression.compile(ctx)}${sql.raw(operator)}${sql.raw(compileNestedQuery(querySource, ctx).statement)}${sql.raw(")")}`;
+      return sql`${leftExpression.compile(ctx)}${sql.raw(operator)}${sql.raw(compileNestedQuery(querySource, ctx).statement)}${SQL_CLOSE_PAREN}`;
     },
     decoder: booleanCastDecoder,
     sqlType: "Bool",
@@ -2124,7 +2155,7 @@ export const exists = (query: AnySubquery | AnyCte | SelectBuilder<Record<string
   const selectQuery = isSubquery(query) || isCte(query) ? query.query : query;
   return createExpression<boolean>({
     compile: (ctx) =>
-      sql`${sql.raw("exists (")}${sql.raw(compileNestedQuery(selectQuery, ctx).statement)}${sql.raw(")")}`,
+      sql`${SQL_EXISTS_OPEN}${sql.raw(compileNestedQuery(selectQuery, ctx).statement)}${SQL_CLOSE_PAREN}`,
     decoder: booleanCastDecoder,
     sqlType: "Bool",
   });
@@ -2156,7 +2187,7 @@ export const createTableFunctionSource = (
       if (!aliasName) {
         return compiledSource;
       }
-      return sql`${compiledSource}${sql.raw(" as ")}${sql.identifier(aliasName)}`;
+      return sql`${compiledSource}${SQL_AS}${sql.identifier(aliasName)}`;
     },
     as<TAlias extends string>(nextAlias: TAlias) {
       return createTableFunctionSource(compileSource, nextAlias);

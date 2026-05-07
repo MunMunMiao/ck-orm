@@ -39,10 +39,22 @@ import { isSqlFragment, type SQLFragment, sql } from "./sql";
 
 export type JsonPathSegment = string | number | bigint;
 
-const compileFunctionCall = (name: string, args: readonly unknown[], ctx: BuildContext) => {
+// Pre-validates `name` and returns the rendered fragment. Builders that emit
+// the same function name on every compile (the common case) call this once
+// and capture the result, instead of re-running the regex check per compile.
+const renderFunctionName = (name: string): SQLFragment => {
   assertValidSqlIdentifier(name, "function");
+  return sql.raw(name);
+};
+
+// Accepts either a pre-rendered fragment (cheap repeated use) or a raw string
+// (validated on the spot). Helpers that compile the same builtin on every
+// expression should pass a fragment; one-shot dynamic-name call sites stay on
+// the string overload.
+const compileFunctionCall = (name: string | SQLFragment, args: readonly unknown[], ctx: BuildContext): SQLFragment => {
+  const nameFragment = typeof name === "string" ? renderFunctionName(name) : name;
   const compiledArgs = args.map((argument) => compileValue(argument, ctx));
-  return sql`${sql.raw(name)}(${joinSqlParts(compiledArgs, ", ")})`;
+  return sql`${nameFragment}(${joinSqlParts(compiledArgs, ", ")})`;
 };
 
 const createFunctionExpression = <TData>(
@@ -53,8 +65,9 @@ const createFunctionExpression = <TData>(
     sqlType?: string;
   },
 ): Selection<TData> => {
+  const nameFragment = renderFunctionName(name);
   return createExpression({
-    compile: (ctx) => compileFunctionCall(name, args, ctx),
+    compile: (ctx) => compileFunctionCall(nameFragment, args, ctx),
     decoder: config?.decoder ?? (passThroughDecoder as Decoder<TData>),
     sqlType: config?.sqlType,
   });
@@ -69,12 +82,12 @@ const createParameterizedFunctionExpression = <TData>(
     sqlType?: string;
   },
 ): Selection<TData> => {
+  const nameFragment = renderFunctionName(name);
   return createExpression({
     compile: (ctx) => {
-      assertValidSqlIdentifier(name, "function");
       const compiledParameters = parameters.map((argument) => compileValue(argument, ctx));
       const compiledArgs = args.map((argument) => compileValue(argument, ctx));
-      return sql`${sql.raw(name)}(${joinSqlParts(compiledParameters, ", ")})(${joinSqlParts(compiledArgs, ", ")})`;
+      return sql`${nameFragment}(${joinSqlParts(compiledParameters, ", ")})(${joinSqlParts(compiledArgs, ", ")})`;
     },
     decoder: config?.decoder ?? (passThroughDecoder as Decoder<TData>),
     sqlType: config?.sqlType,
@@ -712,10 +725,13 @@ const createTypeStringFunctionExpression = <TData>(
 
 const createFixedStringExpression = (expression: unknown, length: unknown): Selection<string> => {
   assertPositiveInteger("toFixedString length", length);
+  // `length` is fixed for this expression — render the literal once at
+  // builder time so each compile reuses the same fragment.
+  const lengthFragment = sql.raw(String(length));
   return createExpression<string>({
     compile: (ctx) => {
       const compiledExpr = compileValue(expression, ctx);
-      return sql`toFixedString(${compiledExpr}, ${sql.raw(String(length))})`;
+      return sql`toFixedString(${compiledExpr}, ${lengthFragment})`;
     },
     decoder: stringDecoder,
     sqlType: `FixedString(${length})`,
@@ -731,15 +747,17 @@ const createDateTime64ConversionExpression = <TData>(
   decoder: Decoder<TData>,
 ): Selection<TData> => {
   assertDateTime64Scale(scale);
+  const scaleFragment = sql.raw(String(scale));
+  const nameFragment = sql.raw(name);
   return createExpression<TData>({
     compile: (ctx) => {
       const compiledArgs = [
         compileValue(expression, ctx),
-        sql.raw(String(scale)),
+        scaleFragment,
         ...(timezone === undefined ? [] : [compileValue(timezone, ctx)]),
         ...(defaultValue === undefined ? [] : [compileValue(defaultValue, ctx)]),
       ];
-      return sql`${sql.raw(name)}(${joinSqlParts(compiledArgs, ", ")})`;
+      return sql`${nameFragment}(${joinSqlParts(compiledArgs, ", ")})`;
     },
     decoder,
     sqlType: `DateTime64(${scale})`,
@@ -753,10 +771,12 @@ const createTime64Expression = <TData>(
   decoder: Decoder<TData>,
 ): Selection<TData> => {
   assertDateTime64Scale(precision);
+  const nameFragment = sql.raw(name);
+  const precisionFragment = sql.raw(String(precision));
   return createExpression<TData>({
     compile: (ctx) => {
       const compiledExpr = compileValue(expression, ctx);
-      return sql`${sql.raw(name)}(${compiledExpr}, ${sql.raw(String(precision))})`;
+      return sql`${nameFragment}(${compiledExpr}, ${precisionFragment})`;
     },
     decoder,
     sqlType: `Time64(${precision})`,
@@ -771,14 +791,16 @@ const createDateTime64ParseExpression = <TData>(
   decoder: Decoder<TData>,
 ): Selection<TData> => {
   if (precision !== undefined) assertDateTime64Scale(precision);
+  const nameFragment = sql.raw(name);
+  const precisionFragment = precision === undefined ? undefined : sql.raw(String(precision));
   return createExpression<TData>({
     compile: (ctx) => {
       const compiledArgs = [
         ...leadingArgs.map((argument) => compileValue(argument, ctx)),
-        ...(precision === undefined ? [] : [sql.raw(String(precision))]),
+        ...(precisionFragment === undefined ? [] : [precisionFragment]),
         ...(timezone === undefined ? [] : [compileValue(timezone, ctx)]),
       ];
-      return sql`${sql.raw(name)}(${joinSqlParts(compiledArgs, ", ")})`;
+      return sql`${nameFragment}(${joinSqlParts(compiledArgs, ", ")})`;
     },
     decoder,
     sqlType: precision === undefined ? "DateTime64" : `DateTime64(${precision})`,

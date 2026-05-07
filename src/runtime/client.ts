@@ -175,14 +175,14 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
     } as ClickHouseBaseQueryOptions & TOptions;
   };
 
-  const runSerial = async <TValue>(
+  const runSerial = <TValue>(
     options: ClickHouseBaseQueryOptions,
     operation: () => Promise<TValue>,
   ): Promise<TValue> => {
     if (!sessionConcurrencyController) {
-      return await operation();
+      return operation();
     }
-    return await sessionConcurrencyController.run(options.session_id, operation, options.abort_signal);
+    return sessionConcurrencyController.run(options.session_id, operation, options.abort_signal);
   };
 
   const buildQueryEvent = (input: {
