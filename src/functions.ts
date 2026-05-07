@@ -8,6 +8,7 @@ import {
 } from "./coercion";
 import type { AnyColumn } from "./columns";
 import { createClientValidationError, createDecodeError } from "./errors";
+import { assertIntegerInRange, assertNonNegativeInteger, assertPositiveInteger } from "./internal/assert";
 import { normalizeClickHouseTypeLiteral, unwrapNullableLowCardinalityType } from "./internal/clickhouse-type";
 import {
   type CountMode,
@@ -173,6 +174,8 @@ const COUNT_FN_FRAGMENT = renderFunctionName("count");
 const COUNT_IF_FN_FRAGMENT = renderFunctionName("countIf");
 const UNIQ_EXACT_FN_FRAGMENT = renderFunctionName("uniqExact");
 const JSON_EXTRACT_FN_FRAGMENT = renderFunctionName("JSONExtract");
+const COALESCE_FN_FRAGMENT = renderFunctionName("coalesce");
+const TUPLE_ELEMENT_FN_FRAGMENT = renderFunctionName("tupleElement");
 
 const FIXED_WIDTH_DECIMAL_PRECISION = {
   toDecimal32: 9,
@@ -196,21 +199,7 @@ const FIXED_WIDTH_DECIMAL_PRECISION = {
 type FixedWidthDecimalName = keyof typeof FIXED_WIDTH_DECIMAL_PRECISION;
 
 const assertDateTime64Scale: (scale: unknown) => asserts scale is number = (scale) => {
-  if (typeof scale !== "number" || !Number.isInteger(scale) || scale < 0 || scale > 9) {
-    throw createClientValidationError(`toDateTime64 scale must be an integer between 0 and 9, got ${String(scale)}`);
-  }
-};
-
-const assertNonNegativeInteger: (label: string, value: unknown) => asserts value is number = (label, value) => {
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
-    throw createClientValidationError(`${label} must be a non-negative integer, got ${String(value)}`);
-  }
-};
-
-const assertPositiveInteger: (label: string, value: unknown) => asserts value is number = (label, value) => {
-  if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
-    throw createClientValidationError(`${label} must be a positive integer, got ${String(value)}`);
-  }
+  assertIntegerInRange("toDateTime64 scale", scale, 0, 9);
 };
 
 const createStringLiteral = (label: string, value: unknown): SQLFragment => {
@@ -486,7 +475,6 @@ const createCoalesceExpression = <TData>(args: readonly unknown[]): Selection<TD
   const firstExpression = args.length > 0 ? ensureExpression<TData>(args[0]) : undefined;
   return createExpression({
     compile: (ctx) => {
-      assertValidSqlIdentifier("coalesce", "function");
       const compiledArgs = args.map((argument, index) =>
         compileValue(
           argument,
@@ -494,7 +482,7 @@ const createCoalesceExpression = <TData>(args: readonly unknown[]): Selection<TD
           index === 0 ? undefined : resolveCoalesceFallbackSqlType(firstExpression?.sqlType, argument),
         ),
       );
-      return sql`coalesce(${joinSqlParts(compiledArgs, ", ")})`;
+      return sql`${COALESCE_FN_FRAGMENT}(${joinSqlParts(compiledArgs, ", ")})`;
     },
     decoder: firstExpression?.decoder ?? (passThroughDecoder as Decoder<TData>),
     sqlType: firstExpression?.sqlType,
@@ -1830,13 +1818,17 @@ const scalarFns = {
     indexOrName: JsonPathSegment,
     defaultValue?: unknown,
   ): Selection<TData> {
+    // `indexOrName` is fixed for this expression — validate-and-render the
+    // index/name literal once at builder time so each compile only splices
+    // in the runtime tuple/default arguments.
+    const indexFragment = createTupleElementIndexLiteral(indexOrName);
     return createExpression({
       compile: (ctx) => {
         const args =
           defaultValue === undefined
-            ? [compileValue(tuple, ctx), createTupleElementIndexLiteral(indexOrName)]
-            : [compileValue(tuple, ctx), createTupleElementIndexLiteral(indexOrName), compileValue(defaultValue, ctx)];
-        return sql`tupleElement(${joinSqlParts(args, ", ")})`;
+            ? [compileValue(tuple, ctx), indexFragment]
+            : [compileValue(tuple, ctx), indexFragment, compileValue(defaultValue, ctx)];
+        return sql`${TUPLE_ELEMENT_FN_FRAGMENT}(${joinSqlParts(args, ", ")})`;
       },
       decoder: passThroughDecoder as Decoder<TData>,
     });

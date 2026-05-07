@@ -253,35 +253,41 @@ export const createJsonEachRowBody = (
     return closing;
   };
 
-  return {
-    body: new ReadableStream<Uint8Array>({
-      async pull(controller) {
-        try {
-          const result = await iterator.next();
-          if (result.done) {
-            await closeIterator();
-            controller.close();
-            return;
-          }
-          controller.enqueue(sharedUtf8Encoder.encode(`${json.stringify(result.value)}\n`));
-        } catch (error) {
-          try {
-            await closeIterator();
-          } catch {
-            // ignore iterator cleanup failures
-          }
-          controller.error(error);
-          throw error;
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const result = await iterator.next();
+        if (result.done) {
+          await closeIterator();
+          controller.close();
+          return;
         }
-      },
-      async cancel() {
+        controller.enqueue(sharedUtf8Encoder.encode(`${json.stringify(result.value)}\n`));
+      } catch (error) {
         try {
           await closeIterator();
         } catch {
           // ignore iterator cleanup failures
         }
-      },
-    }),
-    ...(bodyMode === "duplex-half" ? { duplex: "half" as const } : {}),
-  };
+        controller.error(error);
+        throw error;
+      }
+    },
+    async cancel() {
+      try {
+        await closeIterator();
+      } catch {
+        // ignore iterator cleanup failures
+      }
+    },
+  });
+
+  // Imperative assignment instead of a conditional spread — this ships on
+  // the AsyncIterable upload path that already allocates a stream, so even
+  // though it's not hot, the explicit shape reads more directly.
+  const result: JsonEachRowRequestBody = { body };
+  if (bodyMode === "duplex-half") {
+    result.duplex = "half";
+  }
+  return result;
 };

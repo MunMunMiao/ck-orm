@@ -382,21 +382,20 @@ export const assertValidQueryParamKey = (key: string): void => {
 
 const VALID_QUERY_ID = /^[a-zA-Z0-9_-]{1,100}$/;
 
-export const assertValidQueryId = (id: string): void => {
+// `query_id` and `session_id` share the exact same alphabet/length rule —
+// only the parameter label in the error message differs. Funnel both through
+// the same checker so the rule (and its phrasing) stays in lockstep.
+const assertValidQueryOrSessionId = (label: "query_id" | "session_id", id: string): void => {
   if (!VALID_QUERY_ID.test(id)) {
     throw createClientValidationError(
-      `Invalid query_id: "${id}". Must be 1-100 chars of alphanumerics, underscores, or hyphens.`,
+      `Invalid ${label}: "${id}". Must be 1-100 chars of alphanumerics, underscores, or hyphens.`,
     );
   }
 };
 
-export const assertValidSessionId = (id: string): void => {
-  if (!VALID_QUERY_ID.test(id)) {
-    throw createClientValidationError(
-      `Invalid session_id: "${id}". Must be 1-100 chars of alphanumerics, underscores, or hyphens.`,
-    );
-  }
-};
+export const assertValidQueryId = (id: string): void => assertValidQueryOrSessionId("query_id", id);
+
+export const assertValidSessionId = (id: string): void => assertValidQueryOrSessionId("session_id", id);
 
 export const formatQueryParamValue = (
   value: unknown,

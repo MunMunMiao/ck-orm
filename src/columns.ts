@@ -1,5 +1,6 @@
 import { toBoolean, toDate, toIntegerNumber, toIntegerString, toNumber, toStringValue } from "./coercion";
 import { createClientValidationError, createDecodeError, type DecodeError, isDecodeError } from "./errors";
+import { assertIntegerInRange, assertPositiveInteger } from "./internal/assert";
 import { normalizeAggregateFunctionSignature, normalizeClickHouseTypeLiteral } from "./internal/clickhouse-type";
 import { assertDecimalParams, type DecimalParams, formatDecimalSqlType } from "./internal/decimal";
 import { escapeSqlSingleQuoted } from "./internal/escape";
@@ -199,18 +200,6 @@ const parseNamedPair = <TLeft, TRight>(
   };
 };
 
-const assertPositiveInteger = (label: string, value: number): void => {
-  if (!Number.isInteger(value) || value <= 0) {
-    throw createClientValidationError(`${label} must be a positive integer, got ${value}`);
-  }
-};
-
-const assertPrecision = (label: string, value: number): void => {
-  if (!Number.isInteger(value) || value < 0 || value > 9) {
-    throw createClientValidationError(`${label} must be an integer between 0 and 9, got ${value}`);
-  }
-};
-
 const normalizeSafeAggregateTypeArg = (value: string): string => {
   try {
     return normalizeClickHouseTypeLiteral(value);
@@ -254,6 +243,26 @@ const rethrowDecodeWithPath = (error: unknown, segment: string, originalValue: u
   const message = error instanceof Error ? error.message : String(error);
   return createDecodeError(message, originalValue, { path: segment });
 };
+
+// Both `tuple` decode and encode paths assert the same array shape; the only
+// difference is the error kind (`decode` vs `client_validation`). Hand the
+// factory in so the message text stays in lockstep across the two branches.
+type TupleErrorFactory = (message: string, value: unknown) => Error;
+const tupleDecodeErrorFactory: TupleErrorFactory = (message, value) => createDecodeError(message, value);
+const tupleClientValidationErrorFactory: TupleErrorFactory = (message) => createClientValidationError(message);
+
+function assertTupleArrayShape(
+  value: unknown,
+  expectedLength: number,
+  errorFactory: TupleErrorFactory,
+): asserts value is unknown[] {
+  if (!Array.isArray(value)) {
+    throw errorFactory(`Cannot convert value to tuple: ${String(value)}`, value);
+  }
+  if (value.length !== expectedLength) {
+    throw errorFactory(`Cannot convert value to tuple: expected ${expectedLength} items, got ${value.length}`, value);
+  }
+}
 
 const ddlModeLabels = {
   default: "DEFAULT",
@@ -537,9 +546,7 @@ export function fixedString(name: string, config: FixedStringConfig): FixedStrin
 export function fixedString(first: string | FixedStringConfig, second?: FixedStringConfig): FixedString<string> {
   const { name, config } = parseNamedConfig("fixedString", first, second);
   const { length } = config;
-  if (!Number.isInteger(length) || length <= 0) {
-    throw createClientValidationError(`fixedString length must be a positive integer, got ${length}`);
-  }
+  assertPositiveInteger("fixedString length", length);
   return createColumnFactory({
     configuredName: name,
     sqlType: `FixedString(${length})`,
@@ -665,7 +672,7 @@ export function time64(name: string, config: PrecisionConfig): Time64<string>;
 export function time64(first: string | PrecisionConfig, second?: PrecisionConfig): Time64<string> {
   const { name, config } = parseNamedConfig("time64", first, second);
   const { precision } = config;
-  assertPrecision("time64 precision", precision);
+  assertIntegerInRange("time64 precision", precision, 0, 9);
   return createColumnFactory({
     configuredName: name,
     sqlType: `Time64(${precision})`,
@@ -710,7 +717,7 @@ export function dateTime64(name: string, config: DateTime64Config): DateTime64<D
 export function dateTime64(first: string | DateTime64Config, second?: DateTime64Config): DateTime64<Date> {
   const { name, config } = parseNamedConfig("dateTime64", first, second);
   const { precision, timezone } = config;
-  assertPrecision("dateTime64 precision", precision);
+  assertIntegerInRange("dateTime64 precision", precision, 0, 9);
   const suffix = timezone ? `, '${escapeSqlSingleQuoted(timezone)}'` : "";
   return createColumnFactory({
     configuredName: name,
@@ -887,15 +894,7 @@ export function tuple<const TItems extends readonly AnyColumn[]>(
     configuredName: name,
     sqlType: `Tuple(${items.map((item) => item.sqlType).join(", ")})`,
     mapFromDriverValue: (value) => {
-      if (!Array.isArray(value)) {
-        throw createDecodeError(`Cannot convert value to tuple: ${String(value)}`, value);
-      }
-      if (value.length !== items.length) {
-        throw createDecodeError(
-          `Cannot convert value to tuple: expected ${items.length} items, got ${value.length}`,
-          value,
-        );
-      }
+      assertTupleArrayShape(value, items.length, tupleDecodeErrorFactory);
       return value.map((item, index) => {
         try {
           return items[index]?.mapFromDriverValue(item);
@@ -907,14 +906,7 @@ export function tuple<const TItems extends readonly AnyColumn[]>(
       };
     },
     mapToDriverValue: (value) => {
-      if (!Array.isArray(value)) {
-        throw createClientValidationError(`Cannot convert value to tuple: ${String(value)}`);
-      }
-      if (value.length !== items.length) {
-        throw createClientValidationError(
-          `Cannot convert value to tuple: expected ${items.length} items, got ${value.length}`,
-        );
-      }
+      assertTupleArrayShape(value, items.length, tupleClientValidationErrorFactory);
       return value.map((item, index) => items[index]?.mapToDriverValue(item)) as unknown[];
     },
   });
