@@ -33,7 +33,10 @@ export const formatClickHouseDateTime = (value: Date, precision: number): string
   if (precision <= 0) {
     return datePart;
   }
-  const ms = value.getUTCMilliseconds();
-  const fractional = ms.toString().padStart(3, "0").padEnd(precision, "0").slice(0, precision);
+  const msPadded = value.getUTCMilliseconds().toString().padStart(3, "0");
+  // `precision === 3` (common DateTime64(3)) hits the fast path with no
+  // further string ops; lower precision truncates, higher precision pads.
+  const fractional =
+    precision === 3 ? msPadded : precision < 3 ? msPadded.slice(0, precision) : msPadded.padEnd(precision, "0");
   return `${datePart}.${fractional}`;
 };

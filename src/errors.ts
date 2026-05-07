@@ -245,23 +245,14 @@ export const normalizeTransportError = (
     return withClickHouseORMErrorContext(error, context);
   }
 
-  if (error instanceof Error) {
-    return createRequestFailedError({
-      responseText: error.message.endsWith(UNKNOWN_EXECUTION_STATE_SUFFIX)
-        ? error.message
-        : `${error.message}${UNKNOWN_EXECUTION_STATE_SUFFIX}`,
-      cause: error,
-      executionState: "unknown",
-      queryId: context.queryId,
-      sessionId: context.sessionId,
-    });
-  }
-
-  const stringified = String(error);
+  // Both `Error` and arbitrary throwables collapse to the same shape: extract
+  // a string message, append the unknown-execution-state suffix unless it's
+  // already there, and wrap as a transport error.
+  const message = error instanceof Error ? error.message : String(error);
   return createRequestFailedError({
-    responseText: stringified.endsWith(UNKNOWN_EXECUTION_STATE_SUFFIX)
-      ? stringified
-      : `${stringified}${UNKNOWN_EXECUTION_STATE_SUFFIX}`,
+    responseText: message.endsWith(UNKNOWN_EXECUTION_STATE_SUFFIX)
+      ? message
+      : `${message}${UNKNOWN_EXECUTION_STATE_SUFFIX}`,
     cause: error,
     executionState: "unknown",
     queryId: context.queryId,

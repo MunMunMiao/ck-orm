@@ -778,6 +778,23 @@ export function qbit<TInner extends Float32 | Float64 | BFloat16, TData extends 
     mapToDriverValue: identity,
   });
 }
+// `Enum8` and `Enum16` differ only in width — same key/value validation, same
+// decoder. Render the body once and let the public factories pick the label.
+const buildEnumColumn = <TData extends string>(
+  label: "Enum8" | "Enum16",
+  configuredName: string | undefined,
+  values: Record<string, number>,
+) => {
+  const entries = Object.entries(values)
+    .map(([key, value]) => `'${escapeSqlSingleQuoted(key)}' = ${value}`)
+    .join(", ");
+  return createColumnFactory<TData, string>({
+    configuredName,
+    sqlType: `${label}(${entries})`,
+    mapFromDriverValue: toStringValue as Decoder<TData>,
+  });
+};
+
 export function enum8<TData extends string = string>(values: Record<string, number>): Enum8<TData>;
 export function enum8<TData extends string = string>(name: string, values: Record<string, number>): Enum8<TData>;
 export function enum8<TData extends string = string>(
@@ -785,13 +802,7 @@ export function enum8<TData extends string = string>(
   second?: Record<string, number>,
 ): Enum8<TData> {
   const { name, value: values } = parseNamedValue<Record<string, number>>("enum8", first, second);
-  return createColumnFactory({
-    configuredName: name,
-    sqlType: `Enum8(${Object.entries(values)
-      .map(([key, value]) => `'${escapeSqlSingleQuoted(key)}' = ${value}`)
-      .join(", ")})`,
-    mapFromDriverValue: toStringValue as Decoder<TData>,
-  });
+  return buildEnumColumn<TData>("Enum8", name, values);
 }
 export function enum16<TData extends string = string>(values: Record<string, number>): Enum16<TData>;
 export function enum16<TData extends string = string>(name: string, values: Record<string, number>): Enum16<TData>;
@@ -800,13 +811,7 @@ export function enum16<TData extends string = string>(
   second?: Record<string, number>,
 ): Enum16<TData> {
   const { name, value: values } = parseNamedValue<Record<string, number>>("enum16", first, second);
-  return createColumnFactory({
-    configuredName: name,
-    sqlType: `Enum16(${Object.entries(values)
-      .map(([key, value]) => `'${escapeSqlSingleQuoted(key)}' = ${value}`)
-      .join(", ")})`,
-    mapFromDriverValue: toStringValue as Decoder<TData>,
-  });
+  return buildEnumColumn<TData>("Enum16", name, values);
 }
 // ClickHouse rejects `Nullable(Array|Map|Tuple)` outright — the rule is
 // stable, so cache the regex at module load instead of paying the literal

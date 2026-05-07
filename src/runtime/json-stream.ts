@@ -17,6 +17,11 @@ export type JsonHandling = {
 // multi-byte sequences across `decode(chunk, { stream: true })` calls.
 const sharedUtf8Encoder = new TextEncoder();
 
+// Compact `createLineStream`'s buffer once the head index has consumed at
+// least this many bytes — keeps memory bounded on long-running streams while
+// staying out of the way for short responses.
+const LINE_STREAM_COMPACT_THRESHOLD = 64 * 1024;
+
 export type JsonEachRowRequestBody = {
   body: string | ReadableStream<Uint8Array>;
   duplex?: "half";
@@ -183,7 +188,6 @@ export const createLineStream = async function* (response: Response) {
   // Append-and-mark via `start` index instead of `buffer = buffer.slice(...)` per
   // line, then occasionally compact. The naive `+= chunk; = slice()` form falls
   // off V8's fast path for cons-strings on multi-MB JSONEachRow responses.
-  const compactionThreshold = 64 * 1024;
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -205,7 +209,7 @@ export const createLineStream = async function* (response: Response) {
         }
         newlineIndex = buffer.indexOf("\n", start);
       }
-      if (start >= compactionThreshold) {
+      if (start >= LINE_STREAM_COMPACT_THRESHOLD) {
         buffer = buffer.slice(start);
         start = 0;
       }

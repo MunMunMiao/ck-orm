@@ -13,6 +13,12 @@ import { createDecodeError } from "./errors";
  * attached) on failure.
  */
 
+// Shared shape for the "tried to coerce X but the value didn't fit" decode
+// error. Hoisting it keeps every coercion path emitting an identical
+// `Cannot convert value to <target>: <stringified>` message.
+const cannotConvertError = (target: string, value: unknown) =>
+  createDecodeError(`Cannot convert value to ${target}: ${String(value)}`, value);
+
 export const toNumber = (value: unknown): number => {
   let result: number;
   if (typeof value === "number") {
@@ -20,10 +26,10 @@ export const toNumber = (value: unknown): number => {
   } else if (typeof value === "string" || typeof value === "bigint") {
     result = Number(value);
   } else {
-    throw createDecodeError(`Cannot convert value to number: ${String(value)}`, value);
+    throw cannotConvertError("number", value);
   }
   if (!Number.isFinite(result)) {
-    throw createDecodeError(`Cannot convert value to finite number: ${String(value)}`, value);
+    throw cannotConvertError("finite number", value);
   }
   return result;
 };
@@ -37,10 +43,7 @@ export const toIntegerNumber = (
 ): number => {
   const result = toNumber(value);
   if (!Number.isInteger(result) || result < options.min || result > options.max) {
-    throw createDecodeError(
-      `Cannot convert value to integer in range ${options.min}..${options.max}: ${String(value)}`,
-      value,
-    );
+    throw cannotConvertError(`integer in range ${options.min}..${options.max}`, value);
   }
   return result;
 };
@@ -55,16 +58,16 @@ export const toIntegerString = (value: unknown, options?: { readonly unsigned?: 
     result = value;
   } else if (typeof value === "number") {
     if (!Number.isSafeInteger(value)) {
-      throw createDecodeError(`Cannot convert value to integer string: ${String(value)}`, value);
+      throw cannotConvertError("integer string", value);
     }
     result = String(value);
   } else if (typeof value === "bigint") {
     result = String(value);
   } else {
-    throw createDecodeError(`Cannot convert value to string: ${String(value)}`, value);
+    throw cannotConvertError("string", value);
   }
   if (!pattern.test(result)) {
-    throw createDecodeError(`Cannot convert value to integer string: ${String(value)}`, value);
+    throw cannotConvertError("integer string", value);
   }
   return result;
 };
@@ -79,7 +82,7 @@ export const toStringValue = (value: unknown): string => {
   if (value instanceof Date) {
     return value.toISOString();
   }
-  throw createDecodeError(`Cannot convert value to string: ${String(value)}`, value);
+  throw cannotConvertError("string", value);
 };
 
 // Date-only forms (`YYYY-MM-DD`) intentionally fall through to the native
@@ -98,7 +101,9 @@ const parseNaiveDateTimeAsUtc = (value: string): Date | null | undefined => {
   const hour = Number(hourRaw);
   const minute = Number(minuteRaw);
   const second = Number(secondRaw);
-  const millisecond = Number((fractionalRaw ?? "").slice(0, 3).padEnd(3, "0"));
+  // Datetimes without a fractional part dominate — skip the slice + padEnd
+  // chain when there's nothing to parse.
+  const millisecond = fractionalRaw === undefined ? 0 : Number(fractionalRaw.slice(0, 3).padEnd(3, "0"));
   const timestamp = Date.UTC(year, month - 1, day, hour, minute, second, millisecond);
   const date = new Date(timestamp);
   if (
@@ -121,16 +126,16 @@ export const toDate = (value: unknown): Date => {
   } else if (typeof value === "string") {
     const parsedNaiveDateTime = parseNaiveDateTimeAsUtc(value);
     if (parsedNaiveDateTime === null) {
-      throw createDecodeError(`Cannot convert value to valid Date: ${String(value)}`, value);
+      throw cannotConvertError("valid Date", value);
     }
     date = parsedNaiveDateTime ?? new Date(value);
   } else if (typeof value === "number") {
     date = new Date(value);
   } else {
-    throw createDecodeError(`Cannot convert value to Date: ${String(value)}`, value);
+    throw cannotConvertError("Date", value);
   }
   if (Number.isNaN(date.getTime())) {
-    throw createDecodeError(`Cannot convert value to valid Date: ${String(value)}`, value);
+    throw cannotConvertError("valid Date", value);
   }
   return date;
 };
@@ -148,5 +153,5 @@ export const toBoolean = (value: unknown): boolean => {
   if (typeof value === "string") {
     return value === "1" || value.toLowerCase() === "true";
   }
-  throw createDecodeError(`Cannot convert value to boolean: ${String(value)}`, value);
+  throw cannotConvertError("boolean", value);
 };
