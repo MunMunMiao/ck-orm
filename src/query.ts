@@ -75,6 +75,15 @@ const SQL_IN_OPEN = sql.raw(" in (");
 const SQL_NOT_IN_OPEN = sql.raw(" not in (");
 const SQL_FALSE_LITERAL = sql.raw("0");
 const SQL_TRUE_LITERAL = sql.raw("1");
+const SQL_IS_NULL = sql.raw(" is null");
+const SQL_IS_NOT_NULL = sql.raw(" is not null");
+const SQL_OR_SEPARATOR = sql.raw(" or ");
+// `LIKE` / `ILIKE` operator fragments — keyed by the same `LikeOperator`
+// union string the predicate factories take, so the lookup is exhaustive.
+const SQL_LIKE = sql.raw(" like ");
+const SQL_NOT_LIKE = sql.raw(" not like ");
+const SQL_ILIKE = sql.raw(" ilike ");
+const SQL_NOT_ILIKE = sql.raw(" not ilike ");
 
 type QuerySource = AnyTable | AnySubquery | AnyCte | TableFunctionSource;
 type KnownQuerySource = AnyTable | AnySubquery | AnyCte;
@@ -740,11 +749,14 @@ const renderCountExpression = (mode: CountMode): SQLFragment => {
 const booleanCastDecoder: Decoder<boolean> = (value) => Boolean(value);
 
 const buildLogicalPredicate = (operator: "and" | "or", predicates: readonly SqlPredicate[]): SqlPredicate => {
+  // `SQL_AND` is the same ` and ` literal that BETWEEN uses, so we reuse it
+  // as the AND-separator instead of allocating a parallel constant.
+  const separatorFragment = operator === "and" ? SQL_AND : SQL_OR_SEPARATOR;
   return createExpression<boolean>({
     compile: (ctx) =>
       sql`${SQL_OPEN_PAREN}${sql.join(
         predicates.map((predicate) => predicate.compile(ctx)),
-        sql.raw(` ${operator} `),
+        separatorFragment,
       )}${SQL_CLOSE_PAREN}`,
     decoder: booleanCastDecoder,
     sqlType: "Bool",
@@ -1876,8 +1888,9 @@ const compilePredicateValue = (
 const createNullPredicateExpression = (operator: "is null" | "is not null", left: unknown): Predicate => {
   assertPredicateExpressionInput(left, operator === "is null" ? "isNull" : "isNotNull");
   const leftExpression = ensureComparableExpression(left);
+  const operatorFragment = operator === "is null" ? SQL_IS_NULL : SQL_IS_NOT_NULL;
   return createExpression<boolean>({
-    compile: (ctx) => sql`${leftExpression.compile(ctx)}${sql.raw(` ${operator}`)}`,
+    compile: (ctx) => sql`${leftExpression.compile(ctx)}${operatorFragment}`,
     decoder: booleanCastDecoder,
     sqlType: "Bool",
   });
@@ -1952,6 +1965,15 @@ export const lte = makeBinary("<=");
 
 const LIKE_ESCAPE_CHAR = "\\";
 type LikeOperator = "like" | "not like" | "ilike" | "not ilike";
+
+// Lookup for the LIKE-family operator fragments — exhaustive over
+// `LikeOperator`, so adding a new variant requires updating this table.
+const LIKE_OPERATOR_FRAGMENTS: Record<LikeOperator, SQLFragment> = {
+  like: SQL_LIKE,
+  "not like": SQL_NOT_LIKE,
+  ilike: SQL_ILIKE,
+  "not ilike": SQL_NOT_ILIKE,
+};
 type LikeLiteralMode = "contains" | "startsWith" | "endsWith";
 
 const escapeLikePattern = (value: string): string => {
@@ -1975,9 +1997,9 @@ const toLiteralLikePattern = (value: string, mode: LikeLiteralMode): string => {
 const createLikePredicate = (left: unknown, right: unknown, operator: LikeOperator): Predicate => {
   assertStringOrSqlPredicateValue(right, operator);
   const leftExpression = ensureComparableExpression(left);
+  const operatorFragment = LIKE_OPERATOR_FRAGMENTS[operator];
   return createExpression<boolean>({
-    compile: (ctx) =>
-      sql`${leftExpression.compile(ctx)}${sql.raw(` ${operator} `)}${compileValue(right, ctx, "String")}`,
+    compile: (ctx) => sql`${leftExpression.compile(ctx)}${operatorFragment}${compileValue(right, ctx, "String")}`,
     decoder: booleanCastDecoder,
     sqlType: "Bool",
   });
@@ -2032,8 +2054,24 @@ export const between = (expression: unknown, start: unknown, end: unknown): Pred
   });
 };
 
-const compilePredicateFunction = (name: string, args: SQLFragment[]): SQLFragment => {
-  return sql`${sql.raw(name)}(${joinSqlParts(args, ", ")})`;
+// Builders that emit the same ClickHouse function name on every compile
+// pre-render the name fragment once and feed it here. The string literal
+// matches `sql.raw(name)` byte-for-byte but skips the per-compile allocation.
+const compilePredicateFunction = (nameFragment: SQLFragment, args: SQLFragment[]): SQLFragment => {
+  return sql`${nameFragment}(${joinSqlParts(args, ", ")})`;
+};
+
+// Pre-rendered name fragments for the array-containment predicates. Hoisted
+// so each `has` / `hasAll` / `hasAny` / `hasSubstr` builder uses the same
+// fragment regardless of how many times it's compiled.
+const HAS_FN_FRAGMENT = sql.raw("has");
+const HAS_ALL_FN_FRAGMENT = sql.raw("hasAll");
+const HAS_ANY_FN_FRAGMENT = sql.raw("hasAny");
+const HAS_SUBSTR_FN_FRAGMENT = sql.raw("hasSubstr");
+const ARRAY_CONTAINMENT_FN_FRAGMENTS: Record<string, SQLFragment> = {
+  hasAll: HAS_ALL_FN_FRAGMENT,
+  hasAny: HAS_ANY_FN_FRAGMENT,
+  hasSubstr: HAS_SUBSTR_FN_FRAGMENT,
 };
 
 const encodeArrayColumnValues = (left: unknown, value: readonly unknown[]): readonly unknown[] | undefined => {
@@ -2093,7 +2131,7 @@ export const has = (haystack: unknown, needle: unknown): Predicate => {
   const haystackExpression = ensureComparableExpression(haystack);
   return createExpression<boolean>({
     compile: (ctx) =>
-      compilePredicateFunction("has", [
+      compilePredicateFunction(HAS_FN_FRAGMENT, [
         haystackExpression.compile(ctx),
         compileHasNeedle(haystack, needle, ctx, haystackExpression),
       ]),
@@ -2105,9 +2143,9 @@ export const has = (haystack: unknown, needle: unknown): Predicate => {
 // `hasAll` / `hasAny` / `hasSubstr` differ only in the ClickHouse function
 // name they emit — same validation, same encoding path. One factory keeps
 // future array-containment helpers (e.g. `hasAnyExcept`) cheap to add.
-const makeArrayContainmentPredicate =
-  (helperName: string) =>
-  (left: unknown, right: unknown): Predicate => {
+const makeArrayContainmentPredicate = (helperName: "hasAll" | "hasAny" | "hasSubstr") => {
+  const nameFragment = ARRAY_CONTAINMENT_FN_FRAGMENTS[helperName];
+  return (left: unknown, right: unknown): Predicate => {
     assertPredicateValue(right, helperName);
     if (Array.isArray(right)) {
       assertPredicateValueArray(right, helperName);
@@ -2115,7 +2153,7 @@ const makeArrayContainmentPredicate =
     const leftExpression = ensureComparableExpression(left);
     return createExpression<boolean>({
       compile: (ctx) =>
-        compilePredicateFunction(helperName, [
+        compilePredicateFunction(nameFragment, [
           leftExpression.compile(ctx),
           compileArrayFunctionArg(left, right, ctx, leftExpression, helperName),
         ]),
@@ -2123,6 +2161,7 @@ const makeArrayContainmentPredicate =
       sqlType: "Bool",
     });
   };
+};
 
 export const hasAll = makeArrayContainmentPredicate("hasAll");
 export const hasAny = makeArrayContainmentPredicate("hasAny");

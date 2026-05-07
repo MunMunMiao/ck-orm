@@ -104,8 +104,11 @@ export const readValidatedResponseText = async (input: {
     return text;
   }
 
+  // Two failure modes converge to the same error shape: an HTTP-level failure
+  // and an HTTP-200 body that smuggles back a ClickHouse exception. Build the
+  // error once instead of duplicating the field list.
   const embeddedException = extractClickHouseException(text);
-  if (!input.response.ok) {
+  if (!input.response.ok || embeddedException) {
     throw createRequestFailedError({
       httpStatus: input.response.status,
       queryId: input.queryId,
@@ -113,17 +116,6 @@ export const readValidatedResponseText = async (input: {
       responseText: embeddedException?.responseText ?? text,
       clickhouseCode: embeddedException?.clickhouseCode,
       clickhouseName: embeddedException?.clickhouseName,
-    });
-  }
-
-  if (embeddedException) {
-    throw createRequestFailedError({
-      httpStatus: input.response.status,
-      queryId: input.queryId,
-      sessionId: input.sessionId,
-      responseText: embeddedException.responseText,
-      clickhouseCode: embeddedException.clickhouseCode,
-      clickhouseName: embeddedException.clickhouseName,
     });
   }
 

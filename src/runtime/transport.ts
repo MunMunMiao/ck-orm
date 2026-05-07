@@ -204,10 +204,8 @@ export const createFetchClickHouseTransport = (config: NormalizedClientConfig): 
           ignoreErrorResponse: request.options.ignore_error_response ?? false,
         });
         const statistics = extractClickHouseJsonStatistics(result);
-        return {
-          rows: result.data ?? [],
-          ...(statistics === undefined ? {} : { statistics }),
-        };
+        const rows = result.data ?? [];
+        return statistics === undefined ? { rows } : { rows, statistics };
       } finally {
         request.finalize();
       }
