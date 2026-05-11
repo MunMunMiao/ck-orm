@@ -1619,3 +1619,306 @@ describe("ck-orm query extras", function describeClickHouseORMQueryExtras() {
     });
   });
 });
+
+describe("ck-orm bare SelectBuilder as subquery source", function describeBareBuilderSource() {
+  it("accepts a bare builder in from() and assigns a per-compile auto alias", function testBareFrom() {
+    const db = createQueryClient();
+    const inner = db.select({ id: orders.id }).from(orders);
+
+    // PR-A: bare-builder columns are not yet projectable from outside, so we
+    // project an independent literal expression. (PR-B will let users access
+    // `inner.id` on the bare builder directly.)
+    const built = buildCompiled(
+      db
+        .select({ flag: expr(sql.raw("1")) })
+        .from(inner)
+        [compileQuerySymbol](),
+    );
+
+    expect(normalizeSql(built.query)).toContain("from (select `orders`.`id` as `id` from `orders`) as `__sub_1`");
+  });
+
+  it("accepts a bare builder in inArray() and notInArray()", function testBareInArray() {
+    const db = createQueryClient();
+    const innerIds = db.select({ id: orders.id }).from(orders);
+
+    const positive = buildCompiled(
+      db.select({ id: orders.id }).from(orders).where(inArray(orders.id, innerIds))[compileQuerySymbol](),
+    );
+    expect(normalizeSql(positive.query)).toContain("`orders`.`id` in (select `orders`.`id` as `id` from `orders`)");
+
+    const negative = buildCompiled(
+      db
+        .select({ id: orders.id })
+        .from(orders)
+        .where(notInArray(orders.id, db.select({ id: orders.id }).from(orders)))
+        [compileQuerySymbol](),
+    );
+    expect(normalizeSql(negative.query)).toContain("`orders`.`id` not in (select `orders`.`id` as `id` from `orders`)");
+  });
+
+  it("gives separate bare builders separate auto aliases per compile", function testBareJoinDistinctAliases() {
+    const db = createQueryClient();
+    const subA = db.select({ id: orders.id }).from(orders);
+    const subB = db.select({ id: orders.id }).from(orders);
+
+    const built = buildCompiled(
+      db.select({ id: orders.id }).from(subA).innerJoin(subB, eq(orders.id, orders.id))[compileQuerySymbol](),
+    );
+
+    expect(normalizeSql(built.query)).toContain("from (select `orders`.`id` as `id` from `orders`) as `__sub_1`");
+    expect(normalizeSql(built.query)).toContain("inner join (select `orders`.`id` as `id` from `orders`) as `__sub_2`");
+  });
+
+  it("resets the auto-alias counter on each top-level compile", function testCounterStability() {
+    const db = createQueryClient();
+    const inner = db.select({ id: orders.id }).from(orders);
+    const query = db.select({ flag: expr(sql.raw("1")) }).from(inner);
+
+    const first = buildCompiled(query[compileQuerySymbol]());
+    const second = buildCompiled(query[compileQuerySymbol]());
+
+    expect(first.query).toBe(second.query);
+    expect(normalizeSql(first.query)).toContain("as `__sub_1`");
+  });
+
+  it("rejects reusing the same bare builder instance twice as a source", function testBareDoubleUse() {
+    const db = createQueryClient();
+    const sub = db.select({ id: orders.id }).from(orders);
+
+    expect(() =>
+      db.select({ id: orders.id }).from(sub).innerJoin(sub, eq(orders.id, orders.id))[compileQuerySymbol](),
+    ).toThrow(/SelectBuilder instance used twice/);
+  });
+
+  it("allows reusing the same bare builder across separate top-level compiles", function testBareCrossCompile() {
+    const db = createQueryClient();
+    const sub = db.select({ id: orders.id }).from(orders);
+
+    const first = buildCompiled(
+      db
+        .select({ flag: expr(sql.raw("1")) })
+        .from(sub)
+        [compileQuerySymbol](),
+    );
+    const second = buildCompiled(
+      db
+        .select({ flag: expr(sql.raw("1")) })
+        .from(sub)
+        [compileQuerySymbol](),
+    );
+
+    expect(normalizeSql(first.query)).toContain("as `__sub_1`");
+    expect(normalizeSql(second.query)).toContain("as `__sub_1`");
+  });
+
+  it("allows the same bare builder once as a source and once inside an inArray subquery", function testBareSourceAndInArray() {
+    const db = createQueryClient();
+    const sub = db.select({ id: orders.id }).from(orders);
+
+    const built = buildCompiled(
+      db.select({ id: orders.id }).from(sub).where(inArray(orders.id, sub))[compileQuerySymbol](),
+    );
+
+    // Both occurrences share the same auto-alias for the duration of one
+    // compile, because they correspond to the same logical subquery instance.
+    expect(normalizeSql(built.query)).toContain("from (select `orders`.`id` as `id` from `orders`) as `__sub_1`");
+    expect(normalizeSql(built.query)).toContain("where `orders`.`id` in (select `orders`.`id` as `id` from `orders`)");
+  });
+
+  it("exposes column refs on a variable-bound bare builder", function testBareBuilderColumnRefs() {
+    const db = createQueryClient();
+    const sub = db
+      .select({
+        owner_id: orders.id,
+        total: fn.sum(orders.amount).as("total_amount"),
+      })
+      .from(orders);
+
+    // sub.owner_id and sub.total are auto column refs on the bare builder.
+    const built = buildCompiled(db.select({ ownerId: sub.owner_id, total: sub.total }).from(sub)[compileQuerySymbol]());
+
+    expect(normalizeSql(built.query)).toContain(
+      "select `__sub_1`.`owner_id` as `ownerId`, `__sub_1`.`total_amount` as `total`",
+    );
+    expect(normalizeSql(built.query)).toContain(
+      "from (select `orders`.`id` as `owner_id`, sum(`orders`.`amount`) as `total_amount` from `orders`) as `__sub_1`",
+    );
+  });
+
+  it("preserves column refs across .where() / .orderBy() / .limit() chain steps", function testBareColumnRefsAfterChain() {
+    const db = createQueryClient();
+    const sub = db
+      .select({ id: orders.id, amount: orders.amount })
+      .from(orders)
+      .where(eq(orders.id, 1))
+      .orderBy(desc(orders.amount))
+      .limit(5);
+
+    // sub.id / sub.amount must still be reachable after the chain
+    expect(sub.id).toBeDefined();
+    expect(sub.amount).toBeDefined();
+
+    const built = buildCompiled(
+      db.select({ outerId: sub.id, outerAmount: sub.amount }).from(sub)[compileQuerySymbol](),
+    );
+    expect(normalizeSql(built.query)).toContain(
+      "select `__sub_1`.`id` as `outerId`, `__sub_1`.`amount` as `outerAmount`",
+    );
+  });
+
+  it("can use bare builder column refs in join conditions", function testBareJoinCondition() {
+    const db = createQueryClient();
+    const sub = db.select({ user_id: orders.id, total: fn.sum(orders.amount).as("total") }).from(orders);
+
+    const built = buildCompiled(
+      db
+        .select({ id: orders.id, total: sub.total })
+        .from(orders)
+        .innerJoin(sub, eq(orders.id, sub.user_id))
+        [compileQuerySymbol](),
+    );
+
+    expect(normalizeSql(built.query)).toContain(
+      "inner join (select `orders`.`id` as `user_id`, sum(`orders`.`amount`) as `total` from `orders`) as `__sub_1`",
+    );
+    expect(normalizeSql(built.query)).toContain("on `orders`.`id` = `__sub_1`.`user_id`");
+  });
+
+  it("does not expose column refs through Object.keys / JSON.stringify", function testNonEnumerableRefs() {
+    const db = createQueryClient();
+    const sub = db.select({ id: orders.id, amount: orders.amount }).from(orders);
+
+    // Auto column refs are intentionally non-enumerable so they don't appear
+    // in iteration / serialization.
+    expect(Object.keys(sub)).not.toContain("id");
+    expect(Object.keys(sub)).not.toContain("amount");
+    expect(JSON.stringify(sub)).not.toContain("amount");
+
+    // But they're still accessible via direct property access.
+    expect(sub.id).toBeDefined();
+    expect(sub.amount).toBeDefined();
+  });
+
+  it("keeps SelectBuilder methods when a selection key collides with a method name", function testBuilderMethodPriority() {
+    // The selection is cast to `Record<string, unknown>` so TS doesn't try to
+    // infer a narrow shape from the literal — the column-refs intersection
+    // also gets erased to `unknown` for that cast path (its `string extends
+    // keyof TResult` guard kicks in). What we're testing is the runtime
+    // behaviour: the conflicting key is skipped during column-ref attachment,
+    // so `sub.from` keeps returning the builder method.
+    const db = createQueryClient();
+    const sub = db
+      .select({
+        id: orders.id,
+        from: orders.name,
+      } as Record<string, unknown>)
+      .from(orders);
+
+    expect(typeof sub.from).toBe("function");
+    // `id` is non-conflicting and remains accessible.
+    expect((sub as unknown as Record<string, unknown>).id).toBeDefined();
+  });
+
+  it("supports callback-style innerJoin/leftJoin for inline bare builders", function testJoinCallback() {
+    const db = createQueryClient();
+
+    const innerBuilt = buildCompiled(
+      db
+        .select({ id: orders.id })
+        .from(orders)
+        .innerJoin(
+          db.select({ ref_id: orders.id, ref_total: fn.sum(orders.amount).as("ref_total") }).from(orders),
+          (joined) => eq(orders.id, joined.ref_id),
+        )
+        [compileQuerySymbol](),
+    );
+
+    expect(normalizeSql(innerBuilt.query)).toContain(
+      "inner join (select `orders`.`id` as `ref_id`, sum(`orders`.`amount`) as `ref_total` from `orders`) as `__sub_1`",
+    );
+    expect(normalizeSql(innerBuilt.query)).toContain("on `orders`.`id` = `__sub_1`.`ref_id`");
+
+    const leftBuilt = buildCompiled(
+      db
+        .select({ id: orders.id })
+        .from(orders)
+        .leftJoin(db.select({ ref_id: orders.id }).from(orders), (joined) => eq(orders.id, joined.ref_id))
+        [compileQuerySymbol](),
+    );
+    expect(normalizeSql(leftBuilt.query)).toContain(
+      "left join (select `orders`.`id` as `ref_id` from `orders`) as `__sub_1`",
+    );
+    expect(normalizeSql(leftBuilt.query)).toContain("on `orders`.`id` = `__sub_1`.`ref_id`");
+  });
+
+  it("supports callback-style join on regular table sources too", function testCallbackJoinOnTable() {
+    const db = createQueryClient();
+    const built = buildCompiled(
+      db
+        .select({ id: orders.id })
+        .from(orders)
+        .innerJoin(taggedOrders, (joined) => eq(orders.id, joined.id))
+        [compileQuerySymbol](),
+    );
+    expect(normalizeSql(built.query)).toContain("inner join `tagged_orders`");
+    expect(normalizeSql(built.query)).toContain("on `orders`.`id` = `tagged_orders`.`id`");
+  });
+
+  it("supports callback-style join on named .as(...) subqueries", function testCallbackJoinOnNamedSubquery() {
+    const db = createQueryClient();
+    const named = db
+      .select({ ref_id: orders.id, ref_total: fn.sum(orders.amount).as("ref_total") })
+      .from(orders)
+      .as("named_ref");
+
+    const built = buildCompiled(
+      db
+        .select({ id: orders.id, total: named.ref_total })
+        .from(orders)
+        .innerJoin(named, (joined) => eq(orders.id, joined.ref_id))
+        [compileQuerySymbol](),
+    );
+
+    // Named alias is preserved (no fallback to `__sub_N`).
+    expect(normalizeSql(built.query)).toContain(
+      "inner join (select `orders`.`id` as `ref_id`, sum(`orders`.`amount`) as `ref_total` from `orders`) as `named_ref`",
+    );
+    expect(normalizeSql(built.query)).toContain("on `orders`.`id` = `named_ref`.`ref_id`");
+    expect(normalizeSql(built.query)).not.toContain("__sub_");
+  });
+
+  it("callback receives the same builder reference whose column refs match the join source alias", function testCallbackJoinedRefEquality() {
+    const db = createQueryClient();
+    const sub = db.select({ ref_id: orders.id }).from(orders);
+
+    let capturedJoined: typeof sub | undefined;
+    buildCompiled(
+      db
+        .select({ id: orders.id })
+        .from(orders)
+        .innerJoin(sub, (joined) => {
+          capturedJoined = joined;
+          return eq(orders.id, joined.ref_id);
+        })
+        [compileQuerySymbol](),
+    );
+
+    // Callback parameter must be the same builder instance, so its column
+    // refs and the SQL `as __sub_N` alias share the same per-compile entry.
+    expect(capturedJoined).toBe(sub);
+  });
+
+  it("mixes named .as() subqueries and bare builders without alias collisions", function testMixedNamedAndBare() {
+    const db = createQueryClient();
+    const named = db.select({ id: orders.id }).from(orders).as("named_sub");
+    const bare = db.select({ id: orders.id }).from(orders);
+
+    const built = buildCompiled(
+      db.select({ id: orders.id }).from(named).innerJoin(bare, eq(orders.id, named.id))[compileQuerySymbol](),
+    );
+
+    expect(normalizeSql(built.query)).toContain("as `named_sub`");
+    expect(normalizeSql(built.query)).toContain("as `__sub_1`");
+  });
+});

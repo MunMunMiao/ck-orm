@@ -1,4 +1,5 @@
 export * from "./advanced-compiled-query";
+export * from "./bare-builder-subquery";
 export * from "./basic-select";
 export * from "./count-and-errors";
 export * from "./cte-and-subquery";

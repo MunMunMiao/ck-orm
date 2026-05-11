@@ -1268,7 +1268,7 @@ Use `.execute()` in application examples when you want the execution point to be
 
 ### Subqueries and CTEs
 
-Use `.as("alias")` to turn a builder into a subquery:
+Use `.as("alias")` to turn a builder into an explicitly named subquery:
 
 ```ts
 const latestTelemetrySample = db
@@ -1281,6 +1281,80 @@ const latestTelemetrySample = db
   .limit(10)
   .as("latest_telemetry_sample");
 ```
+
+`.as("…")` is **optional** for subqueries — if you don't call it, the
+framework assigns an auto alias (`__sub_1`, `__sub_2`, …) at compile time.
+A bare builder works directly in `from()`, `innerJoin()`, `leftJoin()`,
+`inArray()`, `notInArray()`, `exists()`, and `notExists()`.
+
+```ts
+// Bare builder, variable-bound — column refs are accessible.
+const signalTotals = db
+  .select({
+    probeId: probeTelemetry.probeId,
+    totalSignalStrength: fn.sum(probeTelemetry.signalStrength).as("total"),
+  })
+  .from(probeTelemetry)
+  .groupBy(probeTelemetry.probeId);
+
+await db
+  .select({
+    probeId: signalTotals.probeId,
+    totalSignalStrength: signalTotals.totalSignalStrength,
+  })
+  .from(signalTotals);
+
+// Bare builder inline — use the callback form of innerJoin/leftJoin so the
+// `on` condition can reference its columns via the `joined` parameter.
+await db
+  .select({ probeId: probeTelemetry.probeId })
+  .from(probeTelemetry)
+  .innerJoin(
+    db
+      .select({
+        peerProbeId: probeTelemetry.probeId,
+        peerCount: fn.count().as("peer_count"),
+      })
+      .from(probeTelemetry)
+      .groupBy(probeTelemetry.probeId),
+    (joined) => ck.eq(probeTelemetry.probeId, joined.peerProbeId),
+  );
+
+// inArray accepts a bare builder directly.
+await db
+  .select({ probeId: probeTelemetry.probeId })
+  .from(probeTelemetry)
+  .where(
+    ck.inArray(
+      probeTelemetry.probeId,
+      db.select({ activeProbeId: probeTelemetry.probeId }).from(probeTelemetry),
+    ),
+  );
+```
+
+#### Style guide — when to use `.as(name)` vs bare
+
+| Situation | Recommended form |
+|---|---|
+| One-off inline subquery, no need to reuse | bare builder + callback `innerJoin/leftJoin`, or bare in `inArray/exists` |
+| Subquery's column refs used in multiple places (SELECT / WHERE / one JOIN) | bind to a `const` and pass it bare — refs flow through chain methods |
+| Self-join (same logical subquery, two SQL aliases) | call `.as("a")` and `.as("b")` explicitly — reusing the same instance as a source twice throws when the query is compiled to SQL |
+| Need a stable, readable, or typed alias (production `query_log` search, `EXPLAIN`, slow logs, cross-module helpers, literal `TAlias` source key) | call `.as("descriptive_name")` |
+
+The auto alias is **not** stable across compiles of structurally different
+queries, but is stable within one compile and between repeated compiles of
+the same builder tree — `snapshot` style tests don't need normalization.
+
+#### Selection key conflicts
+
+Selection keys that collide with SelectBuilder method names (`from`,
+`where`, `select`, `as`, `innerJoin`, `leftJoin`, `groupBy`, `having`,
+`orderBy`, `limit`, `offset`, `final`, `limitBy`, `execute`, `iterator`,
+`then`, `catch`, `finally`, `buildSelectionItems`) keep their method type
+on the bare builder. `sub.from` always returns the builder method, never a
+column ref — even if `from` is in the selection. Rename such keys (e.g.
+`from` → `fromAddress`) or wrap the subquery with `.as("name")` so column
+access goes through the dedicated `Subquery` object.
 
 Use `$with()` and `with()` for CTEs:
 

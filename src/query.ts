@@ -87,6 +87,18 @@ const SQL_NOT_ILIKE = sql.raw(" not ilike ");
 
 type QuerySource = AnyTable | AnySubquery | AnyCte | TableFunctionSource;
 type KnownQuerySource = AnyTable | AnySubquery | AnyCte;
+// `QuerySource` plus bare SelectBuilders that user code passed without calling
+// `.as(name)`. Used wherever a source is stored or rendered. Code that needs
+// the tagged `source.kind` switch must `isSelectBuilder()` first.
+type AnySource = QuerySource | AnySelectBuilder;
+// Loose SelectBuilder shape for places that accept "any narrow builder". The
+// `any` is intentional: SelectBuilder is structurally invariant in TResult
+// after PR-B's intersection-based column refs, so narrow
+// `SelectBuilder<{a:1}>` no longer auto-conforms to
+// `SelectBuilder<Record<string, unknown>>`. This alias keeps the API
+// accepting any shape while sidestepping the structural variance check.
+// biome-ignore lint/suspicious/noExplicitAny: see the comment above — this is the single source of truth for the deliberate variance escape.
+type AnySelectBuilderLike = AnySelectBuilder<any>;
 type ForcedSettings = Readonly<ClickHouseSettings>;
 type MutableForcedSettings = Record<string, ClickHouseSettingValue>;
 
@@ -111,9 +123,21 @@ type CompileState = {
 };
 const compileStateStackStore = new WeakMap<BuildContext, CompileState[]>();
 
+// Per-compile state for bare-SelectBuilder subqueries. Keyed by
+// BuildContext so each top-level compile gets its own numbering, snapshot
+// tests stay stable, and entries GC with the context. Same pattern as
+// `compileStateStackStore` above.
+type BareBuilderCtxState = {
+  counter: number;
+  aliases: WeakMap<AnySelectBuilder, string>;
+  usedAsSource: WeakSet<AnySelectBuilder>;
+};
+const bareBuilderCtxState = new WeakMap<BuildContext, BareBuilderCtxState>();
+
 export const compileWithContextSymbol = Symbol("clickhouseORMCompileWithContext");
 export const compileQuerySymbol = Symbol("clickhouseORMCompileQuery");
 const selectBuilderResultSymbol = Symbol("clickhouseORMSelectBuilderResult");
+const selectBuilderKindSymbol = Symbol("clickhouseORMSelectBuilderKind");
 
 type LimitValue = number | bigint | SQLFragment<unknown>;
 type CountSource = AnyTable | AnySubquery | AnyCte;
@@ -228,7 +252,7 @@ interface SelectionItem extends SelectionMeta {
 
 interface JoinClause {
   readonly type: "inner" | "left";
-  readonly source: QuerySource;
+  readonly source: AnySource;
   readonly on: SqlPredicate;
 }
 
@@ -284,6 +308,59 @@ const isSubquery = (value: unknown): value is AnySubquery => {
 
 const isCte = (value: unknown): value is AnyCte => {
   return typeof value === "object" && value !== null && (value as AnyCte).kind === "cte";
+};
+
+export const isSelectBuilder = (value: unknown): value is AnySelectBuilder =>
+  typeof value === "object" &&
+  value !== null &&
+  selectBuilderKindSymbol in value &&
+  value[selectBuilderKindSymbol] === true;
+
+// `Object.defineProperty` shortcut for non-enumerable / non-configurable
+// own-data properties. Used for the SelectBuilder brand symbol and the
+// auto-attached column refs — both want to stay invisible to
+// `Object.keys` / `JSON.stringify` while remaining directly accessible.
+const defineHidden = <T extends object>(target: T, key: PropertyKey, value: unknown): void => {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+};
+
+const getBareBuilderState = (ctx: BuildContext): BareBuilderCtxState => {
+  let state = bareBuilderCtxState.get(ctx);
+  if (!state) {
+    state = { counter: 0, aliases: new WeakMap(), usedAsSource: new WeakSet() };
+    bareBuilderCtxState.set(ctx, state);
+  }
+  return state;
+};
+
+const resolveAutoSubqueryAlias = (ctx: BuildContext, builder: AnySelectBuilder): string => {
+  const state = getBareBuilderState(ctx);
+  const cached = state.aliases.get(builder);
+  if (cached) return cached;
+  const alias = `__sub_${++state.counter}`;
+  state.aliases.set(builder, alias);
+  return alias;
+};
+
+// renderSource hot-path helper: one state lookup yields both the resolved
+// alias and whether this is the first time the builder appears in the
+// source list (FROM + JOINs) of the outer compile. Duplicate appearances
+// would emit colliding aliases and produce invalid SQL — caller throws.
+const claimSourceBuilder = (ctx: BuildContext, builder: AnySelectBuilder): { alias: string; isFirstUse: boolean } => {
+  const state = getBareBuilderState(ctx);
+  const isFirstUse = !state.usedAsSource.has(builder);
+  if (isFirstUse) state.usedAsSource.add(builder);
+  let alias = state.aliases.get(builder);
+  if (!alias) {
+    alias = `__sub_${++state.counter}`;
+    state.aliases.set(builder, alias);
+  }
+  return { alias, isFirstUse };
 };
 
 const createCompiledQuery = <TResult>(
@@ -591,6 +668,26 @@ const createReferenceExpression = <TData, TSourceKey extends string>(
   });
 };
 
+// Column refs on a bare (un-aliased) SelectBuilder. The alias isn't known
+// until compile time — we resolve it per BuildContext so the same builder
+// always renders as the same `__sub_N` within one compile and the column
+// ref's `alias.column` prefix stays consistent with the source's alias.
+// sourceKey is deliberately omitted — bare-builder source keys aren't known
+// until compile time; nullable propagation for left-joined bare builders is
+// not supported in this pass (would require a stable per-builder identity
+// string separate from the SQL alias).
+const createBareBuilderReferenceExpression = <TData>(
+  owningBuilder: AnySelectBuilder,
+  columnName: string,
+  decoder: Decoder<TData>,
+  sqlType?: string,
+): SqlSelection<TData, string> =>
+  createExpression<TData, string>({
+    compile: (ctx) => sql.identifier({ table: resolveAutoSubqueryAlias(ctx, owningBuilder), column: columnName }),
+    decoder,
+    sqlType,
+  });
+
 const buildReferenceColumns = <TRow extends SelectionRecord, TSourceKey extends string>(
   sourceAlias: TSourceKey,
   selectionItems: readonly SelectionItem[],
@@ -609,7 +706,18 @@ const buildReferenceColumns = <TRow extends SelectionRecord, TSourceKey extends 
   return columns;
 };
 
-const renderSource = (source: QuerySource, ctx: BuildContext): SQLFragment => {
+const renderSource = (source: AnySource, ctx: BuildContext): SQLFragment => {
+  if (isSelectBuilder(source)) {
+    const { alias, isFirstUse } = claimSourceBuilder(ctx, source);
+    if (!isFirstUse) {
+      throw createClientValidationError(
+        `SelectBuilder instance used twice in the same query's source list (auto-alias "${alias}"). Each occurrence needs a distinct alias. Two fixes:
+  1. Call .as("name1") and .as("name2") to give each usage a distinct alias.
+  2. Build the subquery twice — each .select(...) call yields its own instance.`,
+      );
+    }
+    return sql`${SQL_OPEN_PAREN}${sql.raw(compileNestedQuery(source, ctx).statement)}${SQL_PAREN_AS}${sql.identifier(alias)}`;
+  }
   switch (source.kind) {
     case "table":
       return renderTableIdentifier(source);
@@ -647,17 +755,12 @@ const renderTableFinalSubquery = (table: AnyTable): SQLFragment => {
   return fragment;
 };
 
-const renderRootSource = (
-  source: QuerySource,
-  ctx: BuildContext,
-  useFinal: boolean,
-  hasJoins: boolean,
-): SQLFragment => {
+const renderRootSource = (source: AnySource, ctx: BuildContext, useFinal: boolean, hasJoins: boolean): SQLFragment => {
   if (!useFinal) {
     return renderSource(source, ctx);
   }
 
-  if (source.kind !== "table") {
+  if (isSelectBuilder(source) || source.kind !== "table") {
     throw createClientValidationError(
       "final() only supports table sources. Move final() into the table-backed subquery before using it as a source.",
     );
@@ -670,7 +773,12 @@ const renderRootSource = (
   return renderTableFinalSubquery(source);
 };
 
-const getSourceColumns = (source: QuerySource): SourceColumns | undefined => {
+const getSourceColumns = (source: AnySource): SourceColumns | undefined => {
+  if (isSelectBuilder(source)) {
+    // PR-B will expose column refs on bare builders. For now, bare builders
+    // expose no joinable columns from outside.
+    return undefined;
+  }
   switch (source.kind) {
     case "table":
     case "subquery":
@@ -681,7 +789,13 @@ const getSourceColumns = (source: QuerySource): SourceColumns | undefined => {
   }
 };
 
-const getSourceKey = (source: QuerySource): string | undefined => {
+const getSourceKey = (source: AnySource): string | undefined => {
+  if (isSelectBuilder(source)) {
+    // Auto-aliases resolve at compile time inside a BuildContext. Without
+    // ctx access here we have no stable key — callers that need a stable
+    // string source key (e.g. nullable-join tracking) skip bare builders.
+    return undefined;
+  }
   switch (source.kind) {
     case "table":
       return source.alias ?? source.originalName;
@@ -694,8 +808,8 @@ const getSourceKey = (source: QuerySource): string | undefined => {
   }
 };
 
-const getSingleTableName = (source: QuerySource | undefined, joins: readonly JoinClause[] = []): string | undefined => {
-  if (!source || joins.length > 0 || source.kind !== "table") {
+const getSingleTableName = (source: AnySource | undefined, joins: readonly JoinClause[] = []): string | undefined => {
+  if (!source || joins.length > 0 || isSelectBuilder(source) || source.kind !== "table") {
     return undefined;
   }
   return source.originalName;
@@ -1012,7 +1126,7 @@ interface SelectBuilderConfig<_TResult extends Record<string, unknown>> {
   ctes?: AnyCte[];
   runner?: PreparedRunner;
   selection?: SelectionRecord;
-  fromSource?: QuerySource;
+  fromSource?: AnySource;
   joins?: JoinClause[];
   whereClause?: SqlPredicate;
   groupByItems?: SqlSelection[];
@@ -1038,7 +1152,7 @@ type SelectBuilderState<
   readonly ctes: AnyCte[];
   readonly runner?: PreparedRunner;
   readonly selection?: TSelection;
-  readonly fromSource?: QuerySource;
+  readonly fromSource?: AnySource;
   readonly joins: JoinClause[];
   readonly whereClause?: SqlPredicate;
   readonly groupByItems: SqlSelection[];
@@ -1079,6 +1193,72 @@ const normalizeSelectBuilderState = <
   };
 };
 
+// Selection keys that conflict with SelectBuilder's own methods/PromiseLike API.
+// Column refs for these keys are NOT spread onto the builder — accessing
+// `sub.from` / `sub.where` etc. keeps returning the builder method (the
+// `Omit<ReferenceColumns<...>, ForbiddenAutoColumnKeys>` mask in
+// `SelectBuilderColumnRefs` hides the conflicting ref at the type layer; the
+// runtime attach loop in `createSelectBuilder` skips the key likewise).
+//
+// Single source of truth: the object literal drives both the type union
+// (via `keyof typeof`) and the runtime check (via `in`). Adding/removing a
+// reserved key here is the only edit needed.
+const FORBIDDEN_AUTO_COLUMN_KEYS = {
+  execute: true,
+  iterator: true,
+  // biome-ignore lint/suspicious/noThenProperty: this is a reserved-keys lookup table, not a thenable — `then` must be listed because SelectBuilder is intentionally a Promise-like.
+  then: true,
+  catch: true,
+  finally: true,
+  buildSelectionItems: true,
+  from: true,
+  innerJoin: true,
+  leftJoin: true,
+  where: true,
+  groupBy: true,
+  having: true,
+  orderBy: true,
+  limit: true,
+  offset: true,
+  final: true,
+  limitBy: true,
+  as: true,
+} as const satisfies Record<string, true>;
+
+type ForbiddenAutoColumnKeys = keyof typeof FORBIDDEN_AUTO_COLUMN_KEYS;
+
+// Type-level masked column refs for SelectBuilder. When the user supplied a
+// `select({...})` projection, we expose its keys as references — but mask out
+// any names that collide with builder methods (those keep their original
+// method type so chaining still works).
+//
+// The `string extends keyof TResult` guard rejects the wide
+// `Record<string, unknown>` (no specific keys known): generating a string
+// index signature there would clash with method signatures like
+// `as(alias): Subquery<...>` (whose `kind: "subquery"` doesn't match the
+// generic `Selection<unknown, string>`).
+//
+// Note: the outer `TResult extends Record<string, unknown>` conditional looks
+// redundant given the SelectBuilderWithRefs constraint, but experiments show
+// inlining the constraint as a parameter bound breaks deep TS inference at
+// CteFromQuery / Subquery boundaries (cascading variance failures on `.as()`
+// return types). Keep the three-layer conditional — TS evaluates it lazily
+// and that laziness is load-bearing.
+type SelectBuilderColumnRefs<TResult, TSelection> = TSelection extends SelectionRecord
+  ? TResult extends Record<string, unknown>
+    ? string extends keyof TResult
+      ? unknown
+      : Omit<ReferenceColumns<TResult, string>, ForbiddenAutoColumnKeys>
+    : unknown
+  : unknown;
+
+// Notes on "selection key conflicts with builder method": when a user writes
+// `db.select({ from: ... })`, `Omit<..., ForbiddenAutoColumnKeys>` masks
+// the auto column ref so `sub.from` keeps its method type. The runtime also
+// skips attaching that key. We attempted a `ValidateSelectionKeys` mapped
+// type at the call site but inference for mapped-type parameters reliably
+// dodges the check — kept the Omit-on-output approach instead.
+
 export interface SelectBuilder<
   TResult extends Record<string, unknown> = Record<string, unknown>,
   TSelection extends SelectionRecord | undefined = SelectionRecord | undefined,
@@ -1087,14 +1267,15 @@ export interface SelectBuilder<
   TJoinUseNulls extends JoinUseNulls = 1,
 > extends PromiseLike<TResult[]> {
   readonly [selectBuilderResultSymbol]?: TResult;
+  readonly [selectBuilderKindSymbol]: true;
   execute(options?: ClickHouseBaseQueryOptions): Promise<TResult[]>;
   iterator(options?: ClickHouseBaseQueryOptions): AsyncGenerator<TResult, void, unknown>;
   catch<TResult2 = never>(onrejected?: CatchHandler<TResult2>): Promise<TResult[] | TResult2>;
   finally(onfinally?: (() => void) | null): Promise<TResult[]>;
   buildSelectionItems(): SelectionItem[];
-  from<TSource extends QuerySource>(
+  from<TSource extends QuerySource | AnySelectBuilderLike>(
     source: TSource,
-  ): SelectBuilder<
+  ): SelectBuilderWithRefs<
     TSelection extends SelectionRecord
       ? InferSelectionResult<
           TSelection,
@@ -1108,52 +1289,103 @@ export interface SelectBuilder<
     NoJoinedSources,
     TJoinUseNulls
   >;
-  innerJoin<TSource extends KnownQuerySource>(
+  innerJoin<TSource extends KnownQuerySource | AnySelectBuilderLike>(
     source: TSource,
     on: Predicate,
-  ): SelectBuilder<
-    InferJoinResult<TSelection, TResult, TRootSource, AddJoinedSource<TJoinedSources, TSource, false>>,
+  ): SelectBuilderWithRefs<
+    TSource extends KnownQuerySource
+      ? InferJoinResult<TSelection, TResult, TRootSource, AddJoinedSource<TJoinedSources, TSource, false>>
+      : TResult,
     TSelection,
     TRootSource,
-    AddJoinedSource<TJoinedSources, TSource, false>,
+    TSource extends KnownQuerySource ? AddJoinedSource<TJoinedSources, TSource, false> : TJoinedSources,
     TJoinUseNulls
   >;
-  leftJoin<TSource extends KnownQuerySource>(
+  innerJoin<TSource extends KnownQuerySource | AnySelectBuilderLike>(
     source: TSource,
-    on: Predicate,
-  ): SelectBuilder<
-    InferJoinResult<
-      TSelection,
-      TResult,
-      TRootSource,
-      AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>
-    >,
+    on: (joined: TSource) => Predicate,
+  ): SelectBuilderWithRefs<
+    TSource extends KnownQuerySource
+      ? InferJoinResult<TSelection, TResult, TRootSource, AddJoinedSource<TJoinedSources, TSource, false>>
+      : TResult,
     TSelection,
     TRootSource,
-    AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>,
+    TSource extends KnownQuerySource ? AddJoinedSource<TJoinedSources, TSource, false> : TJoinedSources,
+    TJoinUseNulls
+  >;
+  leftJoin<TSource extends KnownQuerySource | AnySelectBuilderLike>(
+    source: TSource,
+    on: Predicate,
+  ): SelectBuilderWithRefs<
+    TSource extends KnownQuerySource
+      ? InferJoinResult<
+          TSelection,
+          TResult,
+          TRootSource,
+          AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>
+        >
+      : TResult,
+    TSelection,
+    TRootSource,
+    TSource extends KnownQuerySource
+      ? AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>
+      : TJoinedSources,
+    TJoinUseNulls
+  >;
+  leftJoin<TSource extends KnownQuerySource | AnySelectBuilderLike>(
+    source: TSource,
+    on: (joined: TSource) => Predicate,
+  ): SelectBuilderWithRefs<
+    TSource extends KnownQuerySource
+      ? InferJoinResult<
+          TSelection,
+          TResult,
+          TRootSource,
+          AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>
+        >
+      : TResult,
+    TSelection,
+    TRootSource,
+    TSource extends KnownQuerySource
+      ? AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>
+      : TJoinedSources,
     TJoinUseNulls
   >;
   where(
     ...predicates: PredicateInput[]
-  ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>;
+  ): SelectBuilderWithRefs<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>;
   groupBy(
     ...expressions: Selection<unknown>[]
-  ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>;
-  having(condition?: Predicate): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>;
+  ): SelectBuilderWithRefs<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>;
+  having(condition?: Predicate): SelectBuilderWithRefs<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>;
   orderBy(
     ...expressions: Array<Order | Selection<unknown>>
-  ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>;
-  limit(value: LimitValue): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>;
-  offset(value: LimitValue): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>;
-  final(): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>;
+  ): SelectBuilderWithRefs<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>;
+  limit(value: LimitValue): SelectBuilderWithRefs<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>;
+  offset(value: LimitValue): SelectBuilderWithRefs<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>;
+  final(): SelectBuilderWithRefs<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>;
   limitBy(
     columns: Selection<unknown>[],
     limit: LimitValue,
-  ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>;
+  ): SelectBuilderWithRefs<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>;
   [compileWithContextSymbol](ctx: BuildContext): CompiledQuery<TResult>;
   [compileQuerySymbol](): CompiledQuery<TResult>;
   as<TAlias extends string>(alias: TAlias): Subquery<TResult, TAlias>;
 }
+
+// SelectBuilder enriched with auto-attached column references. Methods of the
+// builder always return this enriched type so chained outputs like
+// `db.select({...}).from(t).where(p).x` work both at the TS and runtime
+// levels. Non-`select(...)` paths get `unknown` from `SelectBuilderColumnRefs`,
+// which intersects away cleanly.
+export type SelectBuilderWithRefs<
+  TResult extends Record<string, unknown> = Record<string, unknown>,
+  TSelection extends SelectionRecord | undefined = SelectionRecord | undefined,
+  TRootSource extends KnownQuerySource | undefined = KnownQuerySource | undefined,
+  TJoinedSources extends JoinedSources = NoJoinedSources,
+  TJoinUseNulls extends JoinUseNulls = 1,
+> = SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> &
+  SelectBuilderColumnRefs<TResult, TSelection>;
 
 export const createSelectBuilder = <
   TResult extends Record<string, unknown> = Record<string, unknown>,
@@ -1163,7 +1395,7 @@ export const createSelectBuilder = <
   TJoinUseNulls extends JoinUseNulls = 1,
 >(
   config?: SelectBuilderConfig<TResult> & { selection?: TSelection },
-): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> => {
+): SelectBuilderWithRefs<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> => {
   const state = normalizeSelectBuilderState<TResult, TSelection, TJoinUseNulls>(config) as SelectBuilderState<
     TResult,
     TSelection,
@@ -1180,7 +1412,7 @@ export const createSelectBuilder = <
     overrides: Partial<SelectBuilderConfig<TNextResult>> & {
       selection?: TSelection;
     },
-  ): SelectBuilder<TNextResult, TSelection, TNextRoot, TNextJoined, TJoinUseNulls> => {
+  ): SelectBuilderWithRefs<TNextResult, TSelection, TNextRoot, TNextJoined, TJoinUseNulls> => {
     return createSelectBuilder<TNextResult, TSelection, TNextRoot, TNextJoined, TJoinUseNulls>({
       ...(state as SelectBuilderConfig<TNextResult> & { selection?: TSelection }),
       ...overrides,
@@ -1267,6 +1499,10 @@ export const createSelectBuilder = <
   };
 
   const builder = {
+    // Runtime brand for `isSelectBuilder`. Symbol keys are invisible to
+    // `Object.keys` / `JSON.stringify` / `for..in` by ES spec, so no
+    // explicit `defineProperty` dance is needed to "hide" it.
+    [selectBuilderKindSymbol]: true as const,
     execute(options?: ClickHouseBaseQueryOptions): Promise<TResult[]> {
       const runner = ensureRunner(state.runner, "execute");
       return runner.execute(builder[compileQuerySymbol](), options);
@@ -1297,9 +1533,9 @@ export const createSelectBuilder = <
       return buildSelectionItems();
     },
 
-    from<TSource extends QuerySource>(
+    from<TSource extends QuerySource | AnySelectBuilderLike>(
       source: TSource,
-    ): SelectBuilder<
+    ): SelectBuilderWithRefs<
       TSelection extends SelectionRecord
         ? InferSelectionResult<
             TSelection,
@@ -1329,57 +1565,71 @@ export const createSelectBuilder = <
       });
     },
 
-    innerJoin<TSource extends KnownQuerySource>(
+    innerJoin<TSource extends KnownQuerySource | AnySelectBuilderLike>(
       source: TSource,
-      on: Predicate,
-    ): SelectBuilder<
-      InferJoinResult<TSelection, TResult, TRootSource, AddJoinedSource<TJoinedSources, TSource, false>>,
+      on: Predicate | ((joined: TSource) => Predicate),
+    ): SelectBuilderWithRefs<
+      TSource extends KnownQuerySource
+        ? InferJoinResult<TSelection, TResult, TRootSource, AddJoinedSource<TJoinedSources, TSource, false>>
+        : TResult,
       TSelection,
       TRootSource,
-      AddJoinedSource<TJoinedSources, TSource, false>,
+      TSource extends KnownQuerySource ? AddJoinedSource<TJoinedSources, TSource, false> : TJoinedSources,
       TJoinUseNulls
     > {
+      const predicate = typeof on === "function" ? on(source) : on;
       return clone<
-        InferJoinResult<TSelection, TResult, TRootSource, AddJoinedSource<TJoinedSources, TSource, false>>,
+        TSource extends KnownQuerySource
+          ? InferJoinResult<TSelection, TResult, TRootSource, AddJoinedSource<TJoinedSources, TSource, false>>
+          : TResult,
         TRootSource,
-        AddJoinedSource<TJoinedSources, TSource, false>
+        TSource extends KnownQuerySource ? AddJoinedSource<TJoinedSources, TSource, false> : TJoinedSources
       >({
-        joins: [...state.joins, { type: "inner", source, on: on as SqlPredicate }],
+        joins: [...state.joins, { type: "inner", source, on: predicate as SqlPredicate }],
       });
     },
 
-    leftJoin<TSource extends KnownQuerySource>(
+    leftJoin<TSource extends KnownQuerySource | AnySelectBuilderLike>(
       source: TSource,
-      on: Predicate,
-    ): SelectBuilder<
-      InferJoinResult<
-        TSelection,
-        TResult,
-        TRootSource,
-        AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>
-      >,
+      on: Predicate | ((joined: TSource) => Predicate),
+    ): SelectBuilderWithRefs<
+      TSource extends KnownQuerySource
+        ? InferJoinResult<
+            TSelection,
+            TResult,
+            TRootSource,
+            AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>
+          >
+        : TResult,
       TSelection,
       TRootSource,
-      AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>,
+      TSource extends KnownQuerySource
+        ? AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>
+        : TJoinedSources,
       TJoinUseNulls
     > {
+      const predicate = typeof on === "function" ? on(source) : on;
       return clone<
-        InferJoinResult<
-          TSelection,
-          TResult,
-          TRootSource,
-          AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>
-        >,
+        TSource extends KnownQuerySource
+          ? InferJoinResult<
+              TSelection,
+              TResult,
+              TRootSource,
+              AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>
+            >
+          : TResult,
         TRootSource,
-        AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>
+        TSource extends KnownQuerySource
+          ? AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>
+          : TJoinedSources
       >({
-        joins: [...state.joins, { type: "left", source, on: on as SqlPredicate }],
+        joins: [...state.joins, { type: "left", source, on: predicate as SqlPredicate }],
       });
     },
 
     where(
       ...predicates: PredicateInput[]
-    ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
+    ): SelectBuilderWithRefs<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
       return clone({
         whereClause: normalizePredicateGroup("where", "and", predicates),
       });
@@ -1387,13 +1637,15 @@ export const createSelectBuilder = <
 
     groupBy(
       ...expressions: Selection<unknown>[]
-    ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
+    ): SelectBuilderWithRefs<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
       return clone({
         groupByItems: [...state.groupByItems, ...expressions.map((expression) => ensureExpression(expression))],
       });
     },
 
-    having(condition?: Predicate): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
+    having(
+      condition?: Predicate,
+    ): SelectBuilderWithRefs<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
       return clone({
         havingClause: normalizePredicateGroup("having", "and", [condition]),
       });
@@ -1401,7 +1653,7 @@ export const createSelectBuilder = <
 
     orderBy(
       ...expressions: Array<Order | Selection<unknown>>
-    ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
+    ): SelectBuilderWithRefs<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
       const nextOrderItems = expressions.map((expression): SqlOrder => {
         if ("direction" in expression && "expression" in expression) {
           return {
@@ -1419,21 +1671,21 @@ export const createSelectBuilder = <
       });
     },
 
-    limit(value: LimitValue): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
+    limit(value: LimitValue): SelectBuilderWithRefs<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
       assertValidLimitValue(value);
       return clone({
         limitValue: value,
       });
     },
 
-    offset(value: LimitValue): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
+    offset(value: LimitValue): SelectBuilderWithRefs<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
       assertValidLimitValue(value);
       return clone({
         offsetValue: value,
       });
     },
 
-    final(): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
+    final(): SelectBuilderWithRefs<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
       return clone({
         useFinal: true,
       });
@@ -1442,7 +1694,7 @@ export const createSelectBuilder = <
     limitBy(
       columns: Selection<unknown>[],
       limit: LimitValue,
-    ): SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
+    ): SelectBuilderWithRefs<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> {
       assertValidLimitValue(limit);
       return clone({
         limitByValue: {
@@ -1582,7 +1834,24 @@ export const createSelectBuilder = <
 
       return Object.assign(subquery, columns) as Subquery<TResult, TAlias>;
     },
-  } as SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>;
+  } as SelectBuilderWithRefs<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>;
+
+  // Auto-attach column refs when the user supplied an explicit selection.
+  // Each ref's `compile(ctx)` lazy-resolves the bare-builder's per-compile
+  // auto alias (so `subq.x` and the SQL rendering of the source both use
+  // the same `__sub_N`). `buildSelectionItems()` is safe here:
+  // `state.selection != null` guarantees the early-return branch, so it
+  // cannot hit the "missing source/columns" throw path.
+  if (state.selection != null) {
+    for (const item of buildSelectionItems()) {
+      if (item.key in FORBIDDEN_AUTO_COLUMN_KEYS) continue;
+      defineHidden(
+        builder,
+        item.key,
+        createBareBuilderReferenceExpression(builder, item.sqlAlias, item.expression.decoder, item.expression.sqlType),
+      );
+    }
+  }
 
   return builder;
 };
@@ -1727,7 +1996,7 @@ export interface QueryClient<TJoinUseNulls extends JoinUseNulls = 1> {
   readonly ctes: AnyCte[];
   select<TSelection extends SelectionRecord | undefined = undefined>(
     selection?: TSelection,
-  ): SelectBuilder<
+  ): SelectBuilderWithRefs<
     TSelection extends SelectionRecord ? InferSelectionResult<TSelection> : Record<string, unknown>,
     TSelection,
     undefined,
@@ -1759,7 +2028,7 @@ export const createQueryClient = <TJoinUseNulls extends JoinUseNulls = 1>(
     ctes: state.ctes,
     select<TSelection extends SelectionRecord | undefined = undefined>(
       selection?: TSelection,
-    ): SelectBuilder<
+    ): SelectBuilderWithRefs<
       TSelection extends SelectionRecord ? InferSelectionResult<TSelection> : Record<string, unknown>,
       TSelection,
       undefined,
@@ -2193,7 +2462,7 @@ export const hasSubstr = makeArrayContainmentPredicate("hasSubstr");
 const createInExpression = (
   negate: boolean,
   left: unknown,
-  right: readonly unknown[] | AnySubquery | AnyCte,
+  right: readonly unknown[] | AnySubquery | AnyCte | AnySelectBuilderLike,
 ): Predicate => {
   const helperName = negate ? "notInArray" : "inArray";
   assertPredicateValue(right, helperName);
@@ -2216,7 +2485,7 @@ const createInExpression = (
         return sql`${leftExpression.compile(ctx)}${operatorFragment}${joinSqlParts(parts, ", ")}${SQL_CLOSE_PAREN}`;
       }
 
-      const querySource = (right as AnySubquery | AnyCte).query;
+      const querySource = isSelectBuilder(right) ? right : (right as AnySubquery | AnyCte).query;
       return sql`${leftExpression.compile(ctx)}${operatorFragment}${sql.raw(compileNestedQuery(querySource, ctx).statement)}${SQL_CLOSE_PAREN}`;
     },
     decoder: booleanCastDecoder,
@@ -2224,13 +2493,17 @@ const createInExpression = (
   });
 };
 
-export const inArray = (left: unknown, right: readonly unknown[] | AnySubquery | AnyCte): Predicate =>
-  createInExpression(false, left, right);
+export const inArray = (
+  left: unknown,
+  right: readonly unknown[] | AnySubquery | AnyCte | AnySelectBuilderLike,
+): Predicate => createInExpression(false, left, right);
 
-export const notInArray = (left: unknown, right: readonly unknown[] | AnySubquery | AnyCte): Predicate =>
-  createInExpression(true, left, right);
+export const notInArray = (
+  left: unknown,
+  right: readonly unknown[] | AnySubquery | AnyCte | AnySelectBuilderLike,
+): Predicate => createInExpression(true, left, right);
 
-export const exists = (query: AnySubquery | AnyCte | SelectBuilder<Record<string, unknown>>): Predicate => {
+export const exists = (query: AnySubquery | AnyCte | AnySelectBuilderLike): Predicate => {
   const selectQuery = isSubquery(query) || isCte(query) ? query.query : query;
   return createExpression<boolean>({
     compile: (ctx) =>
@@ -2240,7 +2513,7 @@ export const exists = (query: AnySubquery | AnyCte | SelectBuilder<Record<string
   });
 };
 
-export const notExists = (query: AnySubquery | AnyCte | SelectBuilder<Record<string, unknown>>): Predicate => {
+export const notExists = (query: AnySubquery | AnyCte | AnySelectBuilderLike): Predicate => {
   return not(exists(query));
 };
 
