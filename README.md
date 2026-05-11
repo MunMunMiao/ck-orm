@@ -1559,9 +1559,12 @@ Generic, conversion, aggregate, JSON, tuple, and table-related helpers include:
 - `fn.fromUnixTimestamp()` / `fn.fromUnixTimestamp64Second()` / `fn.fromUnixTimestamp64Milli()` / `fn.fromUnixTimestamp64Micro()` / `fn.fromUnixTimestamp64Nano()`
 - `fn.count()` / `fn.countIf()` — default `Selection<number>` wrapped as `toFloat64(count(...))`. Chain `.toSafe()` for `Selection<string>` (`toString(count(...))`), `.toMixed()` for `Selection<number | string>` (`toUInt64(count(...))`), or `.toUnsafe()` to revert to the default. Mirrors `db.count`. Decoders enforce non-negative integers and reject `NaN`, negatives, booleans, etc. — see [`fn.count` / `fn.uniqExact` modes](#fncount--fnuniqexact-modes) for examples.
 - `fn.sum()` / `fn.sumIf()` / `fn.min()` / `fn.max()` — auto-cast to `Decimal(P, S)` for Decimal columns; see [Decimal precision in expressions](#decimal-precision-in-expressions)
+- `fn.argMax()` / `fn.argMin()` — return the `arg` value at the row that maximizes/minimizes `val`. Return type tracks the `arg` column (no Decimal CAST wrapping; ClickHouse preserves the column's declared type).
 - `fn.avg()` — `Selection<number>` (Float64), matching ClickHouse's native `avg(Decimal)` behavior
 - `fn.uniqExact()` — same three chainable modes as `fn.count()`: default `Selection<number>` wrapped as `toFloat64(uniqExact(...))`, `.toSafe()` for `Selection<string>` (`toString(uniqExact(...))`), `.toMixed()` for `Selection<number | string>` (`toUInt64(uniqExact(...))`), `.toUnsafe()` to revert. Decoders are the same non-negative integer guard. See [`fn.count` / `fn.uniqExact` modes](#fncount--fnuniqexact-modes).
 - `fn.coalesce()`
+- `fn.if()` / `fn.multiIf()` / `fn.greatest()` / `fn.least()` / `fn.nullIf()` — conditionals and comparisons. Return type follows the `then` branch (or first arg); `nullIf` automatically wraps the sqlType as `Nullable(...)` without double-wrapping an already-nullable input.
+- `fn.positionCaseInsensitive()` / `fn.positionCaseInsensitiveUTF8()` — case-insensitive / UTF-8 substring search. Return `Selection<string>` (ClickHouse `UInt64`, decoded as string to preserve 64-bit precision, matching `fn.indexOf()`). Optional `startPos` must be a `UInt*` type — pass a UInt column or `fn.toUInt64(n)` for literals; a bare number literal becomes `Int64` and will be rejected by ClickHouse.
 - `fn.jsonExtract()`
 - `fn.tuple()`
 - `fn.arrayJoin()`

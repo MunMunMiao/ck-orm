@@ -821,6 +821,81 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
 
     const maxBuilt = compileExpression(fn.max(string().bind({ name: "name", tableName: "orders" })));
     expect(maxBuilt.query).toContain("max(`orders`.`name`)");
+
+    const argMaxBuilt = compileExpression(
+      fn.argMax(
+        string().bind({ name: "name", tableName: "orders" }),
+        int32().bind({ name: "score", tableName: "orders" }),
+      ),
+    );
+    expect(argMaxBuilt.query).toContain("argMax(`orders`.`name`, `orders`.`score`)");
+
+    const argMinSelection = fn.argMin(
+      int32().bind({ name: "score", tableName: "orders" }),
+      int32().bind({ name: "id", tableName: "orders" }),
+    );
+    expect(compileExpression(argMinSelection).query).toContain("argMin(`orders`.`score`, `orders`.`id`)");
+    expect(argMinSelection.sqlType).toBe("Int32");
+    expect(argMinSelection.decoder(5)).toBe(5);
+  });
+
+  it("compiles fn.greatest / least / if / multiIf / nullIf with type propagation", function testConditionalAndComparisonFns() {
+    const id = int32().bind({ name: "id", tableName: "orders" });
+    const name = string().bind({ name: "name", tableName: "orders" });
+
+    const greatestSelection = fn.greatest(id, 0);
+    expect(compileExpression(greatestSelection).query).toContain("greatest(`orders`.`id`, {orm_param1:Int64})");
+    expect(greatestSelection.sqlType).toBe("Int32");
+    expect(greatestSelection.decoder(7)).toBe(7);
+
+    const leastSelection = fn.least(name, "fallback");
+    expect(compileExpression(leastSelection).query).toContain("least(`orders`.`name`, {orm_param1:String})");
+    expect(leastSelection.sqlType).toBe("String");
+
+    const ifSelection = fn.if(sql.raw("1"), id, 0);
+    expect(compileExpression(ifSelection).query).toContain("if(1, `orders`.`id`, {orm_param1:Int64})");
+    expect(ifSelection.sqlType).toBe("Int32");
+
+    const multiIfSelection = fn.multiIf(sql.raw("a"), id, sql.raw("b"), id, 0);
+    expect(compileExpression(multiIfSelection).query).toContain(
+      "multiIf(a, `orders`.`id`, b, `orders`.`id`, {orm_param1:Int64})",
+    );
+    expect(multiIfSelection.sqlType).toBe("Int32");
+
+    expect(compileExpression(fn.multiIf()).query).toContain("multiIf()");
+    expect(fn.multiIf().decoder({ raw: true })).toEqual({ raw: true });
+
+    const nullIfSelection = fn.nullIf(id, 0);
+    expect(compileExpression(nullIfSelection).query).toContain("nullIf(`orders`.`id`, {orm_param1:Int64})");
+    expect(nullIfSelection.sqlType).toBe("Nullable(Int32)");
+    expect(nullIfSelection.decoder(null)).toBeNull();
+    expect(nullIfSelection.decoder(7)).toBe(7);
+
+    const nullableInput = nullable(int32()).bind({ name: "maybe_id", tableName: "orders" });
+    const nullIfFromNullable = fn.nullIf(nullableInput, 0);
+    expect(nullIfFromNullable.sqlType).toBe("Nullable(Int32)");
+  });
+
+  it("compiles fn.positionCaseInsensitive helpers", function testPositionCaseInsensitiveFns() {
+    const haystack = string().bind({ name: "name", tableName: "orders" });
+
+    const positionSelection = fn.positionCaseInsensitive(haystack, "vip");
+    expect(compileExpression(positionSelection).query).toContain(
+      "positionCaseInsensitive(`orders`.`name`, {orm_param1:String})",
+    );
+    expect(positionSelection.sqlType).toBe("UInt64");
+    expect(positionSelection.decoder("5")).toBe("5");
+
+    const positionWithStart = compileExpression(fn.positionCaseInsensitive(haystack, "vip", 3));
+    expect(positionWithStart.query).toContain(
+      "positionCaseInsensitive(`orders`.`name`, {orm_param1:String}, {orm_param2:Int64})",
+    );
+
+    const utf8Selection = fn.positionCaseInsensitiveUTF8(haystack, "VIP");
+    expect(compileExpression(utf8Selection).query).toContain(
+      "positionCaseInsensitiveUTF8(`orders`.`name`, {orm_param1:String})",
+    );
+    expect(utf8Selection.sqlType).toBe("UInt64");
   });
 
   it("compiles typed JSON, array and tuple helpers", function testCompileStructuredHelpers() {

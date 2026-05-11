@@ -496,6 +496,14 @@ const createCoalesceExpression = <TData>(args: readonly unknown[]): Selection<TD
   });
 };
 
+const createFirstArgFunction = <TData>(name: string, args: readonly unknown[]): Selection<TData> => {
+  const first = args.length > 0 ? ensureExpression<TData>(args[0]) : undefined;
+  return createFunctionExpression<TData>(name, args, {
+    decoder: first?.decoder,
+    sqlType: first?.sqlType,
+  });
+};
+
 const createUInt32Expression = (name: string, args: readonly unknown[]): Selection<number> => {
   return createNumberExpression(name, args, "UInt32");
 };
@@ -1472,6 +1480,41 @@ const scalarFns = {
   coalesce<TData = unknown>(...args: unknown[]): Selection<TData> {
     return createCoalesceExpression<TData>(args);
   },
+  greatest<TData = unknown>(first: unknown, ...rest: unknown[]): Selection<TData> {
+    return createFirstArgFunction<TData>("greatest", [first, ...rest]);
+  },
+  least<TData = unknown>(first: unknown, ...rest: unknown[]): Selection<TData> {
+    return createFirstArgFunction<TData>("least", [first, ...rest]);
+  },
+  /** Return type tracks `thenValue`. ClickHouse: `if(cond, then, else)`. */
+  if<TData = unknown>(condition: unknown, thenValue: unknown, elseValue: unknown): Selection<TData> {
+    const wrapped = ensureExpression<TData>(thenValue);
+    return createFunctionExpression<TData>("if", [condition, thenValue, elseValue], {
+      decoder: wrapped.decoder,
+      sqlType: wrapped.sqlType,
+    });
+  },
+  /**
+   * Variadic conditional. Arguments are `(cond1, val1, cond2, val2, ..., elseValue)` — odd count.
+   * Return type tracks the first value branch.
+   */
+  multiIf<TData = unknown>(...args: unknown[]): Selection<TData> {
+    const firstValue = args.length >= 2 ? ensureExpression<TData>(args[1]) : undefined;
+    return createFunctionExpression<TData>("multiIf", args, {
+      decoder: firstValue?.decoder,
+      sqlType: firstValue?.sqlType,
+    });
+  },
+  /** Returns NULL when `value` equals `other`, otherwise `value`. sqlType wraps as `Nullable(...)` automatically. */
+  nullIf<TData = unknown>(value: unknown, other: unknown): Selection<TData | null> {
+    const wrapped = ensureExpression<TData>(value);
+    const sqlType =
+      wrapped.sqlType !== undefined ? `Nullable(${unwrapNullableLowCardinalityType(wrapped.sqlType)})` : undefined;
+    return createFunctionExpression<TData | null>("nullIf", [value, other], {
+      decoder: nullableDecoder(wrapped.decoder),
+      sqlType,
+    });
+  },
   tuple(...args: unknown[]): Selection<unknown[]> {
     return createFunctionExpression("tuple", args, {
       decoder: arrayDecoder<unknown>("tuple"),
@@ -1863,6 +1906,14 @@ const scalarFns = {
   notEmpty(value: unknown): Selection<boolean> {
     return createBooleanExpression("notEmpty", [value]);
   },
+  /** ClickHouse signature requires `startPos` to be a `UInt*` type. Pass a UInt column, or wrap a literal with `fn.toUInt64(n)`. */
+  positionCaseInsensitive(haystack: unknown, needle: unknown, startPos?: unknown): Selection<string> {
+    return createUInt64Expression("positionCaseInsensitive", withOptional([haystack, needle], startPos));
+  },
+  /** ClickHouse signature requires `startPos` to be a `UInt*` type. Pass a UInt column, or wrap a literal with `fn.toUInt64(n)`. */
+  positionCaseInsensitiveUTF8(haystack: unknown, needle: unknown, startPos?: unknown): Selection<string> {
+    return createUInt64Expression("positionCaseInsensitiveUTF8", withOptional([haystack, needle], startPos));
+  },
   range<_TData = number>(first: unknown, second?: unknown, step?: unknown): Selection<unknown[]> {
     const args = second === undefined ? [first] : withOptional([first, second], step);
     return createArrayExpression<unknown>("range", args);
@@ -1984,6 +2035,20 @@ const aggregateFns = {
     if (decimalAware) return decimalAware as Selection<TData>;
     const wrapped = ensureExpression<TData>(expression);
     return createFunctionExpression<TData>("max", [expression], {
+      decoder: wrapped.decoder,
+      sqlType: wrapped.sqlType,
+    });
+  },
+  argMax<TData = unknown>(arg: unknown, val: unknown): Selection<TData> {
+    const wrapped = ensureExpression<TData>(arg);
+    return createFunctionExpression<TData>("argMax", [arg, val], {
+      decoder: wrapped.decoder,
+      sqlType: wrapped.sqlType,
+    });
+  },
+  argMin<TData = unknown>(arg: unknown, val: unknown): Selection<TData> {
+    const wrapped = ensureExpression<TData>(arg);
+    return createFunctionExpression<TData>("argMin", [arg, val], {
       decoder: wrapped.decoder,
       sqlType: wrapped.sqlType,
     });

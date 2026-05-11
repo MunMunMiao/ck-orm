@@ -935,6 +935,86 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
     expect(presentRow.jaccard).toBeCloseTo(1 / 3);
   });
 
+  it("supports fn.greatest / least / if / multiIf / nullIf / position* / argMax / argMin against real ClickHouse", async function testConditionalComparisonAndArgExtremumFunctions() {
+    const db = createE2EDb();
+
+    const rows = await db
+      .select({
+        id: users.id,
+        tier: users.tier,
+        greatest: fn.greatest<number>(users.id, 2).as("greatest"),
+        least: fn.least<number>(users.id, 2).as("least"),
+        tierIsVipFlag: fn.if<number>(ck.eq(users.tier, "vip"), 1, 0).as("tier_is_vip_flag"),
+        tierLabel: fn
+          .multiIf<string>(ck.eq(users.tier, "vip"), "V", ck.eq(users.tier, "standard"), "S", "T")
+          .as("tier_label"),
+        nullIfVip: fn.nullIf<string>(users.tier, "vip").as("null_if_vip"),
+        posAlice: fn.positionCaseInsensitive(users.name, "AL").as("pos_alice"),
+        posAliceUtf8: fn.positionCaseInsensitiveUTF8(users.name, "AL").as("pos_alice_utf8"),
+        posWithStart: fn.positionCaseInsensitive(users.name, "AL", fn.toUInt64(2)).as("pos_with_start"),
+      })
+      .from(users)
+      .where(ck.lte(users.id, 3))
+      .orderBy(users.id);
+
+    // Notes:
+    //   - tier seed: `multiIf(number % 7 = 0, 'vip', number % 3 = 0, 'standard', 'trial')`
+    //     where number = id - 1. So id=1 → vip; id=2,3 → trial; id=4 → standard.
+    //   - `fn.if(cond, 1, 0)` propagates Int64 from the literal `then`, decoded as string
+    //     to preserve 64-bit precision — that's the documented Int64 path.
+    expect(rows).toEqual([
+      {
+        id: 1,
+        tier: "vip",
+        greatest: 2,
+        least: 1,
+        tierIsVipFlag: "1",
+        tierLabel: "V",
+        nullIfVip: null,
+        posAlice: "1",
+        posAliceUtf8: "1",
+        posWithStart: "0",
+      },
+      {
+        id: 2,
+        tier: "trial",
+        greatest: 2,
+        least: 2,
+        tierIsVipFlag: "0",
+        tierLabel: "T",
+        nullIfVip: "trial",
+        posAlice: "0",
+        posAliceUtf8: "0",
+        posWithStart: "0",
+      },
+      {
+        id: 3,
+        tier: "trial",
+        greatest: 3,
+        least: 2,
+        tierIsVipFlag: "0",
+        tierLabel: "T",
+        nullIfVip: "trial",
+        posAlice: "0",
+        posAliceUtf8: "0",
+        posWithStart: "0",
+      },
+    ]);
+
+    const [aggregateRow] = await db
+      .select({
+        topName: fn.argMax<string>(users.name, users.id).as("top_name"),
+        firstName: fn.argMin<string>(users.name, users.id).as("first_name"),
+      })
+      .from(users)
+      .where(ck.lte(users.id, 3));
+
+    expect(expectPresent(aggregateRow, "argMax/argMin row")).toEqual({
+      topName: "charlie",
+      firstName: "alice",
+    });
+  });
+
   it("supports tableFn.call against the numbers table function", async function testTableFunction() {
     const db = createE2EDb();
     const numbers = fn.table.call("numbers", 5).as("n");
