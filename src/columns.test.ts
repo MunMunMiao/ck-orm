@@ -754,4 +754,209 @@ describe("ck-orm columns", function describeClickHouseORMColumns() {
     expect(isDecodeError(emptyErr)).toBe(true);
     expect((emptyErr as DecodeError).message).toContain("Standard Schema validation failed");
   });
+
+  it("renders JSON DDL: bare, parameterized, sorted, escaped", function testJsonDdlRendering() {
+    // bare
+    expect(json().sqlType).toBe("JSON");
+    expect(json("payload").sqlType).toBe("JSON");
+
+    // max_dynamic_paths / max_dynamic_types
+    expect(json<{ a: string }>({ maxDynamicPaths: 64 }).sqlType).toBe("JSON(max_dynamic_paths=64)");
+    expect(json<{ a: string }>({ maxDynamicTypes: 8 }).sqlType).toBe("JSON(max_dynamic_types=8)");
+
+    // range / validity rejections
+    expect(() => json<{ a: string }>({ maxDynamicTypes: 0 })).toThrow(/maxDynamicTypes/);
+    expect(() => json<{ a: string }>({ maxDynamicTypes: 256 })).toThrow(/maxDynamicTypes/);
+    expect(() => json<{ a: string }>({ maxDynamicPaths: -1 })).toThrow(/maxDynamicPaths/);
+
+    // typeHints lexicographically sorted regardless of input order
+    expect(
+      json<{ a: { b: number }; c: string }>({
+        typeHints: { c: string(), "a.b": uint32() },
+      }).sqlType,
+    ).toBe("JSON(a.b UInt32, c String)");
+
+    // SKIP and SKIP REGEXP sorted independently
+    expect(
+      json<{ a: string }>({
+        skip: ["z.path", "a.path"],
+        skipRegexp: ["^z_", "^a_"],
+      }).sqlType,
+    ).toBe("JSON(SKIP a.path, SKIP z.path, SKIP REGEXP '^a_', SKIP REGEXP '^z_')");
+
+    // full kitchen sink with all five knobs
+    expect(
+      json<{ a: { b: number }; c: string }>({
+        maxDynamicPaths: 1024,
+        maxDynamicTypes: 8,
+        typeHints: { "a.b": uint32(), c: string() },
+        skip: ["debug", "internal"],
+        skipRegexp: ["^temp_"],
+      }).sqlType,
+    ).toBe(
+      "JSON(max_dynamic_paths=1024, max_dynamic_types=8, a.b UInt32, c String, SKIP debug, SKIP internal, SKIP REGEXP '^temp_')",
+    );
+
+    // single-quote escaping in skipRegexp (ck-orm uses backslash-quote)
+    expect(json<{ a: string }>({ skipRegexp: ["a'b"] }).sqlType).toBe("JSON(SKIP REGEXP 'a\\'b')");
+  });
+
+  it("validates JSON runtime shape (top-level must be a plain object)", function testJsonRuntimeValidation() {
+    const col = json<{ x: number }>("p");
+
+    // null / undefined pass through
+    expect(col.mapToDriverValue(null as unknown as { x: number })).toBeNull();
+    expect(col.mapToDriverValue(undefined as unknown as { x: number })).toBeUndefined();
+    expect(col.mapFromDriverValue(null)).toBeNull();
+    expect(col.mapFromDriverValue(undefined)).toBeUndefined();
+
+    // arrays / scalars rejected on both sides
+    expect(() => col.mapToDriverValue([1, 2, 3] as unknown as { x: number })).toThrow(/plain object, got array/);
+    expect(() => col.mapToDriverValue("s" as unknown as { x: number })).toThrow(/plain object, got string/);
+    expect(() => col.mapToDriverValue(42 as unknown as { x: number })).toThrow(/plain object, got number/);
+    expect(() => col.mapFromDriverValue([1, 2, 3])).toThrow(/plain object/);
+    expect(() => col.mapFromDriverValue("raw")).toThrow(/plain object/);
+
+    // plain object passes through unchanged when no typeHints
+    expect(col.mapToDriverValue({ x: 1 })).toEqual({ x: 1 });
+    expect(col.mapFromDriverValue({ x: 1 })).toEqual({ x: 1 });
+  });
+
+  it("applies typeHints recursively on decode and encode", function testJsonTypeHints() {
+    const col = json<{ user_id: string; meta: { ts: Date; ip: string } }>("p", {
+      typeHints: {
+        user_id: uint64(),
+        "meta.ts": dateTime64({ precision: 3, timezone: "UTC" }),
+      },
+    });
+
+    // decode: uint64 stringifies numerics; dateTime64 parses to Date
+    const decoded = col.mapFromDriverValue({
+      user_id: 42,
+      meta: { ts: "2026-05-12 00:00:00.000", ip: "1.2.3.4" },
+    });
+    expect(decoded).toEqual({
+      user_id: "42",
+      meta: { ts: new Date("2026-05-12T00:00:00.000Z"), ip: "1.2.3.4" },
+    });
+
+    // encode: dateTime64 encoder accepts Date and hands it back; @clickhouse/client
+    // JSONEachRow stringifies the whole row downstream, so the hint encoder's job
+    // is normalization (Date / string / number all valid), not pre-stringification.
+    const sourceTs = new Date("2026-05-12T00:00:00.000Z");
+    const encoded = col.mapToDriverValue({
+      user_id: "42",
+      meta: { ts: sourceTs, ip: "1.2.3.4" },
+    }) as { user_id: string; meta: { ts: Date; ip: string } };
+    expect(encoded.user_id).toBe("42");
+    expect(encoded.meta.ip).toBe("1.2.3.4");
+    expect(encoded.meta.ts).toBeInstanceOf(Date);
+    expect((encoded.meta.ts as Date).getTime()).toBe(sourceTs.getTime());
+
+    // missing hint paths are tolerated (NewJSON allows path absence)
+    expect(col.mapFromDriverValue({ meta: { ip: "1.2.3.4" } })).toEqual({ meta: { ip: "1.2.3.4" } });
+
+    // bind preserves hint decoders
+    const bound = col.bind({ key: "p", name: "p", tableName: "t" });
+    expect(bound.mapFromDriverValue({ user_id: 99, meta: { ts: "2026-05-12 00:00:00.000", ip: "8.8.8.8" } })).toEqual({
+      user_id: "99",
+      meta: { ts: new Date("2026-05-12T00:00:00.000Z"), ip: "8.8.8.8" },
+    });
+  });
+
+  it("renders JSON path access helpers as ClickHouse path syntax", function testJsonPathRendering() {
+    const tbl = {
+      // Manually bind so we can render directly without ckTable plumbing.
+      p: json<{ a: { b: number }; c: string }>("p", { typeHints: { "a.b": uint32() } }).bind({
+        key: "p",
+        name: "p",
+        tableName: "t",
+      }),
+    };
+
+    const render = (frag: ReturnType<typeof tbl.p.path>) =>
+      normalizeSql(compileSql(frag as unknown as ReturnType<typeof sql>).query);
+
+    expect(render(tbl.p.path("c"))).toMatch(/`t`\.`p`\.c\b/);
+    expect(render(tbl.p.path("a.b"))).toMatch(/`t`\.`p`\.a\.b\b/);
+    expect(render(tbl.p.castPath("c", string()))).toMatch(/`t`\.`p`\.c\.:String\b/);
+    expect(render(tbl.p.subobject("a"))).toMatch(/`t`\.`p`\.\^a\b/);
+    expect(render(tbl.p.merged("a"))).toMatch(/`t`\.`p`\.@a\b/);
+    expect(render(tbl.p.arrayPath("a"))).toMatch(/`t`\.`p`\.a\[\]/);
+
+    // empty / malformed paths rejected
+    expect(() => tbl.p.path("" as unknown as "a")).toThrow(/non-empty/);
+    expect(() => tbl.p.path("a..b" as unknown as "a")).toThrow(/empty segment/);
+    expect(() => tbl.p.path("a." as unknown as "a")).toThrow(/empty segment/);
+  });
+
+  it("keeps JSON path methods after $type / $validator / .default / .bind chains", function testJsonChainCompatibility() {
+    // The presence assertion is the key invariant — `$type`, `$validator`,
+    // `.default()` each re-enter `createColumnFactory` which must re-attach
+    // path methods. SQL rendering is checked end-to-end only after `.bind()`
+    // because unbound columns intentionally throw at compile time.
+
+    const afterTypeSingle = json<{ a: number }>("p").$type<{ a: number; b: string }>();
+    expect(typeof (afterTypeSingle as unknown as { path?: unknown }).path).toBe("function");
+
+    const afterTypeIo = json("p", { typeHints: { uid: uint64() } }).$type<{
+      select: { uid: string };
+      insert: { uid: string | number };
+    }>();
+    expect(typeof (afterTypeIo as unknown as { path?: unknown }).path).toBe("function");
+
+    const passSchema: StandardSchemaV1<unknown, { a: number }> = {
+      "~standard": {
+        version: 1,
+        vendor: "test",
+        validate: (value) => ({ value: value as { a: number } }),
+      },
+    };
+    const afterValidator = json<{ a: number }>("p").$validator(passSchema);
+    expect(typeof (afterValidator as unknown as { path?: unknown }).path).toBe("function");
+
+    const afterDefault = json<{ a: number }>("p").default(sql`'{}'`);
+    expect(typeof (afterDefault as unknown as { path?: unknown }).path).toBe("function");
+
+    // .bind() — verify both presence and that compile actually uses the new
+    // table identifier, proving attachJsonMethods closed over the rebound
+    // column rather than the original.
+    const afterBind = json<{ a: number }>("p").bind({ key: "p", name: "p", tableName: "t" });
+    expect(typeof (afterBind as unknown as { path?: unknown }).path).toBe("function");
+    const boundSel = (afterBind as unknown as { path: (p: string) => unknown }).path("a");
+    expect(normalizeSql(compileSql(boundSel as ReturnType<typeof sql>).query)).toMatch(/`t`\.`p`\.a\b/);
+
+    // Same check after a longer chain — bind last so we can render.
+    const longChain = json<{ a: number }>("p")
+      .$type<{ a: number; b: string }>()
+      .default(sql`'{}'`)
+      .bind({ key: "p", name: "p", tableName: "u" });
+    const longSel = (longChain as unknown as { path: (p: string) => unknown }).path("b");
+    expect(normalizeSql(compileSql(longSel as ReturnType<typeof sql>).query)).toMatch(/`u`\.`p`\.b\b/);
+  });
+
+  it("$validator on JSON column rejects invalid input synchronously", function testJsonValidatorRejection() {
+    const rangeSchema: StandardSchemaV1<unknown, { score: number }> = {
+      "~standard": {
+        version: 1,
+        vendor: "test",
+        validate: (value) => {
+          if (
+            typeof value === "object" &&
+            value !== null &&
+            !Array.isArray(value) &&
+            typeof (value as { score?: unknown }).score === "number" &&
+            (value as { score: number }).score >= 0 &&
+            (value as { score: number }).score <= 100
+          ) {
+            return { value: value as { score: number } };
+          }
+          return { issues: [{ message: "score must be 0..100" }] };
+        },
+      },
+    };
+    const col = json<{ score: number }>("p").$validator(rangeSchema);
+    expect(() => col.mapToDriverValue({ score: 150 })).toThrow(/Standard Schema validation failed/);
+    expect(col.mapToDriverValue({ score: 50 })).toEqual({ score: 50 });
+  });
 });

@@ -458,6 +458,257 @@ Schema transforms (e.g. `z.string().transform((v) => new Date(v))`) are respecte
 | Input ≠ output types | Via `$type<{ select, insert }>()` | Via schema transforms |
 | External dependency | None | None (schema lib is your choice) |
 
+### JSON column type
+
+ck-orm targets the ClickHouse 24.x+ **new-version JSON data type**
+([docs](https://clickhouse.com/docs/sql-reference/data-types/newjson)) — the
+one that physically splits a JSON object into typed sub-columns rather than
+storing the value as an opaque string. Two ground rules to keep in mind
+upfront:
+
+- ClickHouse's `JSON` data type accepts **only top-level objects**. Top-level
+  arrays, strings, and numbers are rejected. ck-orm enforces the same at
+  compile time via `T extends Record<string, unknown>` and at runtime via a
+  cheap O(1) check on every insert/select.
+- Typed paths (`a.b UInt32`) become real sub-columns inside ClickHouse; ck-orm
+  routes those paths through the corresponding ck-orm column factory's
+  `mapFromDriverValue` / `mapToDriverValue` so a path declared as
+  `ckType.uint64()` decodes to a lossless `string` exactly like the
+  top-level `uint64` column does.
+
+The simplest form mirrors every other ck-orm column factory:
+
+```ts
+import { ckTable, ckType } from "ck-orm";
+
+const auditLogs = ckTable("audit_logs", {
+  id: ckType.uint64(),
+  payload: ckType.json("payload"),
+});
+// DDL:  `payload` JSON
+// $inferSelect.payload: { [key: string]: unknown }
+```
+
+Pass a generic to surface the actual shape in `$inferSelect` /
+`$inferInsert`:
+
+```ts
+type EventPayload = { user_id: number; event: string; meta?: { ip: string } };
+
+const userEvents = ckTable("user_events", {
+  id: ckType.uint64(),
+  payload: ckType.json<EventPayload>("payload"),
+});
+```
+
+`ckType.json<T>().$type<T2>()` is the chainable equivalent if you prefer
+keeping the generic next to other column-builder calls.
+
+#### Parameterized DDL
+
+The second factory argument accepts the four NewJSON DDL knobs:
+
+```ts
+const userEvents = ckTable("user_events", {
+  id: ckType.uint64(),
+  payload: ckType.json<{
+    user_id: string;
+    created_at: Date;
+    user: { name: string; tier: number };
+  }>("payload", {
+    maxDynamicPaths: 256,
+    maxDynamicTypes: 8,
+    typeHints: {
+      user_id: ckType.uint64(),
+      created_at: ckType.dateTime64({ precision: 3, timezone: "UTC" }),
+      "user.tier": ckType.uint32(),
+    },
+    skip: ["debug", "internal"],
+    skipRegexp: ["^_tmp"],
+  }),
+});
+
+// DDL:
+//   `payload` JSON(
+//     max_dynamic_paths=256,
+//     max_dynamic_types=8,
+//     created_at DateTime64(3, 'UTC'),
+//     user.tier UInt32,
+//     user_id UInt64,
+//     SKIP debug,
+//     SKIP internal,
+//     SKIP REGEXP '^_tmp'
+//   )
+```
+
+`typeHints` keys are type-checked against `Paths<T>` — typos like
+`{ "user.idd": ... }` fail at compile time. The rendered DDL is always
+emitted in a stable lexicographic order so external schema-diff tooling
+sees byte-identical output regardless of how the user wrote the config.
+
+#### typeHints affect the runtime decoder
+
+ClickHouse's lossless 64-bit policy makes `UInt64` decode to a string in
+ck-orm. If you declare `user_id` both in the TS shape *and* as a
+`typeHints` entry, keep the two in sync — for `uint64` that means writing
+`user_id: string` in the generic. Use `$type<{ select, insert }>()` when
+the accepted insert input differs from the decoded select type:
+
+```ts
+ckType.json("payload", { typeHints: { user_id: ckType.uint64() } })
+  .$type<{
+    select: { user_id: string };
+    insert: { user_id: string | number | bigint };
+  }>();
+```
+
+#### Path access
+
+Every JSON column carries five chainable path methods that render the
+ClickHouse path-access syntax verbatim:
+
+| Method | SQL | Meaning |
+| --- | --- | --- |
+| `col.path("a.b")` | `col.a.b` | Read a path; static type is `PathValue<T, "a.b">` (see note on `typeHints` below) |
+| `col.castPath("a.b", ckType.uint64())` | `col.a.b.:UInt64` | Force-decode a path through a different ck-orm column factory; static type comes from the cast column's `TData` |
+| `col.subobject("a")` | `col.^a` | Read a nested object as a `JSON` value |
+| `col.merged("a")` | `col.@a` | Read the merged shared-data view |
+| `col.arrayPath("a")` | `col.a[]` | Expand an array-typed path |
+
+> `col.path(P)` always types as `PathValue<T, P>` — it derives from the
+> generic `T`, not from `typeHints`. `typeHints` only changes the runtime
+> decoder; the static type and the typeHint must be kept in sync manually
+> (the section above explains the `uint64 → string` lossless policy). When
+> the two disagree, use `castPath(P, ckType.X())` instead — its return type
+> is sourced from the cast column.
+
+```ts
+import { gt } from "ck-orm";
+
+const recentVip = await db
+  .select({
+    id: userEvents.id,
+    uid: userEvents.payload.path("user_id"),     // SQL: payload.user_id   type: string
+    when: userEvents.payload.path("created_at"), // SQL: payload.created_at type: Date
+    tier: userEvents.payload.path("user.tier"),  // SQL: payload.user.tier  type: number
+  })
+  .from(userEvents)
+  .where(gt(userEvents.payload.path("user.tier"), 5))
+  .execute();
+```
+
+`Paths<T>` validates the path literal at compile time — `payload.path("a.zzz")`
+fails to typecheck when `"a.zzz"` is not part of `T`.
+
+Path methods are re-attached at runtime by every chain modifier
+(`$type`, `$validator`, `.default()`, `.materialized()`, `.bind()`, …) so
+the underlying call always works. **The static type tracks them through
+every chain link except `$validator`**: `$validator`'s contract is generic
+over `StandardSchemaV1<unknown, unknown>`, which cannot be safely narrowed
+to `JsonShape` without violating the LSP-style subtype rules TypeScript
+enforces, so the static type erases back to `Column<T>` after that one
+link. The method itself is still callable — just reach for a type
+assertion if you need to chain it further:
+
+```ts
+const events = ckTable("events", {
+  payload: ckType.json<{ a: number }>("payload")
+    .$type<{ a: number; b: string }>()
+    .default(ckSql`'{}'`),
+});
+
+// Type and runtime both happy — JsonColumn shape preserved through
+// `$type` + `.default()`.
+await db.select({ b: events.payload.path("b") }).from(events).execute();
+```
+
+```ts
+const validated = ckTable("validated", {
+  payload: ckType.json<{ a: number }>("payload").$validator(someSchema),
+});
+// Runtime works, but the static type lost `.path` after $validator —
+// cast to JsonColumn (or call through the validator's TData) to use it:
+const col = validated.payload as unknown as JsonColumn<{ a: number }, "validated">;
+await db.select({ a: col.path("a") }).from(validated).execute();
+```
+
+#### `fn.json*` — dynamic-path call sites
+
+When the path string is built at runtime (or you want to read a path that
+isn't declared in `T`), reach for the `fn.*` namespace:
+
+```ts
+import { fn } from "ck-orm";
+
+const userPath = userInput as string;
+await db.select({
+  raw:    fn.jsonPath<string>(userEvents.payload, userPath),
+  casted: fn.jsonCast(userEvents.payload, userPath, ckType.string()),
+  shape:  fn.dynamicType(fn.jsonPath(userEvents.payload, userPath)),
+});
+```
+
+`fn.jsonCast` is the dynamic equivalent of `castPath`; `fn.jsonSubobject`,
+`fn.jsonMerged`, and `fn.jsonArray` mirror their column-method
+counterparts; `fn.dynamicType` exposes the ClickHouse `dynamicType()`
+function for inspecting the runtime kind of a Dynamic-typed path.
+
+#### Runtime validation
+
+Two layers run on every row, **in this order**:
+
+1. **ck-orm's built-in JSON guard** — `null` / `undefined` pass through
+   unchanged so `nullable()` JSON columns work naturally; every other
+   non-object input (array, string, number, boolean) is rejected with a
+   column-scoped `client_validation` / `decode` error like
+   `JSON column expects a plain object, got array`. Typed paths from
+   `typeHints` are routed through their column-factory encoder/decoder on
+   the way in/out. Always on.
+2. **Optional `$validator(schema)`** — when present, runs *before* the
+   built-in encoder on insert and *after* the built-in decoder on select.
+   Use this for shape-level validation:
+
+   ```ts
+   import { z } from "zod";
+
+   const PayloadSchema = z.object({
+     user_id: z.string().min(1),
+     event: z.enum(["login", "logout", "click"]),
+   });
+
+   const events = ckTable("events", {
+     payload: ckType
+       .json("payload", { typeHints: { user_id: ckType.uint64() } })
+       .$validator(PayloadSchema),
+   });
+   ```
+
+ck-orm intentionally **does not** recurse into the JSON value to check
+whether `T["a"]` is actually a `number` etc. Use `$validator` if you need
+that — the JSON guard's job is only to catch the cases where ClickHouse's
+own error message would be hard to map back to a column. Top-level scalar
+arguments fail loudly with the column name in scope:
+
+```ts
+await db.insert(events).values({ payload: ["wrong"] as never });
+// throws: JSON column expects a plain object, got array
+```
+
+#### Insert defaults
+
+JSON columns participate in the same `$inferInsert` rules as every other
+column. `.default()` makes the field optional; `.materialized()` /
+`.aliasExpr()` remove it from the insert model entirely:
+
+```ts
+const auditLogs = ckTable("audit_logs", {
+  id: ckType.uint64(),
+  payload: ckType.json<{ note: string }>("payload").default(ckSql`'{}'`),
+});
+
+await db.insert(auditLogs).values({ id: "1" }); // payload filled by CH DEFAULT
+```
+
 ### `ckAlias()`
 
 Use `ckAlias()` when the same table needs to appear more than once in a query.

@@ -499,6 +499,15 @@ const compileNestedInsertFieldValue = (
   return compileValue(encodedValues, ctx, entry.sqlType);
 };
 
+// ClickHouse parameterized VALUES inserts encode plain-object parameters as a
+// `Map(String,...)` literal (`{'k':'v',...}` with single quotes). That format
+// is not parseable as a `JSON` column value — CH rejects it with INCORRECT_DATA.
+// For NewJSON columns we route the encoded object through `JSON.stringify`
+// and downgrade the parameter type to `String`; ClickHouse implicitly casts
+// the resulting double-quoted JSON literal back to `JSON(...)` on the server
+// side. The read path is unaffected.
+const isJsonInsertSqlType = (sqlType: string): boolean => sqlType === "JSON" || sqlType.startsWith("JSON(");
+
 const compileInsertColumnValue = (
   row: Record<string, unknown>,
   entry: InsertColumnEntry,
@@ -515,7 +524,14 @@ const compileInsertColumnValue = (
   if (value === null) {
     return SQL_NULL;
   }
-  return compileValue(entry.column.mapToDriverValue(value as never), ctx, entry.sqlType);
+  const encoded = entry.column.mapToDriverValue(value as never);
+  if (isJsonInsertSqlType(entry.sqlType) && encoded !== null && encoded !== undefined) {
+    // Stringify the encoded plain object so the server-side String→JSON
+    // implicit cast can handle it. `mapToDriverValue` already validated the
+    // shape, so the stringify call is purely a wire-format step.
+    return compileValue(JSON.stringify(encoded), ctx, "String");
+  }
+  return compileValue(encoded, ctx, entry.sqlType);
 };
 
 const normalizeInsertRows = <TTable extends AnyTable>(

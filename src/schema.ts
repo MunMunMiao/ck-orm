@@ -1,4 +1,4 @@
-import type { AnyColumn, Column, DdlFragmentInput } from "./columns";
+import type { AnyColumn, Column, DdlFragmentInput, JsonColumn, JsonShape } from "./columns";
 import { createClientValidationError } from "./errors";
 import { isColumnLike } from "./internal/column";
 import { assertValidSqlIdentifier } from "./internal/identifier";
@@ -55,12 +55,27 @@ type BoundColumns<
   TTableName extends string,
   TTableAlias extends string | undefined = undefined,
 > = {
-  [K in keyof TColumns]: TColumns[K] extends Column<infer TData, infer TSqlType, string | undefined, string | undefined>
+  // `JsonColumn<T>` carries extra `path` / `castPath` / `subobject` / `merged`
+  // / `arrayPath` methods that must survive binding — intersect the bound
+  // column shape with `Pick<JsonColumn<T>, ...>` so the methods reappear
+  // alongside the new `TTableName` / `TTableAlias` sourceKey.
+  [K in keyof TColumns]: TColumns[K] extends JsonColumn<infer TJsonData>
     ? TColumns[K] extends ColumnIoMarker<infer TInsert, infer TGen, infer THas>
-      ? Column<TData, TSqlType, TTableName, TTableAlias> & ColumnIoMarker<TInsert, TGen, THas>
-      : Column<TData, TSqlType, TTableName, TTableAlias>
-    : never;
+      ? Column<TJsonData, string, TTableName, TTableAlias> &
+          Pick<JsonColumn<TJsonData>, "path" | "castPath" | "subobject" | "merged" | "arrayPath"> &
+          ColumnIoMarker<TInsert, TGen, THas>
+      : Column<TJsonData, string, TTableName, TTableAlias> &
+          Pick<JsonColumn<TJsonData>, "path" | "castPath" | "subobject" | "merged" | "arrayPath">
+    : TColumns[K] extends Column<infer TData, infer TSqlType, string | undefined, string | undefined>
+      ? TColumns[K] extends ColumnIoMarker<infer TInsert, infer TGen, infer THas>
+        ? Column<TData, TSqlType, TTableName, TTableAlias> & ColumnIoMarker<TInsert, TGen, THas>
+        : Column<TData, TSqlType, TTableName, TTableAlias>
+      : never;
 };
+
+// Internal compile-time guard: `JsonShape` re-exported here only to keep the
+// constraint generic in the conditional above stable across module boundaries.
+type _UseJsonShape = JsonShape;
 
 export const mergeTreeTableEngines = [
   "MergeTree",

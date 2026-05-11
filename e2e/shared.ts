@@ -317,6 +317,32 @@ export const schemaGeo = ckTable(
   }),
 );
 
+// NewJSON column with the full parameterized DDL surface — typeHints (typed
+// path subcolumns), skip, skipRegexp, max_dynamic_paths, max_dynamic_types.
+// Exercises the JSON path-access API in `e2e/json-paths.e2e.test.ts` and the
+// round-trip behavior in `e2e/schema-roundtrip.e2e.test.ts`.
+export const schemaJsonAdvanced = ckTable(
+  "schema_json_advanced",
+  {
+    id: ckType.int32(),
+    payload: ckType.json<{ user_id: string; tag: string; nested: { score: number } }>("payload", {
+      maxDynamicPaths: 128,
+      maxDynamicTypes: 8,
+      typeHints: {
+        user_id: ckType.uint64(),
+        "nested.score": ckType.uint32(),
+      },
+      skip: ["debug"],
+      skipRegexp: ["^_tmp"],
+    }),
+    payload_with_default: ckType.json<{ note: string }>("payload_with_default").default(ckSql`'{}'`),
+  },
+  (table) => ({
+    engine: "MergeTree",
+    orderBy: [table.id],
+  }),
+);
+
 // --- User-scenario tables for $type / enum auto-inference e2e ---
 
 export const auditLogTyped = ckTable(
@@ -432,6 +458,7 @@ export const e2eSchema = {
   schemaCompound,
   schemaAggregates,
   schemaGeo,
+  schemaJsonAdvanced,
   auditLogTyped,
   userProfileTyped,
   validatorStrict,

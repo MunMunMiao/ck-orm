@@ -190,7 +190,7 @@ type CkTypeNamespace = {
   variant: typeof variant;
 };
 
-export type { AnyColumn, Column } from "./columns";
+export type { AnyColumn, Column, JsonColumn, JsonConfig, JsonShape, Paths, PathValue } from "./columns";
 export type {
   ClickHouseORMError,
   ClickHouseORMErrorKind,

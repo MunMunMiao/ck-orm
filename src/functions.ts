@@ -6,7 +6,13 @@ import {
   toNumber as toNumberCoercion,
   toStringValue as toStringCoercion,
 } from "./coercion";
-import type { AnyColumn } from "./columns";
+import {
+  type AnyColumn,
+  makeJsonArrayFragment,
+  makeJsonMergedFragment,
+  makeJsonPathFragment,
+  makeJsonSubobjectFragment,
+} from "./columns";
 import { createClientValidationError, createDecodeError } from "./errors";
 import { assertIntegerInRange, assertNonNegativeInteger, assertPositiveInteger } from "./internal/assert";
 import { normalizeClickHouseTypeLiteral, unwrapNullableLowCardinalityType } from "./internal/clickhouse-type";
@@ -21,6 +27,7 @@ import {
 import { type DecimalParams, formatDecimalSqlType, parseDecimalSqlType } from "./internal/decimal";
 import { escapeSqlSingleQuoted } from "./internal/escape";
 import { assertValidSqlIdentifier } from "./internal/identifier";
+import { parseJsonPathSegments } from "./internal/json-path";
 import { createTableFunctionSource } from "./query";
 import {
   type BuildContext,
@@ -892,6 +899,71 @@ const scalarFns = {
     ...path: JsonPathSegment[]
   ): Selection<InferData<TColumn>> {
     return createJsonExtractExpression(json, returnType, path);
+  },
+  /**
+   * Renders the ClickHouse new-version JSON path access expression:
+   * `column.<path>` (e.g. `payload.user_id`). Use the JSON column's own
+   * `.path()` method when the path is a `Paths<TData>` literal — this fn
+   * helper is the dynamic-path escape hatch (path string not known at
+   * compile time).
+   */
+  jsonPath<TData = unknown>(column: AnyColumn, path: string): Selection<TData> {
+    const segments = parseJsonPathSegments(path);
+    return createExpression<TData>({
+      compile: () => makeJsonPathFragment(column, segments, undefined),
+      decoder: passThroughDecoder as Decoder<TData>,
+    });
+  },
+  /**
+   * Renders `column.<path>.:<sqlType>` and decodes the value with the
+   * cast column's `mapFromDriverValue`. Dynamic-path equivalent of
+   * `JsonColumn.castPath`.
+   */
+  jsonCast<TColumn extends AnyColumn>(column: AnyColumn, path: string, as: TColumn): Selection<InferData<TColumn>> {
+    const segments = parseJsonPathSegments(path);
+    return createExpression<InferData<TColumn>>({
+      compile: () => makeJsonPathFragment(column, segments, as),
+      decoder: as.mapFromDriverValue as Decoder<InferData<TColumn>>,
+      sqlType: as.sqlType,
+    });
+  },
+  /**
+   * Renders `column.^<path>` — pulls the sub-object as a `JSON` value
+   * preserving its dynamic-typed paths.
+   */
+  jsonSubobject(column: AnyColumn, path: string): Selection<unknown> {
+    const segments = parseJsonPathSegments(path);
+    return createExpression<unknown>({
+      compile: () => makeJsonSubobjectFragment(column, segments),
+      decoder: passThroughDecoder,
+    });
+  },
+  /**
+   * Renders `column.@<path>` — merged shared-data view of the path.
+   */
+  jsonMerged(column: AnyColumn, path: string): Selection<unknown> {
+    const segments = parseJsonPathSegments(path);
+    return createExpression<unknown>({
+      compile: () => makeJsonMergedFragment(column, segments),
+      decoder: passThroughDecoder,
+    });
+  },
+  /**
+   * Renders `column.<path>[]` — array-expansion view of a JSON array path.
+   */
+  jsonArray<TData = unknown>(column: AnyColumn, path: string): Selection<TData[]> {
+    const segments = parseJsonPathSegments(path);
+    return createExpression<TData[]>({
+      compile: () => makeJsonArrayFragment(column, segments),
+      decoder: passThroughDecoder as Decoder<TData[]>,
+    });
+  },
+  /**
+   * Renders ClickHouse `dynamicType(expression)` — returns the runtime
+   * data type name for a `Dynamic` or `JSON` path value.
+   */
+  dynamicType(expression: unknown): Selection<string> {
+    return createTypedConversionExpression("dynamicType", [expression], stringDecoder, "String");
   },
   cast<TData = unknown>(expression: unknown, targetType: string): Selection<TData> {
     return createCastExpression<TData>(expression, targetType);

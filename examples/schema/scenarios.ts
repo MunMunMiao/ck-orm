@@ -921,6 +921,38 @@ export const severityValidator: StandardSchemaV1<
 // Schema bundle — used by e2e suite to create every table during seed
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// NewJSON events — exercises ClickHouse 24.x+ JSON type with typed paths,
+// SKIP rules, and the path-access DSL. See examples/scenarios/newjson-events/.
+// ---------------------------------------------------------------------------
+
+export const newjsonEvents = ckTable(
+  "scenario_newjson_events",
+  {
+    id: ckType.uint64(),
+    received_at: ckType.dateTime64({ precision: 3, timezone: "UTC" }),
+    payload: ckType.json<{
+      user_id: string;
+      action: string;
+      revenue?: number;
+      session: { id: string; tier: number };
+    }>("payload", {
+      maxDynamicPaths: 256,
+      maxDynamicTypes: 16,
+      typeHints: {
+        user_id: ckType.uint64(),
+        "session.tier": ckType.uint8(),
+      },
+      skip: ["debug"],
+      skipRegexp: ["^_tmp_"],
+    }),
+  },
+  (table) => ({
+    engine: "MergeTree",
+    orderBy: [table.received_at, table.id],
+  }),
+);
+
 export const scenarioSchema = {
   // Observability
   clickhouseLogPlatform,
@@ -953,6 +985,8 @@ export const scenarioSchema = {
   gameEvents,
   meterEvents,
   mlUserEvents,
+  // NewJSON
+  newjsonEvents,
 };
 
 export type ScenarioSchema = typeof scenarioSchema;

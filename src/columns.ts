@@ -1,10 +1,11 @@
 import { toBoolean, toDate, toIntegerNumber, toIntegerString, toNumber, toStringValue } from "./coercion";
 import { createClientValidationError, createDecodeError, type DecodeError, isDecodeError } from "./errors";
-import { assertIntegerInRange, assertPositiveInteger } from "./internal/assert";
+import { assertIntegerInRange, assertNonNegativeInteger, assertPositiveInteger } from "./internal/assert";
 import { normalizeAggregateFunctionSignature, normalizeClickHouseTypeLiteral } from "./internal/clickhouse-type";
 import { assertDecimalParams, type DecimalParams, formatDecimalSqlType } from "./internal/decimal";
 import { escapeSqlSingleQuoted } from "./internal/escape";
 import { assertValidSqlIdentifier } from "./internal/identifier";
+import { assertJsonPathIdentifier, parseJsonPathSegments } from "./internal/json-path";
 import { isPlainObject } from "./internal/predicates";
 import {
   formatStandardSchemaIssues,
@@ -326,6 +327,234 @@ const mergeColumnDdl = (
   };
 };
 
+// === JSON column support ===========================================
+
+type JsonHintEntry = {
+  readonly segments: readonly string[];
+  readonly decode: Decoder<unknown>;
+  readonly encode: Encoder<unknown>;
+};
+
+/**
+ * Compiles the `typeHints` map into a flat list of `{ segments, decode,
+ * encode }` triples that the per-row encoder/decoder can walk linearly
+ * without re-parsing path strings.
+ */
+const compileJsonHintEntries = (
+  typeHints: JsonConfig<JsonShape>["typeHints"] | undefined,
+): readonly JsonHintEntry[] => {
+  if (!typeHints) return [];
+  const entries: JsonHintEntry[] = [];
+  for (const [path, hintColumn] of Object.entries(typeHints)) {
+    if (!hintColumn) continue;
+    const baseEncode = (hintColumn.mapToDriverValue ?? identity) as Encoder<unknown>;
+    entries.push({
+      segments: parseJsonPathSegments(path),
+      decode: hintColumn.mapFromDriverValue as Decoder<unknown>,
+      encode: baseEncode,
+    });
+  }
+  return entries;
+};
+
+const getByJsonPath = (root: Record<string, unknown>, segments: readonly string[]): unknown => {
+  let current: unknown = root;
+  for (const segment of segments) {
+    if (current === null || current === undefined) return undefined;
+    if (typeof current !== "object" || Array.isArray(current)) return undefined;
+    current = (current as Record<string, unknown>)[segment];
+  }
+  return current;
+};
+
+const setByJsonPath = (root: Record<string, unknown>, segments: readonly string[], value: unknown): void => {
+  if (segments.length === 0) return;
+  let cursor: Record<string, unknown> = root;
+  for (let index = 0; index < segments.length - 1; index += 1) {
+    // biome-ignore lint/style/noNonNullAssertion: bounded loop guarantees presence
+    const segment = segments[index]!;
+    const next = cursor[segment];
+    if (next === null || next === undefined || typeof next !== "object" || Array.isArray(next)) {
+      // Leaf is in this segment-1 slot or path drilled into a non-object —
+      // either way bail out; getByJsonPath would have returned `undefined`
+      // for the same input and the caller already skipped via `continue`.
+      return;
+    }
+    cursor = next as Record<string, unknown>;
+  }
+  // biome-ignore lint/style/noNonNullAssertion: segments.length >= 1 enforced above
+  cursor[segments[segments.length - 1]!] = value;
+};
+
+/**
+ * Renders the `sqlType` string for a ClickHouse new-version `JSON` column.
+ *
+ * Output order is fixed and lexicographically stable so external schema
+ * diff tools see the same string given the same configuration regardless of
+ * how the user populated `typeHints` / `skip` / `skipRegexp`.
+ *
+ *   JSON
+ *   JSON(max_dynamic_paths=N)
+ *   JSON(max_dynamic_paths=N, max_dynamic_types=M, a.b UInt32, c String, SKIP debug, SKIP REGEXP '^_tmp')
+ */
+const renderJsonSqlType = (config?: JsonConfig<JsonShape>): string => {
+  if (!config) return "JSON";
+  const parts: string[] = [];
+  if (config.maxDynamicPaths !== undefined) {
+    assertNonNegativeInteger("json.maxDynamicPaths", config.maxDynamicPaths);
+    parts.push(`max_dynamic_paths=${config.maxDynamicPaths}`);
+  }
+  if (config.maxDynamicTypes !== undefined) {
+    assertIntegerInRange("json.maxDynamicTypes", config.maxDynamicTypes, 1, 255);
+    parts.push(`max_dynamic_types=${config.maxDynamicTypes}`);
+  }
+  if (config.typeHints) {
+    const sortedHints = Object.entries(config.typeHints)
+      .filter((entry): entry is [string, AnyColumn] => entry[1] !== undefined)
+      .sort((left, right) => (left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0));
+    for (const [path, hintColumn] of sortedHints) {
+      assertJsonPathIdentifier(path);
+      parts.push(`${path} ${hintColumn.sqlType}`);
+    }
+  }
+  if (config.skip) {
+    for (const path of [...config.skip].sort()) {
+      assertJsonPathIdentifier(path);
+      parts.push(`SKIP ${path}`);
+    }
+  }
+  if (config.skipRegexp) {
+    for (const pattern of [...config.skipRegexp].sort()) {
+      parts.push(`SKIP REGEXP '${escapeSqlSingleQuoted(pattern)}'`);
+    }
+  }
+  return parts.length === 0 ? "JSON" : `JSON(${parts.join(", ")})`;
+};
+
+/**
+ * Hard-validates that an incoming JSON value is a plain object (not array,
+ * not scalar, not function). The check exists so the user gets a clear,
+ * column-scoped error message rather than the opaque
+ * `Cannot parse JSON object` ClickHouse will throw later.
+ *
+ * `errorFactory` lets the same predicate emit `decode` errors on the read
+ * path and `client_validation` errors on the write path with identical
+ * wording.
+ */
+function assertJsonObjectShape(
+  value: unknown,
+  errorFactory: (message: string, value: unknown) => Error,
+): asserts value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    const description = value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
+    throw errorFactory(`JSON column expects a plain object, got ${description}`, value);
+  }
+}
+
+const jsonDecodeErrorFactory = (message: string, value: unknown) => createDecodeError(message, value);
+const jsonEncodeErrorFactory = (message: string, _value: unknown) => createClientValidationError(message);
+
+const makeJsonDecoder = <T extends JsonShape>(hintEntries: readonly JsonHintEntry[]): Decoder<T> => {
+  return (value) => {
+    if (value === null || value === undefined) return value as unknown as T;
+    assertJsonObjectShape(value, jsonDecodeErrorFactory);
+    if (hintEntries.length === 0) return value as unknown as T;
+    const out: Record<string, unknown> = { ...value };
+    for (const { segments, decode } of hintEntries) {
+      const leaf = getByJsonPath(out, segments);
+      if (leaf === undefined) continue;
+      try {
+        setByJsonPath(out, segments, decode(leaf));
+      } catch (err) {
+        throw rethrowDecodeWithPath(err, segments.join("."), leaf);
+      }
+    }
+    return out as unknown as T;
+  };
+};
+
+const makeJsonEncoder = <T extends JsonShape>(hintEntries: readonly JsonHintEntry[]): Encoder<T> => {
+  return (value) => {
+    if (value === null || value === undefined) return value;
+    assertJsonObjectShape(value, jsonEncodeErrorFactory);
+    if (hintEntries.length === 0) return value;
+    const out: Record<string, unknown> = { ...value };
+    for (const { segments, encode } of hintEntries) {
+      const leaf = getByJsonPath(out, segments);
+      if (leaf === undefined) continue;
+      setByJsonPath(out, segments, encode(leaf));
+    }
+    return out;
+  };
+};
+
+const isJsonSqlType = (sqlType: string): boolean => sqlType === "JSON" || sqlType.startsWith("JSON(");
+
+export const makeJsonPathFragment = (
+  column: AnyColumn,
+  segments: readonly string[],
+  cast: AnyColumn | undefined,
+): SQLFragment<unknown> => {
+  const pathText = segments.join(".");
+  if (cast) {
+    // `column.a.b.:UInt64` — cast.sqlType embedded verbatim; safe because
+    // sqlType strings are constructed by ck-orm internals only.
+    return sql`${column}.${sql.raw(pathText)}.:${sql.raw(cast.sqlType)}`.mapWith(cast.mapFromDriverValue);
+  }
+  return sql`${column}.${sql.raw(pathText)}`;
+};
+
+export const makeJsonSubobjectFragment = (column: AnyColumn, segments: readonly string[]): SQLFragment<unknown> => {
+  // ClickHouse syntax: `column.^a.b.c` — the `^` prefix only attaches to
+  // the first segment, downstream segments are plain dot-joined.
+  if (segments.length === 0) return sql`${column}`;
+  // biome-ignore lint/style/noNonNullAssertion: length checked
+  const head = segments[0]!;
+  const tail = segments.slice(1);
+  const pathText = tail.length > 0 ? `^${head}.${tail.join(".")}` : `^${head}`;
+  return sql`${column}.${sql.raw(pathText)}`;
+};
+
+export const makeJsonMergedFragment = (column: AnyColumn, segments: readonly string[]): SQLFragment<unknown> => {
+  // ClickHouse syntax: `column.@a.b` — `@` prefix on the head segment.
+  if (segments.length === 0) return sql`${column}`;
+  // biome-ignore lint/style/noNonNullAssertion: length checked
+  const head = segments[0]!;
+  const tail = segments.slice(1);
+  const pathText = tail.length > 0 ? `@${head}.${tail.join(".")}` : `@${head}`;
+  return sql`${column}.${sql.raw(pathText)}`;
+};
+
+export const makeJsonArrayFragment = (column: AnyColumn, segments: readonly string[]): SQLFragment<unknown> => {
+  // ClickHouse syntax: `column.a.b[]` — trailing `[]` after the joined path.
+  const pathText = segments.join(".");
+  return sql`${column}.${sql.raw(`${pathText}[]`)}`;
+};
+
+const attachJsonMethods = (column: Record<string, unknown>): void => {
+  const target = column as Record<string, unknown> & { readonly sqlType: string };
+  column.path = function path(rawPath: string): SQLFragment<unknown> {
+    const segments = parseJsonPathSegments(rawPath);
+    return makeJsonPathFragment(target as unknown as AnyColumn, segments, undefined);
+  };
+  column.castPath = function castPath(rawPath: string, as: AnyColumn): SQLFragment<unknown> {
+    const segments = parseJsonPathSegments(rawPath);
+    return makeJsonPathFragment(target as unknown as AnyColumn, segments, as);
+  };
+  column.subobject = function subobject(rawPath: string): SQLFragment<unknown> {
+    const segments = parseJsonPathSegments(rawPath);
+    return makeJsonSubobjectFragment(target as unknown as AnyColumn, segments);
+  };
+  column.merged = function merged(rawPath: string): SQLFragment<unknown> {
+    const segments = parseJsonPathSegments(rawPath);
+    return makeJsonMergedFragment(target as unknown as AnyColumn, segments);
+  };
+  column.arrayPath = function arrayPath(rawPath: string): SQLFragment<unknown> {
+    const segments = parseJsonPathSegments(rawPath);
+    return makeJsonArrayFragment(target as unknown as AnyColumn, segments);
+  };
+};
+
 const createColumnFactory = <
   TData,
   TSqlType extends string,
@@ -508,6 +737,12 @@ const createColumnFactory = <
       );
     },
   } as unknown as Column<TData, TSqlType, TTableName, TTableAlias>;
+  if (isJsonSqlType(config.sqlType)) {
+    // Attach `path` / `castPath` / `subobject` / `merged` / `arrayPath` so
+    // `$type` / `$validator` / `.default()` / `.bind()` chains (each of
+    // which re-enters `createColumnFactory`) keep the JSON DSL alive.
+    attachJsonMethods(column as unknown as Record<string, unknown>);
+  }
   return trustSqlExpressionObject(column);
 };
 
@@ -535,7 +770,114 @@ export type Bool<TData extends boolean = boolean> = Column<TData, "Bool">;
 export type UUID<TData extends string = string> = Column<TData, "UUID">;
 export type IPv4<TData extends string = string> = Column<TData, "IPv4">;
 export type IPv6<TData extends string = string> = Column<TData, "IPv6">;
-export type JsonColumn<TData = unknown> = Column<TData, "JSON">;
+/**
+ * The set of values a ClickHouse `JSON` column may hold at its top level.
+ *
+ * ClickHouse 24.x+ `JSON` columns can only store JSON objects — top-level
+ * arrays, strings, numbers, or booleans are rejected by the server. Enforce
+ * the same shape in the TypeScript layer so `ckType.json<string[]>()` and
+ * friends fail at compile time rather than at insert time.
+ */
+export type JsonShape = { [key: string]: unknown };
+
+/**
+ * Dotted-path literal union of every reachable nested key in a `JsonShape`.
+ *
+ * `Paths<{ a: { b: number }; c: string }>` evaluates to `"a" | "a.b" | "c"`.
+ * Used to constrain `JsonConfig["typeHints"]` keys and to validate the
+ * argument of `JsonColumn.path()` / `castPath()` / `subobject()` so typos
+ * fail at compile time.
+ */
+export type Paths<T> = T extends JsonShape
+  ? {
+      [K in keyof T & string]: T[K] extends JsonShape ? K | `${K}.${Paths<T[K]>}` : K;
+    }[keyof T & string]
+  : never;
+
+/**
+ * Resolves the TypeScript type at a given dotted path inside a `JsonShape`.
+ * `PathValue<{ a: { b: number } }, "a.b">` evaluates to `number`. Unknown
+ * paths fall back to `unknown` so dynamic-path call sites stay sound.
+ */
+export type PathValue<T, P extends string> = P extends `${infer Head}.${infer Rest}`
+  ? Head extends keyof T
+    ? PathValue<T[Head], Rest>
+    : unknown
+  : P extends keyof T
+    ? T[P]
+    : unknown;
+
+/**
+ * Parameterized configuration for a ClickHouse new-version `JSON` column.
+ *
+ * Mirrors the ClickHouse DDL surface area:
+ *   `JSON(max_dynamic_paths=N, max_dynamic_types=M, a.b UInt32, SKIP path, SKIP REGEXP '...')`
+ *
+ * `typeHints` keys are constrained to `Paths<T>` so the schema and the
+ * runtime decoder graph stay in lockstep — a typed path declared here is
+ * automatically routed through the hint column's `mapFromDriverValue` /
+ * `mapToDriverValue` on every row.
+ */
+export type JsonConfig<T extends JsonShape> = {
+  readonly maxDynamicPaths?: number;
+  readonly maxDynamicTypes?: number;
+  readonly typeHints?: Partial<Record<Paths<T>, AnyColumn>>;
+  readonly skip?: readonly string[];
+  readonly skipRegexp?: readonly string[];
+};
+
+/**
+ * ClickHouse new-version `JSON` column. `TData` is constrained to a top-level
+ * object because the underlying ClickHouse `JSON` type rejects top-level
+ * arrays, strings, numbers, etc.
+ *
+ * `path` / `castPath` / `subobject` / `merged` / `arrayPath` render the
+ * ClickHouse path-access syntax (`json.a.b`, `json.a.b.:UInt64`, `json.^a`,
+ * `json.@a`, `json.a[]`). Each is also exposed in the `fn.*` namespace
+ * (`fn.jsonPath`, `fn.jsonCast`, ...) for dynamic-path call sites that
+ * cannot satisfy `Paths<TData>`.
+ */
+export interface JsonColumn<
+  TData extends JsonShape = JsonShape,
+  TTableName extends string | undefined = string | undefined,
+  TTableAlias extends string | undefined = string | undefined,
+> extends Column<TData, string, TTableName, TTableAlias> {
+  path<P extends Paths<TData>>(path: P): SQLFragment<PathValue<TData, P>>;
+  castPath<P extends Paths<TData>, TCol extends AnyColumn>(path: P, as: TCol): SQLFragment<InferData<TCol>>;
+  subobject<P extends Paths<TData>>(path: P): SQLFragment<unknown>;
+  merged<P extends Paths<TData>>(path: P): SQLFragment<unknown>;
+  arrayPath<P extends Paths<TData>>(path: P): SQLFragment<unknown>;
+
+  // --- chain modifiers — re-typed to return JsonColumn so path methods
+  // survive in the static type the way they do at runtime (each chain link
+  // re-enters createColumnFactory which re-attaches them).
+  //
+  // Note: `$validator` is NOT overridden — its `Column.$validator` contract
+  // accepts `StandardSchemaV1<unknown, unknown>`, and a narrower JSON-only
+  // override would violate LSP. After `$validator(schema)` the column type
+  // erases back to plain `Column`; the runtime path methods are still
+  // attached and callable (verified in tests), but you need a type
+  // assertion if you want to use them through the static type.
+  $type<TIo extends { select: JsonShape; insert?: unknown }>(): JsonColumn<TIo["select"], TTableName, TTableAlias> &
+    ColumnIoMarker<TIo extends { insert: infer I } ? I : TIo["select"], false, false>;
+  $type<TNext extends JsonShape>(): JsonColumn<TNext, TTableName, TTableAlias>;
+  default(
+    expression: DdlFragmentInput,
+  ): JsonColumn<TData, TTableName, TTableAlias> & ColumnIoMarker<TData, false, true>;
+  materialized(
+    expression: DdlFragmentInput,
+  ): JsonColumn<TData, TTableName, TTableAlias> & ColumnIoMarker<never, true, false>;
+  aliasExpr(
+    expression: DdlFragmentInput,
+  ): JsonColumn<TData, TTableName, TTableAlias> & ColumnIoMarker<never, true, false>;
+  comment(text: string): JsonColumn<TData, TTableName, TTableAlias>;
+  codec(expression: DdlFragmentInput): JsonColumn<TData, TTableName, TTableAlias>;
+  ttl(expression: DdlFragmentInput): JsonColumn<TData, TTableName, TTableAlias>;
+  bind<TNextTableName extends string, TNextTableAlias extends string | undefined = undefined>(
+    binding: ColumnBinding<TNextTableName, TNextTableAlias>,
+  ): JsonColumn<TData, TNextTableName, TNextTableAlias>;
+}
+
 export type Dynamic<TData = unknown> = Column<TData, "Dynamic">;
 export type QBit<TData extends readonly number[] = readonly number[]> = Column<TData, string>;
 export type Enum8<TData extends string = string> = Column<TData, string>;
@@ -818,17 +1160,30 @@ export const ipv4 = (name?: string): IPv4<string> =>
   createColumnFactory(withConfiguredName({ sqlType: "IPv4", mapFromDriverValue: toStringValue }, name));
 export const ipv6 = (name?: string): IPv6<string> =>
   createColumnFactory(withConfiguredName({ sqlType: "IPv6", mapFromDriverValue: toStringValue }, name));
-export const json = <TData = unknown>(name?: string): JsonColumn<TData> =>
-  createColumnFactory(
-    withConfiguredName(
-      {
-        sqlType: "JSON",
-        mapFromDriverValue: (value) => value as TData,
-        mapToDriverValue: (value) => value,
-      },
-      name,
-    ),
-  );
+export function json<T extends JsonShape = JsonShape>(): JsonColumn<T>;
+export function json<T extends JsonShape = JsonShape>(name: string): JsonColumn<T>;
+export function json<T extends JsonShape = JsonShape>(config: JsonConfig<T>): JsonColumn<T>;
+export function json<T extends JsonShape = JsonShape>(name: string, config: JsonConfig<T>): JsonColumn<T>;
+export function json<T extends JsonShape = JsonShape>(
+  first?: string | JsonConfig<T>,
+  second?: JsonConfig<T>,
+): JsonColumn<T> {
+  let name: string | undefined;
+  let config: JsonConfig<T> | undefined;
+  if (typeof first === "string") {
+    name = first;
+    config = second;
+  } else if (isPlainObject(first)) {
+    config = first as JsonConfig<T>;
+  }
+  const hintEntries = compileJsonHintEntries(config?.typeHints);
+  return createColumnFactory({
+    configuredName: name,
+    sqlType: renderJsonSqlType(config as JsonConfig<JsonShape> | undefined),
+    mapFromDriverValue: makeJsonDecoder<T>(hintEntries),
+    mapToDriverValue: makeJsonEncoder<T>(hintEntries),
+  }) as unknown as JsonColumn<T>;
+}
 export const dynamic = <TData = unknown>(name?: string): Dynamic<TData> =>
   createColumnFactory(
     withConfiguredName(

@@ -4,15 +4,21 @@ import {
   type ClickHouseSettings,
   ck,
   ckSql,
+  ckTable,
   ckType,
   clickhouseClient,
   fn,
   type Order,
+  type Paths,
+  type PathValue,
   type Predicate,
   type Selection,
+  type SQLFragment,
 } from "../index";
 import { activityLedger, activityMetricLog } from "./fixtures";
 import type { DataOf, Equal, Expect } from "./helpers";
+
+type SqlFragmentData<T> = T extends SQLFragment<infer D> ? D : never;
 
 const db = clickhouseClient({
   databaseUrl: "http://localhost:8123/public_api_matrix",
@@ -514,6 +520,12 @@ const functionTypeMatrix = {
   indexOf: fn.indexOf(["vip"], "vip"),
   indexOfAssumeSorted: fn.indexOfAssumeSorted(["pro", "vip"], "vip"),
   jsonExtract: fn.jsonExtract(activityMetricLog.payload, ckType.array(ckType.string()), "labels"),
+  jsonPath: fn.jsonPath<string[]>(activityMetricLog.payload, "labels"),
+  jsonCast: fn.jsonCast(activityMetricLog.payload, "labels", ckType.array(ckType.string())),
+  jsonSubobject: fn.jsonSubobject(activityMetricLog.payload, "labels"),
+  jsonMerged: fn.jsonMerged(activityMetricLog.payload, "labels"),
+  jsonArray: fn.jsonArray<string>(activityMetricLog.payload, "labels"),
+  dynamicType: fn.dynamicType(activityMetricLog.payload),
   kql_array_sort_asc: fn.kql_array_sort_asc<readonly [string[]]>(["pro", "vip"]),
   kql_array_sort_desc: fn.kql_array_sort_desc<readonly [string[]]>(["pro", "vip"]),
   length: fn.length(["vip"]),
@@ -813,3 +825,82 @@ void ckSqlTaggedTemplate;
 void hiddenSqlExpression;
 void hiddenGrouping;
 void sortOrder;
+
+// =============================================================
+// NewJSON column type-level assertions
+// =============================================================
+
+type JsonShapeFixture = { a: { b: number; c: string }; d: boolean };
+
+type _JsonPaths = Expect<Equal<Paths<JsonShapeFixture>, "a" | "a.b" | "a.c" | "d">>;
+type _JsonPathValueLeaf = Expect<Equal<PathValue<JsonShapeFixture, "a.b">, number>>;
+type _JsonPathValueLeafString = Expect<Equal<PathValue<JsonShapeFixture, "a.c">, string>>;
+type _JsonPathValueLeafBool = Expect<Equal<PathValue<JsonShapeFixture, "d">, boolean>>;
+type _JsonPathValueObject = Expect<Equal<PathValue<JsonShapeFixture, "a">, { b: number; c: string }>>;
+type _JsonPathValueUnknown = Expect<Equal<PathValue<JsonShapeFixture, "missing">, unknown>>;
+
+// typeHints key constrained to Paths<T>
+const _jsonHintsTypo = {
+  typeHints: {
+    "a.b": ckType.uint32(),
+    // @ts-expect-error 'a.x' is not a member of Paths<JsonShapeFixture>
+    "a.x": ckType.string(),
+  },
+} satisfies RootApi.JsonConfig<JsonShapeFixture>;
+
+// @ts-expect-error string[] does not satisfy JsonShape (top-level array)
+ckType.json<string[]>();
+// @ts-expect-error number does not satisfy JsonShape
+ckType.json<number>();
+// @ts-expect-error string does not satisfy JsonShape
+ckType.json<string>("payload");
+
+// path() returns SQLFragment carrying the leaf type
+const jsonPathTable = ckTable("json_path_t", {
+  payload: ckType.json<JsonShapeFixture>(),
+});
+const jsonPathLeaf = jsonPathTable.payload.path("a.b");
+type _JsonPathLeafType = Expect<Equal<SqlFragmentData<typeof jsonPathLeaf>, number>>;
+const jsonPathObject = jsonPathTable.payload.path("a");
+type _JsonPathObjectType = Expect<Equal<SqlFragmentData<typeof jsonPathObject>, { b: number; c: string }>>;
+
+// castPath() carries the cast column's decoded type
+const jsonCastLeaf = jsonPathTable.payload.castPath("a.b", ckType.uint64());
+type _JsonCastLeafType = Expect<Equal<SqlFragmentData<typeof jsonCastLeaf>, string>>;
+
+// $type<{select, insert}> + typeHints — verify both inferSelect and inferInsert
+const jsonIoTable = ckTable("json_io_t", {
+  payload: ckType
+    .json("payload", { typeHints: { uid: ckType.uint64() } })
+    .$type<{ select: { uid: string }; insert: { uid: string | number | bigint } }>(),
+});
+type JsonIoSelect = typeof jsonIoTable.$inferSelect;
+type JsonIoInsert = typeof jsonIoTable.$inferInsert;
+type _JsonIoSelectUid = Expect<Equal<JsonIoSelect["payload"]["uid"], string>>;
+type _JsonIoInsertUid = Expect<Equal<JsonIoInsert["payload"]["uid"], string | number | bigint>>;
+
+// .default() makes the column optional in $inferInsert (drives ColumnIoMarker)
+const jsonDefaultTable = ckTable("json_default_t", {
+  id: ckType.uint64(),
+  p: ckType.json<{ x: number }>("p").default(ckSql`'{}'`),
+});
+type JsonDefaultInsert = typeof jsonDefaultTable.$inferInsert;
+type _JsonDefaultInsert = Expect<Equal<JsonDefaultInsert, { id: string; p?: { x: number } }>>;
+
+// .materialized() drops the column from $inferInsert entirely
+const jsonMaterializedTable = ckTable("json_materialized_t", {
+  id: ckType.uint64(),
+  p: ckType.json<{ x: number }>("p").materialized(ckSql`'{}'`),
+});
+type JsonMaterializedInsert = typeof jsonMaterializedTable.$inferInsert;
+type _JsonMaterializedInsert = Expect<Equal<JsonMaterializedInsert, { id: string }>>;
+
+// .path() typo on a path literal is rejected by the type system.
+// @ts-expect-error "a.zzz" is not a member of Paths<JsonShapeFixture>
+jsonPathTable.payload.path("a.zzz");
+// @ts-expect-error empty path is rejected by Paths<>
+jsonPathTable.payload.path("");
+
+void jsonPathLeaf;
+void jsonPathObject;
+void jsonCastLeaf;

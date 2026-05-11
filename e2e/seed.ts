@@ -19,6 +19,7 @@ import {
   schemaAggregates,
   schemaCompound,
   schemaGeo,
+  schemaJsonAdvanced,
   schemaPrimitives,
   tradeFills,
   userDailySummary,
@@ -41,7 +42,7 @@ const scenarioTables = [
   auditEvents,
   writePathBigInts,
 ];
-const schemaTables = [schemaPrimitives, schemaCompound, schemaAggregates, schemaGeo];
+const schemaTables = [schemaPrimitives, schemaCompound, schemaAggregates, schemaGeo, schemaJsonAdvanced];
 const typeOverrideTables = [
   auditLogTyped,
   userProfileTyped,
@@ -285,6 +286,18 @@ const insertSchemaGeo = async () => {
       [[(0., 0.), (1., 1.)], [(2., 2.), (3., 3.)]],
       [[(0., 0.), (1., 0.), (1., 1.), (0., 0.)]],
       [[[(0., 0.), (1., 0.), (1., 1.), (0., 0.)]]]
+  `);
+};
+
+const insertSchemaJsonAdvanced = async () => {
+  // Use raw SQL (not the builder) so the test exercises CK's typed-path
+  // subcolumn semantics without re-encoding through ck-orm — keeps the
+  // seed independent of the path that the test itself validates.
+  const db = createE2EDb();
+  await db.command(ckSql`
+    INSERT INTO schema_json_advanced (id, payload, payload_with_default) VALUES
+      (1, '{"user_id":"999","tag":"alpha","nested":{"score":42}}', '{"note":"first"}'),
+      (2, '{"user_id":"1000","tag":"beta","nested":{"score":5}}', DEFAULT)
   `);
 };
 
@@ -890,6 +903,7 @@ const seed = async () => {
   await insertSchemaCompound();
   await insertSchemaAggregates();
   await insertSchemaGeo();
+  await insertSchemaJsonAdvanced();
   await insertAuditLogTyped();
   await insertUserProfileTyped();
   await insertValidatorStrict();

@@ -68,6 +68,12 @@ source URL so you can study the full production schema.
 | [`openmeter-billing`](./openmeter-billing/) | [OpenMeter usage billing](https://clickhouse.com/blog/openmeter-real-time-usage-based-billing-powered-by-clickhouse-cloud) | `UUID default generateUUIDv4()`, `Map` properties, idempotency key |
 | [`ml-feature-store`](./ml-feature-store/) | [ML feature engineering on CH](https://clickhouse.com/blog/modeling-machine-learning-data-in-clickhouse) | Raw event store as basis for online + offline features |
 
+### NewJSON
+
+| Example | Source | ClickHouse features |
+| --- | --- | --- |
+| [`newjson-events`](./newjson-events/) | [ClickHouse NewJSON docs](https://clickhouse.com/docs/sql-reference/data-types/newjson) | Parameterized `JSON(max_dynamic_paths, typeHints, SKIP, SKIP REGEXP)`, path-access DSL (`payload.path("user.id")`, `castPath`, `subobject`) |
+
 ## Running an example
 
 Every example exposes a `build*Example()` helper that returns a typed ck-orm

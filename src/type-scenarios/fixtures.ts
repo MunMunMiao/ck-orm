@@ -109,6 +109,36 @@ export const tempMetricScope = ckTable("tmp_metric_scope", {
   groupId: ckType.int32("group_id"),
 });
 
+/**
+ * Fixture for NewJSON typeHints / path-access scenarios. Exercises every JSON
+ * configuration knob in one place so downstream typecheck files can pull it.
+ */
+export const jsonEventLog = ckTable(
+  "json_event_log",
+  {
+    id: ckType.uint64(),
+    payload: ckType.json<{
+      user_id: string;
+      event: string;
+      nested: { score: number; tier: string };
+    }>("payload", {
+      maxDynamicPaths: 256,
+      maxDynamicTypes: 8,
+      typeHints: {
+        user_id: ckType.uint64(),
+        "nested.score": ckType.uint32(),
+      },
+      skip: ["debug"],
+      skipRegexp: ["^_tmp"],
+    }),
+    payloadWithDefault: ckType.json<{ note: string }>("payload_with_default").default(ckSql`'{}'`),
+  },
+  (table) => ({
+    engine: "MergeTree",
+    orderBy: [table.id],
+  }),
+);
+
 export const typeScenarioSchema = {
   activityMetricLog,
   workflowEvent,
@@ -118,4 +148,5 @@ export const typeScenarioSchema = {
   pets,
   activityLedger,
   tempMetricScope,
+  jsonEventLog,
 };

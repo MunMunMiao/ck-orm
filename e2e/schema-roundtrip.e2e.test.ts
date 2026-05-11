@@ -1,6 +1,14 @@
 import { expect, it } from "bun:test";
 import { ckAlias, ckSql } from "./ck-orm";
-import { createE2EDb, schemaAggregates, schemaCompound, schemaGeo, schemaPrimitives, users } from "./shared";
+import {
+  createE2EDb,
+  schemaAggregates,
+  schemaCompound,
+  schemaGeo,
+  schemaJsonAdvanced,
+  schemaPrimitives,
+  users,
+} from "./shared";
 import { describeE2E, expectDate, expectPresent } from "./test-helpers";
 
 describeE2E("ck-orm e2e schema roundtrip", function describeSchemaRoundtrip() {
@@ -124,6 +132,25 @@ describeE2E("ck-orm e2e schema roundtrip", function describeSchemaRoundtrip() {
         ],
       ],
     });
+  });
+
+  it("round-trips parameterized JSON columns with typeHints", async function testJsonAdvancedRoundtrip() {
+    const db = createE2EDb();
+    const rows = await db.select().from(schemaJsonAdvanced).orderBy(schemaJsonAdvanced.id);
+
+    expect(rows).toHaveLength(2);
+    const first = expectPresent(rows[0], "schemaJsonAdvanced row 1");
+    // user_id is typed as UInt64 — ck-orm decodes it as a string (lossless 64-bit policy)
+    // even though the JSON literal looks like a numeric string.
+    expect(first.payload).toEqual({ user_id: "999", tag: "alpha", nested: { score: 42 } });
+    expect(first.payload_with_default).toEqual({ note: "first" });
+
+    const second = expectPresent(rows[1], "schemaJsonAdvanced row 2");
+    expect(second.payload.user_id).toBe("1000");
+    expect(second.payload.nested.score).toBe(5);
+    expect(second.payload.tag).toBe("beta");
+    // Default-bearing column was inserted with DEFAULT — ClickHouse fills `'{}'`.
+    expect(second.payload_with_default).toEqual({});
   });
 
   it("supports ckAlias interpolation for schema sources", async function testAliasRoundtrip() {
