@@ -59,6 +59,7 @@ db.insert(users).values({
 db.insert(users).values([
   {
     id: 2,
+    name: "bob",
   },
 ]);
 

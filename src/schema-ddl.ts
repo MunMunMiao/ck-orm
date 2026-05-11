@@ -205,11 +205,12 @@ const renderCreateTableClauses = (
   engineName: string | undefined,
   temporary: boolean,
 ) => {
+  // ClickHouse CREATE TABLE clause order is strict:
+  //   ENGINE → PARTITION BY → PRIMARY KEY → ORDER BY → SAMPLE BY → TTL →
+  //   SETTINGS → COMMENT
+  // Placing COMMENT directly after ENGINE makes the parser report a
+  // SYNTAX_ERROR when later clauses (PARTITION BY, ORDER BY, ...) are present.
   const clauses: string[] = [`ENGINE = ${engineText}`];
-
-  if (table.options.comment) {
-    clauses.push(`COMMENT ${renderStringLiteral(table.options.comment)}`);
-  }
 
   const partitionBy = renderExpressionList("PARTITION BY", table.options.partitionBy, "PARTITION BY clause");
   if (partitionBy) {
@@ -243,6 +244,10 @@ const renderCreateTableClauses = (
   const settings = renderSettings(table.options.settings);
   if (settings) {
     clauses.push(settings);
+  }
+
+  if (table.options.comment) {
+    clauses.push(`COMMENT ${renderStringLiteral(table.options.comment)}`);
   }
 
   return clauses.join("\n");

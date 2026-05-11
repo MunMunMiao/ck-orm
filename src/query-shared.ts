@@ -21,6 +21,9 @@ export type { BuildContext, QueryParams } from "./sql";
 // them; TypeScript still infers the parameter through the brand position.
 declare const dataTypeBrand: unique symbol;
 declare const sourceKeyBrand: unique symbol;
+declare const insertDataBrand: unique symbol;
+declare const isGeneratedBrand: unique symbol;
+declare const hasDefaultBrand: unique symbol;
 
 export type Decoder<TData> = (value: unknown) => TData;
 
@@ -31,6 +34,30 @@ export interface TypedValue<TData> {
 }
 
 export type InferData<TValue> = TValue extends TypedValue<infer TData> ? TData : never;
+
+// Phantom marker carrying insert-side type information for a column. `TInsert`
+// is the type accepted at insert time (defaults to the column's select TData
+// via `Column extends ColumnIoMarker<TData, false, false>`). `TIsGenerated`
+// removes the column from `$inferInsert` when set to `true` (materialized /
+// alias columns). `THasDefault` flips the column to optional in `$inferInsert`
+// when set to `true` (columns with a DEFAULT expression).
+export interface ColumnIoMarker<
+  TInsert = unknown,
+  TIsGenerated extends boolean = false,
+  THasDefault extends boolean = false,
+> {
+  readonly [insertDataBrand]?: TInsert;
+  readonly [isGeneratedBrand]?: TIsGenerated;
+  readonly [hasDefaultBrand]?: THasDefault;
+}
+
+export type InferInsertData<TValue> = TValue extends ColumnIoMarker<infer TInsert, boolean, boolean> ? TInsert : never;
+
+export type IsColumnGenerated<TValue> =
+  TValue extends ColumnIoMarker<unknown, infer G, boolean> ? (G extends true ? true : false) : false;
+
+export type ColumnHasDefault<TValue> =
+  TValue extends ColumnIoMarker<unknown, boolean, infer D> ? (D extends true ? true : false) : false;
 
 export interface Selection<TData = unknown, TSourceKey extends string | undefined = string | undefined>
   extends TypedValue<TData> {

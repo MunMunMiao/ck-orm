@@ -6,7 +6,7 @@ export const auditEvent = ckTable(
   {
     id: ckType.uuid().comment("Application event id"),
     actorId: ckType.lowCardinality("actor_id", ckType.string()),
-    action: ckType.enum8<"created" | "updated" | "deleted">({
+    action: ckType.enum8({
       created: 1,
       updated: 2,
       deleted: 3,

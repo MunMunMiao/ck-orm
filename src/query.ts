@@ -117,7 +117,11 @@ const selectBuilderResultSymbol = Symbol("clickhouseORMSelectBuilderResult");
 
 type LimitValue = number | bigint | SQLFragment<unknown>;
 type CountSource = AnyTable | AnySubquery | AnyCte;
-type InsertRowInput<TTable extends AnyTable> = Partial<TTable["$inferInsert"]>;
+// `$inferInsert` now models per-column optionality (DEFAULT columns optional,
+// MATERIALIZED/ALIAS columns removed). The outer `Partial<>` would re-allow
+// dropping every required column at the TS level, which masks real mistakes
+// — drop it now that the inner shape carries the right requiredness.
+type InsertRowInput<TTable extends AnyTable> = TTable["$inferInsert"];
 
 type SourceKey<TSource extends KnownQuerySource> =
   TSource extends Table<Record<string, AnyColumn>, infer TName, infer TAlias, string>

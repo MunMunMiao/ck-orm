@@ -40,7 +40,7 @@ export const activityMetricLog = ckTable(
 
 export const activityLedger = ckTable("activity_ledger", {
   system_id: ckType.string(),
-  source_kind: ckType.enum8<"alpha" | "beta">({ alpha: 1, beta: 2 }),
+  source_kind: ckType.enum8({ alpha: 1, beta: 2 }),
   event_id: ckType.uint64(),
   batch_id: ckType.int32(),
   entity_id: ckType.int32(),

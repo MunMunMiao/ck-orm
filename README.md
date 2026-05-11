@@ -337,6 +337,127 @@ type TelemetryRows = InferSelectSchema<typeof telemetryTables>;
 
 Schema objects used with `InferSelectSchema` and `InferInsertSchema` are plain TypeScript groupings. They are useful for shared model types and remain separate from client configuration.
 
+### Refining column types with `$type<T>()`
+
+Every column builder exposes a chainable `$type<T>()` method that overrides the column's TypeScript type without changing any runtime behavior. Use it when the default inferred type is too wide for your domain:
+
+```ts
+import { ckTable, ckType } from "ck-orm";
+
+type UserId = number & { readonly __brand: "UserId" };
+
+const users = ckTable("users", {
+  id: ckType.int32().$type<UserId>(),
+  role: ckType.string().$type<"guest" | "user" | "admin">(),
+  preferences: ckType.json().$type<{ theme: "light" | "dark"; betaFeatures: readonly string[] }>(),
+});
+
+type UserRow = typeof users.$inferSelect;
+// {
+//   id: UserId;
+//   role: "guest" | "user" | "admin";
+//   preferences: { theme: "light" | "dark"; betaFeatures: readonly string[] };
+// }
+```
+
+`$type<T>()` chains with every other column modifier in any order: `ckType.string().$type<Role>().default(ckSql`'guest'`).comment("…")`. The runtime decoder, encoder, SQL type, and DDL output are unaffected — `$type` is a compile-time assertion only.
+
+`enum8` and `enum16` already infer the literal union from the values object, so you only need `$type` to rebrand the union or align it with an external enum type:
+
+```ts
+// Inferred automatically — no `as const`, no explicit type arguments
+const status = ckType.enum8({ active: 1, paused: 2, banned: 3 });
+//    ↑ Enum8<"active" | "paused" | "banned">
+
+// Re-brand on top of the inferred keys
+type UserStatus = "active" | "paused" | "banned";
+const userStatus = ckType.enum8({ active: 1, paused: 2, banned: 3 }).$type<UserStatus>();
+```
+
+> **Caveat:** `$type<T>()` does not validate runtime values. If the database row contains a value outside the declared type (e.g. stale data from before a schema migration), TypeScript will still narrow as if it matches — exhaustive `switch` statements will silently miss the case. Use `mapWith` in a projection if you need to enforce the value at read time, or `$validator()` below to enforce on every decode and encode.
+
+### Diverging insert and select types with `$type<{ select, insert }>()`
+
+ClickHouse columns sometimes accept a wider type on insert than the value returned on select — for example a `DateTime` column accepts both `string` and `Date` on insert but always returns `Date` after decoding. Pass an object to `$type` to diverge the two:
+
+```ts
+const events = ckTable("events", {
+  id: ckType.int32(),
+  occurredAt: ckType.dateTime().$type<{ select: Date; insert: string | Date }>(),
+});
+
+type EventSelect = typeof events.$inferSelect;
+// { id: number; occurredAt: Date }
+
+type EventInsert = typeof events.$inferInsert;
+// { id: number; occurredAt: string | Date }
+```
+
+`$type<{ select: T }>()` (without `insert`) is equivalent to the single-generic `$type<T>()` form.
+
+### Insert model rules: DEFAULT, MATERIALIZED, ALIAS
+
+`$inferInsert` is derived from the schema's column shape, not just copied from `$inferSelect`:
+
+| DDL modifier | Effect on insert model |
+| --- | --- |
+| `.default(expr)` | Column becomes optional — omitting it lets ClickHouse fill the value |
+| `.materialized(expr)` | Column is removed from the insert model entirely |
+| `.aliasExpr(expr)` | Column is removed from the insert model entirely |
+
+```ts
+const users = ckTable("users", {
+  id: ckType.int32(),
+  name: ckType.string().default(ckSql`'anonymous'`),
+  computedAt: ckType.dateTime().materialized(ckSql`now()`),
+  derivedTag: ckType.string().aliasExpr(ckSql`upper(name)`),
+});
+
+// id is required; name is optional (has default); computedAt/derivedTag are
+// not part of $inferInsert at all.
+db.insert(users).values({ id: 1 });
+db.insert(users).values({ id: 2, name: "alice" });
+```
+
+### Runtime validation with `$validator(schema)`
+
+For cases where `$type` is not enough — the database might contain stale data, you accept JSON shapes from untrusted upstreams, or you want the insert API to coerce a string into a `Date` — chain `$validator(schema)` instead. Any object that satisfies the [Standard Schema v1 spec](https://github.com/standard-schema/standard-schema) works: Zod 3.23+, Valibot 1+, ArkType, Effect Schema, TypeBox. ck-orm does not depend on any of these libraries.
+
+```ts
+import { z } from "zod";
+
+const ProfileSchema = z.object({
+  avatarUrl: z.string().url(),
+  bio: z.string().optional(),
+});
+
+const users = ckTable("users", {
+  id: ckType.int32(),
+  profile: ckType.json().$validator(ProfileSchema),
+});
+
+// On select, the decoded JSON is run through the schema; on failure ck-orm
+// throws a DecodeError with the schema's issue messages.
+const rows = await db.select().from(users).execute();
+//    rows[0].profile is typed as z.infer<typeof ProfileSchema>
+
+// On insert, the value is validated before being encoded; on failure ck-orm
+// throws a client_validation error.
+await db.insert(users).values({ id: 1, profile: { avatarUrl: "https://…" } });
+```
+
+Schema transforms (e.g. `z.string().transform((v) => new Date(v))`) are respected — the column accepts the schema's *input* type on insert and surfaces the *output* type on select. `$validator` is sync-only: async schemas throw at decode/encode time.
+
+`$type` vs `$validator`:
+
+| | `$type<T>()` | `$validator(schema)` |
+| --- | --- | --- |
+| Runtime cost | Zero | One sync schema validate per row per column |
+| Type safety | Compile-time assertion | Inferred from the schema |
+| Runtime validation | No | Yes — throws on mismatch |
+| Input ≠ output types | Via `$type<{ select, insert }>()` | Via schema transforms |
+| External dependency | None | None (schema lib is your choice) |
+
 ### `ckAlias()`
 
 Use `ckAlias()` when the same table needs to appear more than once in a query.
@@ -463,7 +584,7 @@ Common schema shapes and their TypeScript values:
 
 | ClickHouse shape | Schema | TypeScript value shape |
 | --- | --- | --- |
-| enum | `ckType.enum8<"idle" | "active">({ idle: 1, active: 2 })` | `"idle" | "active"` |
+| enum | `ckType.enum8({ idle: 1, active: 2 })` | `"idle" | "active"` (inferred from keys) |
 | low-cardinality string | `ckType.lowCardinality(ckType.string())` | `string` |
 | nullable decimal | `ckType.nullable(ckType.decimal({ precision: 18, scale: 5 }))` | `string | null` |
 | array | `ckType.array(ckType.string())` | `string[]` |

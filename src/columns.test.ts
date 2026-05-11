@@ -45,7 +45,8 @@ import {
   uuid,
   variant,
 } from "./columns";
-import { type DecodeError, isDecodeError } from "./errors";
+import { type ClickHouseORMError, type DecodeError, isClickHouseORMError, isDecodeError } from "./errors";
+import type { StandardSchemaV1 } from "./internal/standard-schema";
 import { compileSql, sql } from "./sql";
 
 const buildContext = () => ({
@@ -555,5 +556,202 @@ describe("ck-orm columns", function describeClickHouseORMColumns() {
     }
     expect(isDecodeError(strErr)).toBe(true);
     expect((strErr as DecodeError).message).toContain("string-thrown");
+  });
+
+  it("$type returns a new column object without altering runtime behavior", function testTypeOverride() {
+    const role = string();
+    const narrowed = role.$type<"admin" | "user">();
+    expect(narrowed).not.toBe(role);
+
+    // sqlType / encoder / decoder are unchanged — $type is type-only
+    expect(narrowed.sqlType).toBe(role.sqlType);
+    expect(narrowed.mapFromDriverValue("admin")).toBe("admin");
+    expect(narrowed.mapToDriverValue("user" as never)).toBe("user");
+
+    // composes with DDL modifiers in either order
+    const defaultFirst = string().default(sql`'guest'`).$type<"guest" | "user">();
+    expect(defaultFirst.ddl?.default).toBeTruthy();
+    const typeFirst = string().$type<"guest" | "user">().default(sql`'guest'`);
+    expect(typeFirst.ddl?.default).toBeTruthy();
+
+    // bind preserves $type narrowing, and $type after bind preserves the binding
+    const bound = string().$type<"a" | "b">().bind({ name: "role", tableName: "users" });
+    expect(bound.name).toBe("role");
+    expect(bound.tableName).toBe("users");
+
+    const reNarrowed = bound.$type<"x" | "y">();
+    expect(reNarrowed.name).toBe("role");
+    expect(reNarrowed.tableName).toBe("users");
+    expect(reNarrowed.mapFromDriverValue("x")).toBe("x");
+  });
+
+  it("$type object form has the same runtime behavior as the single-generic form", function testTypeObjectForm() {
+    const created = dateTime();
+    const split = created.$type<{ select: Date; insert: string | Date }>();
+
+    // Runtime is identical — only types diverge between select and insert
+    expect(split.sqlType).toBe(created.sqlType);
+    const sample = new Date("2026-04-21T00:00:00.000Z");
+    expect((split.mapFromDriverValue(sample) as Date).toISOString()).toBe(sample.toISOString());
+    // Encoder accepts both string and Date because $type only changes types,
+    // the underlying mapToDriverValue is the same as the base column.
+    const encoded = split.mapToDriverValue(sample as never);
+    expect(encoded).toBeDefined();
+  });
+
+  it("infers literal union keys from enum values without explicit type arguments", function testEnumLiteralInference() {
+    const status = enum8({ active: 1, paused: 2 });
+    expect(status.sqlType).toBe("Enum8('active' = 1, 'paused' = 2)");
+    expect(status.mapFromDriverValue("active")).toBe("active");
+    expect(status.mapToDriverValue("paused")).toBe("paused");
+
+    const named = enum16("status_16", { open: 1, closed: 2 });
+    expect(named.configuredName).toBe("status_16");
+    expect(named.sqlType).toBe("Enum16('open' = 1, 'closed' = 2)");
+
+    // $type still wins for branded/aliased domain types on top of inferred enum keys
+    const branded = enum8({ active: 1 }).$type<"branded">();
+    expect(branded.sqlType).toBe("Enum8('active' = 1)");
+    expect(branded.mapFromDriverValue("active")).toBe("active");
+  });
+
+  it("$validator wraps decode/encode with a Standard Schema synchronously", function testValidator() {
+    // Hand-rolled Standard Schema mocks — no external dep
+    const roleSchema: StandardSchemaV1<"admin" | "user", "admin" | "user"> = {
+      "~standard": {
+        version: 1,
+        vendor: "ck-orm-test",
+        validate(value) {
+          if (value === "admin" || value === "user") {
+            return { value: value as "admin" | "user" };
+          }
+          return { issues: [{ message: `Expected "admin" or "user", got ${String(value)}` }] };
+        },
+      },
+    };
+
+    const role = string().$validator(roleSchema);
+    // Decode happy path
+    expect(role.mapFromDriverValue("admin")).toBe("admin");
+    // Encode happy path
+    expect(role.mapToDriverValue("user" as never)).toBe("user");
+    // Decode failure becomes a DecodeError
+    let decodeErr: unknown;
+    try {
+      role.mapFromDriverValue("banned");
+    } catch (error) {
+      decodeErr = error;
+    }
+    expect(isDecodeError(decodeErr)).toBe(true);
+    expect((decodeErr as DecodeError).message).toContain("Expected");
+
+    // Encode failure becomes a client_validation error
+    let encodeErr: unknown;
+    try {
+      role.mapToDriverValue("banned" as never);
+    } catch (error) {
+      encodeErr = error;
+    }
+    expect(isClickHouseORMError(encodeErr)).toBe(true);
+    expect((encodeErr as ClickHouseORMError).kind).toBe("client_validation");
+
+    // Transform schema: string input → Date output (input ≠ output)
+    const dateSchema: StandardSchemaV1<string, Date> = {
+      "~standard": {
+        version: 1,
+        vendor: "ck-orm-test",
+        validate(value) {
+          if (typeof value !== "string") {
+            return { issues: [{ message: "Expected string input" }] };
+          }
+          const parsed = new Date(value);
+          if (Number.isNaN(parsed.getTime())) {
+            return { issues: [{ message: `Invalid date: ${value}` }] };
+          }
+          return { value: parsed };
+        },
+      },
+    };
+    const transformingColumn = string().$validator(dateSchema);
+    const decoded = transformingColumn.mapFromDriverValue("2026-04-21T00:00:00.000Z");
+    expect(decoded).toBeInstanceOf(Date);
+    expect((decoded as Date).toISOString()).toBe("2026-04-21T00:00:00.000Z");
+
+    // Async schema is rejected at decode-time with a descriptive error
+    const asyncSchema: StandardSchemaV1<string, string> = {
+      "~standard": {
+        version: 1,
+        vendor: "ck-orm-test",
+        validate(value) {
+          return Promise.resolve({ value: String(value) });
+        },
+      },
+    };
+    const asyncColumn = string().$validator(asyncSchema);
+    let asyncErr: unknown;
+    try {
+      asyncColumn.mapFromDriverValue("anything");
+    } catch (error) {
+      asyncErr = error;
+    }
+    expect(isDecodeError(asyncErr)).toBe(true);
+    expect((asyncErr as DecodeError).message).toContain("Async Standard Schema");
+
+    // Async schema is also rejected at encode-time with a client_validation error
+    let asyncEncodeErr: unknown;
+    try {
+      asyncColumn.mapToDriverValue("anything" as never);
+    } catch (error) {
+      asyncEncodeErr = error;
+    }
+    expect(isClickHouseORMError(asyncEncodeErr)).toBe(true);
+    expect((asyncEncodeErr as ClickHouseORMError).kind).toBe("client_validation");
+    expect((asyncEncodeErr as ClickHouseORMError).message).toContain("Async Standard Schema");
+
+    // Schema issues with structured path segments render `key.subkey: message`
+    const pathSchema: StandardSchemaV1<unknown, { x: number }> = {
+      "~standard": {
+        version: 1,
+        vendor: "ck-orm-test",
+        validate() {
+          return {
+            issues: [
+              { message: "expected number", path: [{ key: "x" }, { key: "subfield" }] },
+              { message: "missing field" },
+            ],
+          };
+        },
+      },
+    };
+    const pathColumn = string().$validator(pathSchema);
+    let pathErr: unknown;
+    try {
+      pathColumn.mapFromDriverValue("anything");
+    } catch (error) {
+      pathErr = error;
+    }
+    expect(isDecodeError(pathErr)).toBe(true);
+    expect((pathErr as DecodeError).message).toContain("x.subfield: expected number");
+    expect((pathErr as DecodeError).message).toContain("missing field");
+
+    // Empty issues array still produces a meaningful failure message
+    const emptyIssuesSchema: StandardSchemaV1<unknown, unknown> = {
+      "~standard": {
+        version: 1,
+        vendor: "ck-orm-test",
+        validate() {
+          return { issues: [] };
+        },
+      },
+    };
+    const emptyIssuesColumn = string().$validator(emptyIssuesSchema);
+    let emptyErr: unknown;
+    try {
+      emptyIssuesColumn.mapFromDriverValue("anything");
+    } catch (error) {
+      emptyErr = error;
+    }
+    expect(isDecodeError(emptyErr)).toBe(true);
+    expect((emptyErr as DecodeError).message).toContain("Standard Schema validation failed");
   });
 });

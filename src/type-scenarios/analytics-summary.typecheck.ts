@@ -27,7 +27,14 @@ db.insert(logicalMetrics).values({
   createdAt: new Date("2026-04-24T00:00:00.000Z"),
   tags: ["vip"],
 });
-db.insert(logicalMetrics).values([{ userId: "user_2" }]);
+db.insert(logicalMetrics).values([
+  {
+    userId: "user_2",
+    metricValue: "0",
+    createdAt: new Date("2026-04-24T00:00:00.000Z"),
+    tags: [],
+  },
+]);
 // @ts-expect-error insert values must use logical schema keys, not physical column names.
 db.insert(logicalMetrics).values({ user_id: "user_1", metric_value: "10.50000" });
 

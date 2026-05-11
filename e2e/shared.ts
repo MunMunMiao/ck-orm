@@ -1,6 +1,51 @@
 export { buildCreateTableStatement, buildDropTableStatement } from "../src/schema-ddl";
 
-import { type ClickHouseClientConfig, ckAlias, ckTable, ckType, clickhouseClient } from "./ck-orm";
+import {
+  type ClickHouseClientConfig,
+  ckAlias,
+  ckSql,
+  ckTable,
+  ckType,
+  clickhouseClient,
+  type StandardSchemaV1,
+} from "./ck-orm";
+
+// Branded ids and domain unions used across user-scenario typed tables.
+export type UserId = number & { readonly __brand: "UserId" };
+export type UserRole = "guest" | "user" | "admin";
+
+// Standard Schema v1 mocks for $validator e2e — kept here so the resulting
+// Column<...> types stay stable across imports. Real users would normally
+// pass a Zod / Valibot / ArkType schema directly.
+export const e2eRoleSchema: StandardSchemaV1<"admin" | "user", "admin" | "user"> = {
+  "~standard": {
+    version: 1,
+    vendor: "ck-orm-e2e",
+    validate(value) {
+      if (value === "admin" || value === "user") {
+        return { value: value as "admin" | "user" };
+      }
+      return { issues: [{ message: `Expected "admin" or "user", got ${String(value)}` }] };
+    },
+  },
+};
+
+export const e2eDateSchema: StandardSchemaV1<string, Date> = {
+  "~standard": {
+    version: 1,
+    vendor: "ck-orm-e2e",
+    validate(value) {
+      if (typeof value !== "string") {
+        return { issues: [{ message: "expected string input" }] };
+      }
+      const parsed = new Date(value);
+      if (Number.isNaN(parsed.getTime())) {
+        return { issues: [{ message: `invalid date string: ${value}` }] };
+      }
+      return { value: parsed };
+    },
+  },
+};
 
 const requiredEnv = (name: string) => {
   const value = process.env[name];
@@ -272,6 +317,107 @@ export const schemaGeo = ckTable(
   }),
 );
 
+// --- User-scenario tables for $type / enum auto-inference e2e ---
+
+export const auditLogTyped = ckTable(
+  "audit_log_typed",
+  {
+    id: ckType.int32(),
+    actor_id: ckType.int32().$type<UserId>(),
+    action: ckType.enum8({ login: 1, logout: 2, password_reset: 3, role_change: 4 }),
+    actor_role: ckType.enum8({ guest: 1, user: 2, admin: 3 }).$type<UserRole>(),
+    created_at: ckType.dateTime64({ precision: 3 }),
+    note: ckType.string().default("''"),
+  },
+  (table) => ({
+    engine: "MergeTree",
+    orderBy: [table.id],
+  }),
+);
+
+export const userProfileTyped = ckTable(
+  "user_profile_typed",
+  {
+    id: ckType.int32(),
+    display_name: ckType.string(),
+    preferences: ckType.json().$type<{ theme: "light" | "dark"; locale: string; betaFeatures: string[] }>(),
+    signup_at: ckType.dateTime64({ precision: 3 }),
+  },
+  (table) => ({
+    engine: "MergeTree",
+    orderBy: [table.id],
+  }),
+);
+
+// --- Developer-scenario tables for $validator / IO split / DDL brand e2e ---
+
+export const validatorStrict = ckTable(
+  "validator_strict",
+  {
+    id: ckType.int32(),
+    status: ckType.string().$validator(e2eRoleSchema),
+  },
+  (table) => ({
+    engine: "MergeTree",
+    orderBy: [table.id],
+  }),
+);
+
+export const validatorTransform = ckTable(
+  "validator_transform",
+  {
+    id: ckType.int32(),
+    occurred_at: ckType.string().$validator(e2eDateSchema),
+  },
+  (table) => ({
+    engine: "MergeTree",
+    orderBy: [table.id],
+  }),
+);
+
+export const ioSplit = ckTable(
+  "io_split",
+  {
+    id: ckType.int32(),
+    created_at: ckType.dateTime().$type<{ select: Date; insert: string | Date }>(),
+  },
+  (table) => ({
+    engine: "MergeTree",
+    orderBy: [table.id],
+  }),
+);
+
+export const ddlBrand = ckTable(
+  "ddl_brand",
+  {
+    id: ckType.int32(),
+    default_role: ckType.string().default("'guest'"),
+    computed_label: ckType.string().materialized(ckSql`concat('user-', toString(id))`),
+    aliased_search: ckType.string().aliasExpr(ckSql`upper(default_role)`),
+  },
+  (table) => ({
+    engine: "MergeTree",
+    orderBy: [table.id],
+  }),
+);
+
+export const chainedColumns = ckTable(
+  "chained_columns",
+  {
+    id: ckType.int32(),
+    status: ckType.string().$type<"a" | "b">().default("'a'").comment("status narrowed via $type with a default"),
+    category: ckType.string().codec(ckSql`ZSTD(3)`).$type<"books" | "music">().default("'books'"),
+  },
+  (table) => ({
+    engine: "MergeTree",
+    orderBy: [table.id],
+  }),
+);
+
+export { scenarioSchema } from "../examples/schema/scenarios";
+
+import { scenarioSchema as _scenarioSchema } from "../examples/schema/scenarios";
+
 export const e2eSchema = {
   users,
   pets,
@@ -286,6 +432,14 @@ export const e2eSchema = {
   schemaCompound,
   schemaAggregates,
   schemaGeo,
+  auditLogTyped,
+  userProfileTyped,
+  validatorStrict,
+  validatorTransform,
+  ioSplit,
+  ddlBrand,
+  chainedColumns,
+  ..._scenarioSchema,
 };
 
 export type E2ESchema = typeof e2eSchema;

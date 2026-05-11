@@ -201,6 +201,15 @@ export { isClickHouseORMError, isDecodeError } from "./errors";
 export type { JsonPathSegment } from "./functions";
 export { fn } from "./functions";
 export type {
+  InferStandardSchemaInput,
+  InferStandardSchemaOutput,
+  StandardSchemaV1,
+  StandardSchemaV1FailureResult,
+  StandardSchemaV1Issue,
+  StandardSchemaV1Result,
+  StandardSchemaV1SuccessResult,
+} from "./internal/standard-schema";
+export type {
   ClickHouseORMInstrumentation,
   ClickHouseORMLogger,
   ClickHouseORMLogLevel,

@@ -12,6 +12,7 @@ import {
   type Selection,
   type Session,
 } from "./index";
+import type { StandardSchemaV1 } from "./internal/standard-schema";
 
 const users = ckTable("users", {
   id: ckType.int32(),
@@ -252,3 +253,139 @@ void hiddenInt32;
 // @ts-expect-error Grouping should remain internal to the package root
 const hiddenGrouping: RootApi.Grouping | undefined = undefined;
 void hiddenGrouping;
+
+// $type narrows TData while preserving Column behavior
+const narrowedRole = ckType.string().$type<"guest" | "user" | "admin">();
+const narrowedRoleSelection: Selection<"guest" | "user" | "admin"> = narrowedRole;
+void narrowedRoleSelection;
+
+const scopedTable = ckTable("scoped_users", {
+  id: ckType.int32(),
+  role: ckType.string().$type<"guest" | "user" | "admin">(),
+  details: ckType.json().$type<{ avatarUrl: string }>(),
+});
+type ScopedSelect = (typeof scopedTable)["$inferSelect"];
+type ScopedInsert = (typeof scopedTable)["$inferInsert"];
+
+const okScopedSelect: ScopedSelect = { id: 1, role: "guest", details: { avatarUrl: "/a.png" } };
+void okScopedSelect;
+const okScopedInsert: ScopedInsert = { id: 1, role: "admin", details: { avatarUrl: "/b.png" } };
+void okScopedInsert;
+// @ts-expect-error role must be one of the narrowed literal members
+const badScopedRole: ScopedSelect = { id: 1, role: "owner", details: { avatarUrl: "" } };
+void badScopedRole;
+// @ts-expect-error details shape must match the $type override
+const badScopedDetails: ScopedInsert = { id: 1, role: "guest", details: { wrong: "shape" } };
+void badScopedDetails;
+
+// enum8/enum16 infer literal union keys from values without `as const`
+const statusEnum = ckType.enum8({ active: 1, paused: 2, banned: 3 });
+const statusSelection: Selection<"active" | "paused" | "banned"> = statusEnum;
+void statusSelection;
+const namedStatusEnum = ckType.enum16("status_16", { open: 1, closed: 2 });
+const namedStatusSelection: Selection<"open" | "closed"> = namedStatusEnum;
+void namedStatusSelection;
+
+const statusTable = ckTable("statuses", {
+  id: ckType.int32(),
+  status: ckType.enum8({ active: 1, paused: 2 }),
+});
+type StatusSelect = (typeof statusTable)["$inferSelect"];
+const okStatus: StatusSelect = { id: 1, status: "active" };
+void okStatus;
+// @ts-expect-error status must be one of the inferred enum keys
+const badStatus: StatusSelect = { id: 1, status: "archived" };
+void badStatus;
+
+// Layer 2: DDL brands shape $inferInsert
+const ioTable = ckTable("io_table", {
+  id: ckType.int32(),
+  defaulted: ckType.string().default(ckSql`'anonymous'`),
+  materializedCol: ckType.int32().materialized(ckSql`now64()`),
+  aliasedCol: ckType.string().aliasExpr(ckSql`upper(name)`),
+  splitType: ckType.dateTime().$type<{ select: Date; insert: string | Date }>(),
+});
+
+type IoSelect = (typeof ioTable)["$inferSelect"];
+type IoInsert = (typeof ioTable)["$inferInsert"];
+
+// Select model still exposes every column
+const okIoSelect: IoSelect = {
+  id: 1,
+  defaulted: "alice",
+  materializedCol: 123,
+  aliasedCol: "ABC",
+  splitType: new Date(),
+};
+void okIoSelect;
+
+// Insert model: id required, defaulted optional, materialized/alias removed,
+// splitType accepts string|Date (insert-side override).
+const minimalIoInsert: IoInsert = {
+  id: 1,
+  splitType: new Date(),
+};
+void minimalIoInsert;
+
+const splitInsertAcceptsString: IoInsert = {
+  id: 2,
+  splitType: "2026-01-01T00:00:00.000Z",
+};
+void splitInsertAcceptsString;
+
+const withOptionalDefault: IoInsert = {
+  id: 3,
+  defaulted: "named",
+  splitType: new Date(),
+};
+void withOptionalDefault;
+
+const cannotInsertMaterialized: IoInsert = {
+  id: 4,
+  // @ts-expect-error MATERIALIZED columns are removed from the insert model
+  materializedCol: 999,
+  splitType: new Date(),
+};
+void cannotInsertMaterialized;
+
+const cannotInsertAlias: IoInsert = {
+  id: 5,
+  // @ts-expect-error ALIAS columns are removed from the insert model
+  aliasedCol: "AB",
+  splitType: new Date(),
+};
+void cannotInsertAlias;
+
+// @ts-expect-error required `id` column cannot be omitted now that Partial<> wrapper is gone
+const missingRequiredId: IoInsert = {
+  splitType: new Date(),
+};
+void missingRequiredId;
+
+// Layer 3: $validator infers select type from schema output and insert type from schema input
+const dateOnlyStringSchema: StandardSchemaV1<string, Date> = {
+  "~standard": {
+    version: 1,
+    vendor: "ck-orm-typecheck",
+    validate(value) {
+      return typeof value === "string" ? { value: new Date(value) } : { issues: [{ message: "expected string" }] };
+    },
+  },
+};
+
+const validatedTable = ckTable("validated_table", {
+  id: ckType.int32(),
+  occurredAt: ckType.string().$validator(dateOnlyStringSchema),
+});
+
+type ValidatedSelect = (typeof validatedTable)["$inferSelect"];
+type ValidatedInsert = (typeof validatedTable)["$inferInsert"];
+
+// Select uses Schema's Output (Date), insert uses Schema's Input (string)
+const okValidatedSelect: ValidatedSelect = { id: 1, occurredAt: new Date() };
+void okValidatedSelect;
+const okValidatedInsert: ValidatedInsert = { id: 1, occurredAt: "2026-04-21T00:00:00.000Z" };
+void okValidatedInsert;
+// @ts-expect-error insert value must be a string per schema input
+const badValidatedInsert: ValidatedInsert = { id: 1, occurredAt: new Date() };
+void badValidatedInsert;

@@ -35,6 +35,8 @@ type _SelectedMetricsExecuteType = Expect<
 const insertBuilder = db.insert(logicalMetrics).values({
   userId: "user_1",
   metricValue: "1.50000",
+  createdAt: new Date("2026-04-24T00:00:00.000Z"),
+  tags: [],
 });
 const insertExecute: Promise<undefined> = insertBuilder.execute({
   query_id: "typed_insert",

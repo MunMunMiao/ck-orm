@@ -2,13 +2,53 @@ import type { AnyColumn, Column, DdlFragmentInput } from "./columns";
 import { createClientValidationError } from "./errors";
 import { isColumnLike } from "./internal/column";
 import { assertValidSqlIdentifier } from "./internal/identifier";
+import type { ColumnHasDefault, ColumnIoMarker, IsColumnGenerated } from "./query-shared";
 import { type SQLFragment, sql } from "./sql";
 
 type InferSelect<TColumns extends Record<string, AnyColumn>> = {
   [K in keyof TColumns]: TColumns[K] extends Column<infer TData, string> ? TData : never;
 };
 
-type InferInsert<TColumns extends Record<string, AnyColumn>> = InferSelect<TColumns>;
+// Pull the insert-side TData out of a column. Defaults to the column's select
+// TData when the user hasn't called `.$type<{select, insert}>()` to diverge
+// the two — every `Column<X, ...>` already extends `ColumnIoMarker<X, false,
+// false>` so the brand is always populated.
+type InsertDataOf<TColumn> =
+  TColumn extends ColumnIoMarker<infer TInsert, boolean, boolean>
+    ? TInsert
+    : TColumn extends Column<infer TData, string>
+      ? TData
+      : never;
+
+type RequiredInsertKeys<TColumns extends Record<string, AnyColumn>> = {
+  [K in keyof TColumns]: IsColumnGenerated<TColumns[K]> extends true
+    ? never
+    : ColumnHasDefault<TColumns[K]> extends true
+      ? never
+      : K;
+}[keyof TColumns];
+
+type OptionalInsertKeys<TColumns extends Record<string, AnyColumn>> = {
+  [K in keyof TColumns]: IsColumnGenerated<TColumns[K]> extends true
+    ? never
+    : ColumnHasDefault<TColumns[K]> extends true
+      ? K
+      : never;
+}[keyof TColumns];
+
+// Flatten intersection types into a single object type so structural equality
+// helpers (`Equal<A, B>`) compare cleanly against the analogous select model.
+type Flatten<T> = T extends infer U ? { [K in keyof U]: U[K] } : never;
+
+// Insert model: drop MATERIALIZED / ALIAS columns entirely, make DEFAULT
+// columns optional, and use the per-column insert TData for the rest.
+type InferInsert<TColumns extends Record<string, AnyColumn>> = Flatten<
+  {
+    [K in RequiredInsertKeys<TColumns>]: InsertDataOf<TColumns[K]>;
+  } & {
+    [K in OptionalInsertKeys<TColumns>]?: InsertDataOf<TColumns[K]>;
+  }
+>;
 
 type BoundColumns<
   TColumns extends Record<string, AnyColumn>,
@@ -16,7 +56,9 @@ type BoundColumns<
   TTableAlias extends string | undefined = undefined,
 > = {
   [K in keyof TColumns]: TColumns[K] extends Column<infer TData, infer TSqlType, string | undefined, string | undefined>
-    ? Column<TData, TSqlType, TTableName, TTableAlias>
+    ? TColumns[K] extends ColumnIoMarker<infer TInsert, infer TGen, infer THas>
+      ? Column<TData, TSqlType, TTableName, TTableAlias> & ColumnIoMarker<TInsert, TGen, THas>
+      : Column<TData, TSqlType, TTableName, TTableAlias>
     : never;
 };
 
@@ -236,7 +278,12 @@ export const ckTable = <TName extends string, TColumns extends Record<string, An
     $inferSelect: undefined as unknown as InferSelect<BoundColumns<TColumns, TName>>,
     $inferInsert: undefined as unknown as InferInsert<BoundColumns<TColumns, TName>>,
   };
-  const tableWithColumns = Object.assign(tableBase, boundColumns);
+  // Layer the bound columns BENEATH the table metadata. Otherwise a user-named
+  // column like `kind` / `tableName` / `columns` / `options` / `$inferSelect`
+  // / `$inferInsert` / `alias` / `originalName` overrides the corresponding
+  // table marker and downstream code (e.g. ck.eq(`source.kind === "table"`))
+  // misidentifies the table.
+  const tableWithColumns = Object.assign({}, boundColumns, tableBase);
   const resolvedOptions = typeof options === "function" ? options(tableWithColumns) : (options ?? {});
   tableWithColumns.options = resolvedOptions;
   return tableWithColumns;

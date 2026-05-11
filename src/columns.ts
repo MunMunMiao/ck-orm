@@ -6,7 +6,21 @@ import { assertDecimalParams, type DecimalParams, formatDecimalSqlType } from ".
 import { escapeSqlSingleQuoted } from "./internal/escape";
 import { assertValidSqlIdentifier } from "./internal/identifier";
 import { isPlainObject } from "./internal/predicates";
-import { createExpression, type Decoder, type Encoder, type InferData, type SqlExpression } from "./query-shared";
+import {
+  formatStandardSchemaIssues,
+  type InferStandardSchemaInput,
+  type InferStandardSchemaOutput,
+  isStandardSchemaFailure,
+  type StandardSchemaV1,
+} from "./internal/standard-schema";
+import {
+  type ColumnIoMarker,
+  createExpression,
+  type Decoder,
+  type Encoder,
+  type InferData,
+  type SqlExpression,
+} from "./query-shared";
 import { type SQLFragment, sql, trustSqlExpressionObject } from "./sql";
 
 export interface ColumnBinding<
@@ -30,6 +44,11 @@ export interface Column<
   TTableName extends string | undefined = string | undefined,
   TTableAlias extends string | undefined = string | undefined,
 > extends SqlExpression<TData, ResolveSourceKey<TTableName, TTableAlias>> {
+  // Intentionally does NOT extend ColumnIoMarker — DDL modifiers
+  // (`.default()` / `.materialized()` / `.aliasExpr()`) and `$type<{select,
+  // insert}>()` intersect the marker on the call site. Helper types
+  // (`InsertDataOf` / `IsColumnGenerated` / `ColumnHasDefault`) fall back to
+  // the column's own `TData` when no marker is intersected.
   readonly kind: "column";
   readonly key?: string;
   readonly name?: string;
@@ -46,12 +65,25 @@ export interface Column<
   bind<TNextTableName extends string, TNextTableAlias extends string | undefined = undefined>(
     binding: ColumnBinding<TNextTableName, TNextTableAlias>,
   ): Column<TData, TSqlType, TNextTableName, TNextTableAlias>;
-  default(expression: DdlFragmentInput): Column<TData, TSqlType, TTableName, TTableAlias>;
-  materialized(expression: DdlFragmentInput): Column<TData, TSqlType, TTableName, TTableAlias>;
-  aliasExpr(expression: DdlFragmentInput): Column<TData, TSqlType, TTableName, TTableAlias>;
+  default(
+    expression: DdlFragmentInput,
+  ): Column<TData, TSqlType, TTableName, TTableAlias> & ColumnIoMarker<TData, false, true>;
+  materialized(
+    expression: DdlFragmentInput,
+  ): Column<TData, TSqlType, TTableName, TTableAlias> & ColumnIoMarker<never, true, false>;
+  aliasExpr(
+    expression: DdlFragmentInput,
+  ): Column<TData, TSqlType, TTableName, TTableAlias> & ColumnIoMarker<never, true, false>;
   comment(text: string): Column<TData, TSqlType, TTableName, TTableAlias>;
   codec(expression: DdlFragmentInput): Column<TData, TSqlType, TTableName, TTableAlias>;
   ttl(expression: DdlFragmentInput): Column<TData, TSqlType, TTableName, TTableAlias>;
+  $type<TIo extends { select: unknown; insert?: unknown }>(): Column<TIo["select"], TSqlType, TTableName, TTableAlias> &
+    ColumnIoMarker<TIo extends { insert: infer I } ? I : TIo["select"], false, false>;
+  $type<TNext>(): Column<TNext, TSqlType, TTableName, TTableAlias>;
+  $validator<TSchema extends StandardSchemaV1<unknown, unknown>>(
+    schema: TSchema,
+  ): Column<InferStandardSchemaOutput<TSchema>, TSqlType, TTableName, TTableAlias> &
+    ColumnIoMarker<InferStandardSchemaInput<TSchema>, false, false>;
 }
 
 export type AnyColumn = Column<unknown, string, string | undefined, string | undefined>;
@@ -76,6 +108,7 @@ type ColumnFactoryConfig<TData, TSqlType extends string> = {
   readonly decimalConfig?: DecimalParams;
   readonly nestedShape?: Record<string, AnyColumn>;
   readonly rejectObjectInput?: boolean;
+  readonly validator?: StandardSchemaV1<unknown, unknown>;
 };
 
 const identity = <TData>(value: TData) => value;
@@ -419,6 +452,57 @@ const createColumnFactory = <
         {
           ...config,
           ddl: mergeColumnDdl(config.ddl, { ttl: expression }),
+        },
+        binding,
+      );
+    },
+    $type<TNext>() {
+      return createColumnFactory<TNext, TSqlType, TTableName, TTableAlias>(
+        config as unknown as ColumnFactoryConfig<TNext, TSqlType>,
+        binding,
+      );
+    },
+    $validator<TSchema extends StandardSchemaV1<unknown, unknown>>(schema: TSchema) {
+      type ValidatedOutput = InferStandardSchemaOutput<TSchema>;
+      const baseDecode = config.mapFromDriverValue;
+      const baseEncode = config.mapToDriverValue ?? (identity as Encoder<TData>);
+
+      const validateSync = (value: unknown, context: "decode" | "encode") => {
+        const result = schema["~standard"].validate(value);
+        if (result instanceof Promise) {
+          const label = context === "decode" ? "decode" : "insert";
+          const message = `Async Standard Schema validators are not supported on the ${label} path`;
+          if (context === "decode") {
+            throw createDecodeError(message, value);
+          }
+          throw createClientValidationError(message);
+        }
+        if (isStandardSchemaFailure(result)) {
+          const message = formatStandardSchemaIssues(result.issues);
+          if (context === "decode") {
+            throw createDecodeError(message, value);
+          }
+          throw createClientValidationError(message);
+        }
+        return result.value;
+      };
+
+      const validatedDecode: Decoder<ValidatedOutput> = (value) => {
+        const decoded = baseDecode(value);
+        return validateSync(decoded, "decode") as ValidatedOutput;
+      };
+
+      const validatedEncode: Encoder<InferStandardSchemaInput<TSchema>> = (value) => {
+        const validated = validateSync(value, "encode");
+        return baseEncode(validated as TData);
+      };
+
+      return createColumnFactory<ValidatedOutput, TSqlType, TTableName, TTableAlias>(
+        {
+          ...config,
+          mapFromDriverValue: validatedDecode,
+          mapToDriverValue: validatedEncode as unknown as Encoder<ValidatedOutput>,
+          validator: schema,
         },
         binding,
       );
@@ -802,23 +886,33 @@ const buildEnumColumn = <TData extends string>(
   });
 };
 
-export function enum8<TData extends string = string>(values: Record<string, number>): Enum8<TData>;
-export function enum8<TData extends string = string>(name: string, values: Record<string, number>): Enum8<TData>;
-export function enum8<TData extends string = string>(
-  first: string | Record<string, number>,
-  second?: Record<string, number>,
-): Enum8<TData> {
-  const { name, value: values } = parseNamedValue<Record<string, number>>("enum8", first, second);
-  return buildEnumColumn<TData>("Enum8", name, values);
+export function enum8<const TValues extends Record<string, number>>(
+  values: TValues,
+): Enum8<Extract<keyof TValues, string>>;
+export function enum8<const TValues extends Record<string, number>>(
+  name: string,
+  values: TValues,
+): Enum8<Extract<keyof TValues, string>>;
+export function enum8<const TValues extends Record<string, number>>(
+  first: string | TValues,
+  second?: TValues,
+): Enum8<Extract<keyof TValues, string>> {
+  const { name, value: values } = parseNamedValue<TValues>("enum8", first, second);
+  return buildEnumColumn<Extract<keyof TValues, string>>("Enum8", name, values);
 }
-export function enum16<TData extends string = string>(values: Record<string, number>): Enum16<TData>;
-export function enum16<TData extends string = string>(name: string, values: Record<string, number>): Enum16<TData>;
-export function enum16<TData extends string = string>(
-  first: string | Record<string, number>,
-  second?: Record<string, number>,
-): Enum16<TData> {
-  const { name, value: values } = parseNamedValue<Record<string, number>>("enum16", first, second);
-  return buildEnumColumn<TData>("Enum16", name, values);
+export function enum16<const TValues extends Record<string, number>>(
+  values: TValues,
+): Enum16<Extract<keyof TValues, string>>;
+export function enum16<const TValues extends Record<string, number>>(
+  name: string,
+  values: TValues,
+): Enum16<Extract<keyof TValues, string>>;
+export function enum16<const TValues extends Record<string, number>>(
+  first: string | TValues,
+  second?: TValues,
+): Enum16<Extract<keyof TValues, string>> {
+  const { name, value: values } = parseNamedValue<TValues>("enum16", first, second);
+  return buildEnumColumn<Extract<keyof TValues, string>>("Enum16", name, values);
 }
 // ClickHouse rejects `Nullable(Array|Map|Tuple)` outright — the rule is
 // stable, so cache the regex at module load instead of paying the literal
