@@ -1463,6 +1463,61 @@ await db.insert(probeTelemetry).values({
 
 Insert rows must use keys from the table schema. Unknown keys are rejected early. Omitted columns continue to use `DEFAULT`.
 
+### `insert(table).fromSelect(select)`
+
+Use `.fromSelect(...)` to compile a single `INSERT INTO target (cols) SELECT ...` statement and let ClickHouse materialise the SELECT server-side. No rows travel through the Node process — ideal for scoping a large source table once and reusing the materialised slice across multiple downstream queries inside `runInSession`.
+
+```ts
+await db.runInSession(async (session) => {
+  const tmpScopedDeals = ckTable("tmp_scoped_deals", {
+    dealTicket: ckType.int64("deal_ticket"),
+    login: ckType.int64(),
+    volume: ckType.float64(),
+  });
+
+  await session.createTemporaryTable(tmpScopedDeals);
+
+  await session.insert(tmpScopedDeals).fromSelect(
+    session
+      .select({
+        dealTicket: mtDeal.dealTicket,
+        login: mtDeal.login,
+        volume: mtDeal.volume,
+      })
+      .from(mtDeal)
+      .where(ck.inArray(mtDeal.entry, [1, 2, 3])),
+  );
+
+  // Subsequent count / aggregation queries scan the temp table, not mt_deal:
+  const totalRows = await session.count(tmpScopedDeals);
+  const byLogin = await session
+    .select({ login: tmpScopedDeals.login, volume: fn.sum(tmpScopedDeals.volume) })
+    .from(tmpScopedDeals)
+    .groupBy(tmpScopedDeals.login);
+});
+```
+
+Rules:
+
+- The SELECT must project every required column of the target table; columns declared with `.default(...)` may be omitted. Missing required columns are rejected at compile time (TypeScript) and again at runtime.
+- The INSERT column list is generated in the SELECT projection key order, so callers see `name-aligned` semantics even though ClickHouse aligns columns by position. Projection key order is irrelevant to which target column receives which value — the keys themselves are matched.
+- Unknown projection keys (not on the target table) and per-column type mismatches surface as TypeScript errors before the query is sent.
+- `.values()` and `.fromSelect()` are mutually exclusive on a single insert chain — the builder type narrows so the unused method disappears from autocomplete, and the runtime rejects the call too.
+- The compiled wire request is a plain ClickHouse command — `mode: "insert"` in the query event, `tableName` set to the target table.
+- `.fromSelect()` accepts a `SelectBuilder` (`session.select({...}).from(...)`), not a subquery wrapper. Use `.as("name")` only when you need the result as a CTE/subquery inside another SELECT, not when handing it to `.fromSelect()`.
+
+#### Nested columns
+
+`ckType.nested(...)` columns interact with `.fromSelect()` in three modes:
+
+1. **Omit the nested key from the projection.** This is the default mode and reflects ck-orm's runtime contract: a missing nested value is encoded as SQL `DEFAULT`, and ClickHouse fills empty parallel arrays for every field. The TS layer treats nested columns as `optional` in `$inferInsert` to mirror this.
+2. **Project a direct nested column reference**, e.g. `select({ events: src.events })`. ck-orm wraps the inner SELECT in a subquery and rewrites the outer projection into per-field dot-path access (`__ck_inner.events.name`, `__ck_inner.events.score`, …). The source nested shape must contain every field the target nested expects.
+3. **Project a computed expression into a nested column** is rejected at compile time — a single SQL expression cannot fan out into the parallel array fields. Use `.values(...)` or `.insertJsonEachRow(...)` for row-wise computed inserts.
+
+If you want the TS layer to enforce that nested data is always supplied (`Pattern D` — business contract that disallows empty nested arrays), opt in with `ckType.nested({...}).requiredOnInsert()`. The chain returns a column whose `$inferInsert` shape lists `events` as required, and `.fromSelect()` requires either the projection-of-nested-column-ref mode or the row-wise alternative.
+
+> **JSON wire-format note**: `.values()` parameterises JSON column inputs via `JSON.stringify(...)` cast to `String` (ClickHouse implicitly casts back to JSON on the server). `.fromSelect()` runs entirely server-side, so JSON values never round-trip through the JS process. Both paths produce identical stored data.
+
 ### `insertJsonEachRow()`
 
 Use `insertJsonEachRow()` when you already have object rows or an async row stream:

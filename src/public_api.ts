@@ -219,7 +219,14 @@ export type {
   ClickHouseORMQueryStatistics,
   ClickHouseORMTracingOptions,
 } from "./observability";
-export type { CompiledQuery, CompiledQueryMetadata } from "./query";
+export type {
+  CompiledQuery,
+  CompiledQueryMetadata,
+  FromSelectShapeConstraint,
+  InsertBuilder,
+  InsertFromSelectBuilder,
+  InsertValuesBuilder,
+} from "./query";
 export type { Order, Predicate, Selection } from "./query-shared";
 export {
   type ClickHouseBaseQueryOptions,

@@ -26,7 +26,7 @@ import {
 } from "./query-shared";
 import type { ClickHouseBaseQueryOptions } from "./runtime";
 import type { ClickHouseSettings, ClickHouseSettingValue } from "./runtime/settings";
-import type { AnyTable, Table } from "./schema";
+import type { AllInsertableKeys, AnyTable, InsertDataOf, RequiredInsertKeys, Table } from "./schema";
 import { renderTableIdentifier } from "./schema";
 import {
   compileSql,
@@ -493,6 +493,11 @@ type InsertTableMetadata = {
   readonly entries: readonly InsertColumnEntry[];
   readonly knownColumnKeys: ReadonlySet<string>;
   readonly generatedColumnKeys: readonly string[];
+  // Logical keys of nested columns that the user marked with
+  // `.requiredOnInsert()`. The runtime path in `compileInsertFromSelect`
+  // uses this set to surface a missing-required-column error when a
+  // bypassed-by-`as never` projection omits one of these keys.
+  readonly requiredNestedColumnKeys: ReadonlySet<string>;
 };
 
 // Tables are immutable, so the schema-derived insert metadata
@@ -508,6 +513,7 @@ const getInsertTableMetadata = (table: AnyTable): InsertTableMetadata => {
   const entries: InsertColumnEntry[] = [];
   const knownColumnKeys = new Set<string>();
   const generatedColumnKeys: string[] = [];
+  const requiredNestedColumnKeys = new Set<string>();
 
   for (const [schemaKey, column] of Object.entries(table.columns)) {
     knownColumnKeys.add(schemaKey);
@@ -519,6 +525,9 @@ const getInsertTableMetadata = (table: AnyTable): InsertTableMetadata => {
     const name = column.name ?? schemaKey;
     if (column.nestedShape) {
       const nestedNameQuoted = quoteIdentifier(name);
+      if (column.nestedRequiredOnInsert) {
+        requiredNestedColumnKeys.add(key);
+      }
       for (const [fieldKey, fieldColumn] of Object.entries(column.nestedShape)) {
         entries.push({
           kind: "nested-field",
@@ -542,7 +551,12 @@ const getInsertTableMetadata = (table: AnyTable): InsertTableMetadata => {
     });
   }
 
-  const metadata: InsertTableMetadata = { entries, knownColumnKeys, generatedColumnKeys };
+  const metadata: InsertTableMetadata = {
+    entries,
+    knownColumnKeys,
+    generatedColumnKeys,
+    requiredNestedColumnKeys,
+  };
   insertTableMetadataCache.set(table, metadata);
   return metadata;
 };
@@ -583,6 +597,13 @@ const compileNestedInsertFieldValue = (
 // and downgrade the parameter type to `String`; ClickHouse implicitly casts
 // the resulting double-quoted JSON literal back to `JSON(...)` on the server
 // side. The read path is unaffected.
+//
+// Note: this stringify-then-CAST workaround applies only to `.values()` (the
+// parameterised VALUES path). `.fromSelect()` performs no `mapToDriverValue`
+// — JSON columns travel server-side as native JSON between SELECT output and
+// INSERT input, so there is no analogous wire-format step. Both paths reach
+// the same logical result, but if you ever need to introspect what ck-orm
+// sent over the wire, expect the two paths to look different.
 const isJsonInsertSqlType = (sqlType: string): boolean => sqlType === "JSON" || sqlType.startsWith("JSON(");
 
 const compileInsertColumnValue = (
@@ -655,17 +676,26 @@ const createReferenceExpression = <TData, TSourceKey extends string>(
   columnName: string,
   decoder: Decoder<TData>,
   sqlType?: string,
+  nestedShape?: Record<string, AnyColumn>,
 ): SqlSelection<TData, TSourceKey> => {
   // Subquery / CTE references are immutable — pre-build the
   // `sourceAlias.columnName` fragment once instead of paying for
   // `sql.identifier({ ... })` on every compile of the same reference.
   const identifierFragment = sql.identifier({ table: sourceAlias, column: columnName });
-  return createExpression({
+  const expression = createExpression({
     compile: () => identifierFragment,
     decoder,
     sqlType,
     sourceKey: sourceAlias,
   });
+  // Propagate `nestedShape` metadata when the underlying selection item is a
+  // direct nested column reference. `compileInsertFromSelect` reads this to
+  // recognise CTE/subquery-wrapped nested column refs (otherwise it can only
+  // see `kind: "expression"` and would reject them as computed expressions).
+  if (nestedShape) {
+    defineHidden(expression, "nestedShape", nestedShape);
+  }
+  return expression;
 };
 
 // Column refs on a bare (un-aliased) SelectBuilder. The alias isn't known
@@ -695,11 +725,23 @@ const buildReferenceColumns = <TRow extends SelectionRecord, TSourceKey extends 
   const columns = {} as ReferenceColumns<TRow, TSourceKey>;
 
   for (const item of selectionItems) {
+    // If the source selection item is a direct nested column reference (e.g.
+    // `select({ events: src.events })`), propagate the column's nestedShape
+    // onto the produced reference so downstream consumers (CTE/subquery →
+    // INSERT fromSelect) can identify nested-column refs across one or more
+    // layers of subquery wrapping.
+    const sourceExpression = item.expression as SqlSelection<unknown> & {
+      readonly kind?: string;
+      readonly nestedShape?: Record<string, AnyColumn>;
+    };
+    const propagatedNestedShape =
+      sourceExpression.kind === "column" && sourceExpression.nestedShape ? sourceExpression.nestedShape : undefined;
     columns[item.key as keyof TRow] = createReferenceExpression(
       sourceAlias,
       item.sqlAlias,
       item.expression.decoder,
       item.expression.sqlType,
+      propagatedNestedShape,
     ) as ReferenceColumns<TRow, TSourceKey>[keyof TRow];
   }
 
@@ -1856,26 +1898,386 @@ export const createSelectBuilder = <
   return builder;
 };
 
+// Compile-time guard for `InsertBuilder.fromSelect(query)`. The returned type
+// must `extend` the passed `TQuery`, so we intersect the user-supplied builder
+// with a per-column compatibility check. When everything lines up, every
+// branch resolves to `unknown` and the intersection is a no-op; on mismatch
+// the offending key gets a phantom `{__error,column,...}` object that turns
+// the whole intersection unassignable, which renders as a precise TS error.
+/** @internal */
+export type FromSelectShapeConstraint<TTable extends AnyTable, TResultShape> = [
+  Exclude<RequiredInsertKeys<TTable["columns"]>, keyof TResultShape>,
+] extends [never]
+  ? [Exclude<keyof TResultShape, AllInsertableKeys<TTable["columns"]>>] extends [never]
+    ? {
+        [K in keyof TResultShape]: K extends AllInsertableKeys<TTable["columns"]>
+          ? TResultShape[K] extends InsertDataOf<TTable["columns"][K]>
+            ? unknown
+            : {
+                readonly __error: "fromSelect column type mismatch";
+                readonly column: K;
+                readonly expected: InsertDataOf<TTable["columns"][K]>;
+                readonly got: TResultShape[K];
+              }
+          : {
+              readonly __error: "fromSelect unknown column";
+              readonly column: K;
+            };
+      }
+    : {
+        readonly __error: "fromSelect select has columns the target table does not";
+        readonly extra: Exclude<keyof TResultShape, AllInsertableKeys<TTable["columns"]>>;
+      }
+  : {
+      readonly __error: "fromSelect select is missing required columns";
+      readonly missing: Exclude<RequiredInsertKeys<TTable["columns"]>, keyof TResultShape>;
+    };
+
+// Base builder returned by `client.insert(table)` — both `.values()` and
+// `.fromSelect()` are valid initial calls. Each transitions to a narrowed
+// builder type that no longer offers the other side of the union, mirroring
+// `SelectBuilder` / `SelectBuilderWithRefs` phantom narrowing.
 export interface InsertBuilder<TTable extends AnyTable> extends PromiseLike<undefined> {
-  values(values: InsertRowInput<TTable> | readonly InsertRowInput<TTable>[]): InsertBuilder<TTable>;
+  values(values: InsertRowInput<TTable> | readonly InsertRowInput<TTable>[]): InsertValuesBuilder<TTable>;
+  fromSelect<TQuery extends AnySelectBuilderLike>(
+    query: TQuery & FromSelectShapeConstraint<TTable, SelectBuilderRow<TQuery>>,
+  ): InsertFromSelectBuilder<TTable>;
   execute(options?: ClickHouseBaseQueryOptions): Promise<undefined>;
   catch<TResult2 = never>(onrejected?: CatchHandler<TResult2>): Promise<undefined | TResult2>;
   finally(onfinally?: (() => void) | null): Promise<undefined>;
   [compileQuerySymbol](): CompiledQuery<never>;
 }
 
+// After `.values(...)` only `.values(...)` (append more rows) remains; calling
+// `.fromSelect(...)` is a type error, not just a runtime one.
+export interface InsertValuesBuilder<TTable extends AnyTable> extends PromiseLike<undefined> {
+  values(values: InsertRowInput<TTable> | readonly InsertRowInput<TTable>[]): InsertValuesBuilder<TTable>;
+  execute(options?: ClickHouseBaseQueryOptions): Promise<undefined>;
+  catch<TResult2 = never>(onrejected?: CatchHandler<TResult2>): Promise<undefined | TResult2>;
+  finally(onfinally?: (() => void) | null): Promise<undefined>;
+  [compileQuerySymbol](): CompiledQuery<never>;
+}
+
+// After `.fromSelect(...)` neither `.values()` nor a second `.fromSelect()`
+// is allowed. The compiled SQL is `INSERT INTO t (cols) <selectStatement>`
+// with no second body to merge.
+//
+// `TTable` is exposed as a phantom field so users can still annotate values
+// as `InsertFromSelectBuilder<MyTable>`; the symbol key is invisible at
+// runtime and excluded from `Object.keys` / autocomplete.
+export interface InsertFromSelectBuilder<TTable extends AnyTable> extends PromiseLike<undefined> {
+  readonly [insertFromSelectBuilderTableSymbol]?: TTable;
+  execute(options?: ClickHouseBaseQueryOptions): Promise<undefined>;
+  catch<TResult2 = never>(onrejected?: CatchHandler<TResult2>): Promise<undefined | TResult2>;
+  finally(onfinally?: (() => void) | null): Promise<undefined>;
+  [compileQuerySymbol](): CompiledQuery<never>;
+}
+
+const insertFromSelectBuilderTableSymbol = Symbol("clickhouseORMInsertFromSelectBuilderTable");
+
+type InsertBuilderState<TTable extends AnyTable> =
+  | { readonly kind: "empty" }
+  | { readonly kind: "values"; readonly rows: readonly InsertRowInput<TTable>[] }
+  | { readonly kind: "from_select"; readonly query: AnySelectBuilder };
+
+const compileInsertValues = <TTable extends AnyTable>(
+  table: TTable,
+  rows: readonly InsertRowInput<TTable>[],
+): CompiledQuery<never> => {
+  const columnEntries = createInsertColumnEntries(table);
+  const ctx: BuildContext = {
+    params: {},
+    paramTypes: {},
+    nextParamIndex: 0,
+  };
+  const valueRows = rows.map(
+    (row) =>
+      sql`(${joinSqlParts(
+        columnEntries.map((entry) => compileInsertColumnValue(row as Record<string, unknown>, entry, ctx)),
+        ", ",
+      )})`,
+  );
+  const statement = sql`insert into ${renderTableIdentifier(table)} (${joinSqlParts(
+    columnEntries.map((entry) => renderInsertColumnIdentifier(entry)),
+    ", ",
+  )}) values ${joinSqlParts(valueRows, ", ")}`;
+  const compiled = compileSql(statement, ctx);
+  return createCompiledQuery(
+    compiled.query,
+    [],
+    "command",
+    { ...compiled.params },
+    { ...compiled.paramTypes },
+    undefined,
+    {
+      rootSourceName: table.originalName,
+      tableName: table.originalName,
+    },
+  );
+};
+
+// INSERT-from-SELECT path: zero data on the wire — the SELECT runs entirely
+// on the server. Column list is aligned by SELECT-projection key (the JS
+// object key the user wrote in `select({...})`), not by SQL alias and not by
+// position. ClickHouse aligns INSERT (cols) ↔ SELECT projection by position;
+// we keep both sides in projection-key order so the visible semantics match
+// "by name".
+const compileInsertFromSelect = <TTable extends AnyTable>(
+  table: TTable,
+  query: AnySelectBuilder,
+): CompiledQuery<never> => {
+  const selectionItems = query.buildSelectionItems();
+  if (selectionItems.length === 0) {
+    throw createClientValidationError(
+      "insert().fromSelect() requires the select query to project at least one column. Pass an explicit selection to select({...}).",
+    );
+  }
+
+  const {
+    entries: tableEntries,
+    knownColumnKeys,
+    generatedColumnKeys,
+    requiredNestedColumnKeys,
+  } = getInsertTableMetadata(table);
+  // Index by logical schema key. Plain `kind: "column"` entries can be
+  // populated by a single SELECT projection; `kind: "nested-field"` entries
+  // are aggregated under the nested column's logical key so that a single
+  // selection like `select({ events: src.events })` can fan out into all
+  // physical `events.name` / `events.score` / … fields.
+  const entriesByKey = new Map<string, InsertColumnEntry>();
+  type NestedFieldGroup = {
+    readonly key: string;
+    readonly fieldEntries: readonly Extract<InsertColumnEntry, { kind: "nested-field" }>[];
+    readonly fieldKeySet: ReadonlySet<string>;
+  };
+  const nestedGroups = new Map<string, NestedFieldGroup>();
+  for (const entry of tableEntries) {
+    if (entry.kind === "nested-field") {
+      const existing = nestedGroups.get(entry.key);
+      if (existing) {
+        (existing.fieldEntries as Extract<InsertColumnEntry, { kind: "nested-field" }>[]).push(entry);
+        (existing.fieldKeySet as Set<string>).add(entry.fieldKey);
+      } else {
+        nestedGroups.set(entry.key, {
+          key: entry.key,
+          fieldEntries: [entry],
+          fieldKeySet: new Set([entry.fieldKey]),
+        });
+      }
+      continue;
+    }
+    entriesByKey.set(entry.key, entry);
+  }
+  const generatedKeySet = new Set(generatedColumnKeys);
+
+  // Per-selection-item plan: how the INSERT column list and the outer SELECT
+  // projection should look. `nested-fan-out` produces N entries in the
+  // INSERT list + N outer-SELECT dot-paths from one source projection.
+  type ProjectionPlan =
+    | {
+        readonly mode: "plain";
+        readonly entry: InsertColumnEntry;
+        readonly sqlAlias: string;
+      }
+    | {
+        readonly mode: "nested-fan-out";
+        readonly fieldEntries: readonly Extract<InsertColumnEntry, { kind: "nested-field" }>[];
+        readonly sqlAlias: string;
+      };
+  const projectionPlans: ProjectionPlan[] = [];
+  // `seenKeys` doubles as projection-key tracker and the input for the
+  // required-column check below. SelectionItem keys come from
+  // `Object.entries(selection)` (JS guarantees unique keys), so we never need
+  // to detect duplicates here — the set is purely a "what got projected" log.
+  const seenKeys = new Set<string>();
+  for (const item of selectionItems) {
+    const projectionKey = item.key;
+    seenKeys.add(projectionKey);
+
+    if (generatedKeySet.has(projectionKey)) {
+      throw createClientValidationError(
+        `insert().fromSelect() cannot target generated column "${projectionKey}" (MATERIALIZED/ALIAS columns are computed by ClickHouse)`,
+      );
+    }
+
+    const nestedGroup = nestedGroups.get(projectionKey);
+    if (nestedGroup) {
+      // Projection targets a nested column. The expression must carry
+      // nestedShape metadata, which only direct nested column references
+      // (and CTE/subquery references propagated through
+      // `buildReferenceColumns`) do — a computed expression like
+      // `fn.multiIf(...)` cannot fan out into the multiple parallel array
+      // fields a nested column expands to physically. Computed values must
+      // flow through `.values(...)` / `.insertJsonEachRow(...)` instead.
+      const expressionLike = item.expression as SqlSelection<unknown> & {
+        readonly nestedShape?: Record<string, AnyColumn>;
+      };
+      if (expressionLike.nestedShape == null) {
+        throw createClientValidationError(
+          `insert().fromSelect() projection for nested column "${projectionKey}" must be a direct nested column reference (e.g. \`source.${projectionKey}\`). Computed expressions cannot fill nested columns because they expand to multiple parallel array fields; use .values(...) or .insertJsonEachRow(...) for row-wise insertion of computed nested data.`,
+        );
+      }
+      const sourceFieldKeys = new Set(Object.keys(expressionLike.nestedShape));
+      for (const targetFieldKey of nestedGroup.fieldKeySet) {
+        if (!sourceFieldKeys.has(targetFieldKey)) {
+          const sourceKeys = [...sourceFieldKeys].join(", ");
+          throw createClientValidationError(
+            `insert().fromSelect() nested column "${projectionKey}" shape mismatch: target requires field "${targetFieldKey}", source nested shape provides {${sourceKeys}}`,
+          );
+        }
+      }
+      projectionPlans.push({
+        mode: "nested-fan-out",
+        fieldEntries: nestedGroup.fieldEntries,
+        sqlAlias: item.sqlAlias,
+      });
+      continue;
+    }
+
+    if (!knownColumnKeys.has(projectionKey)) {
+      throw createClientValidationError(
+        `insert().fromSelect() projects unknown column "${projectionKey}" — not a column of "${table.originalName}"`,
+      );
+    }
+    // At this point `projectionKey` is in `knownColumnKeys`, is *not* in
+    // `nestedGroups`, and is *not* in `generatedKeySet`. The remaining
+    // schema kinds all land in `entriesByKey` during the metadata walk
+    // above, so the lookup is guaranteed to return a value.
+    const entry = entriesByKey.get(projectionKey) as InsertColumnEntry;
+    projectionPlans.push({ mode: "plain", entry, sqlAlias: item.sqlAlias });
+  }
+
+  // Required columns omitted from the projection would have ClickHouse silently
+  // fill defaults (or zero values), which is almost never what the user wants
+  // — surface this client-side to match the typecheck rule for
+  // `FromSelectShapeConstraint`. Columns with an explicit DEFAULT and nested
+  // columns are optional by default (nested ones expand to empty arrays
+  // server-side); nested columns the user explicitly marked
+  // `.requiredOnInsert()` are tracked separately and added back into the
+  // missing-column scan so a `as never`-bypass cannot silently drop them.
+  const requiredKeysMissing: string[] = [];
+  const seenForRequired = new Set<string>();
+  for (const entry of tableEntries) {
+    if (entry.kind === "nested-field") continue;
+    if (entry.column.ddl?.default !== undefined) continue;
+    if (seenForRequired.has(entry.key)) continue;
+    seenForRequired.add(entry.key);
+    if (!seenKeys.has(entry.key)) {
+      requiredKeysMissing.push(entry.key);
+    }
+  }
+  for (const requiredNestedKey of requiredNestedColumnKeys) {
+    if (!seenKeys.has(requiredNestedKey)) {
+      requiredKeysMissing.push(requiredNestedKey);
+    }
+  }
+  if (requiredKeysMissing.length > 0) {
+    throw createClientValidationError(
+      `insert().fromSelect() select is missing required columns: ${requiredKeysMissing.join(", ")}`,
+    );
+  }
+
+  // Build the INSERT column-list fragments and the outer-SELECT projection
+  // (only used in the nested-fan-out branch). When there are no nested
+  // projections we keep the simple single-SELECT form to avoid pointless
+  // subquery wrapping.
+  const insertIdentifiers: SQLFragment[] = [];
+  const outerSelectParts: SQLFragment[] = [];
+  let hasNestedFanOut = false;
+  const innerAlias = sql.identifier("__ck_inner");
+  for (const plan of projectionPlans) {
+    if (plan.mode === "plain") {
+      insertIdentifiers.push(plan.entry.identifierFragment);
+      outerSelectParts.push(sql`${innerAlias}.${sql.identifier(plan.sqlAlias)}`);
+      continue;
+    }
+    hasNestedFanOut = true;
+    for (const fieldEntry of plan.fieldEntries) {
+      insertIdentifiers.push(fieldEntry.identifierFragment);
+      // Outer-SELECT dot-path access — `__ck_inner.events.name` reads the
+      // `name` sub-field of the inner `events` projection (ClickHouse
+      // supports dot-path access on named-tuple / nested columns returned
+      // from a subquery; verified on CH 26.3).
+      outerSelectParts.push(sql`${innerAlias}.${sql.identifier(plan.sqlAlias)}.${sql.identifier(fieldEntry.fieldKey)}`);
+    }
+  }
+
+  const ctx: BuildContext = {
+    params: {},
+    paramTypes: {},
+    nextParamIndex: 0,
+  };
+  // Wrap the nested compile in a CompileState so the inner SELECT's
+  // forcedSettings (e.g. join_use_nulls = 1 from a leftJoin) bubble up
+  // through `collectForcedSettings`. Mirrors `SelectBuilder` at line ~1708.
+  const { result: nestedCompiled, forcedSettings } = withCompileState(ctx, () => compileNestedQuery(query, ctx));
+
+  const insertHeader = sql`insert into ${renderTableIdentifier(table)} (${joinSqlParts(insertIdentifiers, ", ")})`;
+  const statement = hasNestedFanOut
+    ? sql`${insertHeader} select ${joinSqlParts(outerSelectParts, ", ")} from (${sql.raw(nestedCompiled.statement)}) as ${innerAlias}`
+    : sql`${insertHeader} ${sql.raw(nestedCompiled.statement)}`;
+  const compiled = compileSql(statement, ctx);
+
+  return createCompiledQuery(
+    compiled.query,
+    [],
+    "command",
+    { ...compiled.params },
+    { ...compiled.paramTypes },
+    forcedSettings,
+    {
+      rootSourceName: table.originalName,
+      tableName: table.originalName,
+    },
+  );
+};
+
+const isAnySelectBuilder = (value: unknown): value is AnySelectBuilder => isSelectBuilder(value);
+
 export const createInsertBuilder = <TTable extends AnyTable>(
   table: TTable,
   runner?: PreparedRunner,
-  rows: InsertRowInput<TTable>[] = [],
+  initialState: InsertBuilderState<TTable> = { kind: "empty" },
 ): InsertBuilder<TTable> => {
   if (table.alias) {
     throw createClientValidationError("insert() requires a base table and does not accept aliased table targets");
   }
 
   const builder = {
-    values(values: InsertRowInput<TTable> | readonly InsertRowInput<TTable>[]): InsertBuilder<TTable> {
-      return createInsertBuilder(table, runner, normalizeInsertRows(table, values));
+    values(values: InsertRowInput<TTable> | readonly InsertRowInput<TTable>[]): InsertValuesBuilder<TTable> {
+      if (initialState.kind === "from_select") {
+        throw createClientValidationError(
+          "insert().values() cannot follow insert().fromSelect() — pick one of the two on a single insert chain",
+        );
+      }
+      const normalized = normalizeInsertRows(table, values);
+      const mergedRows = initialState.kind === "values" ? [...initialState.rows, ...normalized] : normalized;
+      return createInsertBuilder(table, runner, {
+        kind: "values",
+        rows: mergedRows,
+      }) as unknown as InsertValuesBuilder<TTable>;
+    },
+
+    fromSelect<TQuery extends AnySelectBuilderLike>(
+      query: TQuery & FromSelectShapeConstraint<TTable, SelectBuilderRow<TQuery>>,
+    ): InsertFromSelectBuilder<TTable> {
+      if (initialState.kind === "values") {
+        throw createClientValidationError(
+          "insert().fromSelect() cannot follow insert().values() — pick one of the two on a single insert chain",
+        );
+      }
+      if (initialState.kind === "from_select") {
+        throw createClientValidationError("insert().fromSelect() cannot be called twice on the same insert chain");
+      }
+      if (!isAnySelectBuilder(query)) {
+        throw createClientValidationError(
+          "insert().fromSelect() expects a SelectBuilder (e.g. session.select({...}).from(table)); subqueries created via .as(alias) are not accepted directly",
+        );
+      }
+      return createInsertBuilder(table, runner, {
+        kind: "from_select",
+        query: query as AnySelectBuilder,
+      }) as unknown as InsertFromSelectBuilder<TTable>;
     },
 
     execute(options?: ClickHouseBaseQueryOptions): Promise<undefined> {
@@ -1902,44 +2304,18 @@ export const createInsertBuilder = <TTable extends AnyTable>(
     },
 
     [compileQuerySymbol](): CompiledQuery<never> {
-      if (rows.length === 0) {
-        throw createClientValidationError("insert().values() must be called with at least one row before execute()");
+      if (initialState.kind === "empty") {
+        throw createClientValidationError(
+          "insert() requires .values(rows) or .fromSelect(selectBuilder) before execute()",
+        );
       }
-      const columnEntries = createInsertColumnEntries(table);
-      const ctx: BuildContext = {
-        params: {},
-        paramTypes: {},
-        nextParamIndex: 0,
-      };
-      const valueRows = rows.map(
-        (row) =>
-          sql`(${joinSqlParts(
-            columnEntries.map((entry) => compileInsertColumnValue(row as Record<string, unknown>, entry, ctx)),
-            ", ",
-          )})`,
-      );
-      const statement = sql`insert into ${renderTableIdentifier(table)} (${joinSqlParts(
-        columnEntries.map((entry) => renderInsertColumnIdentifier(entry)),
-        ", ",
-      )}) values ${joinSqlParts(valueRows, ", ")}`;
-      const compiled = compileSql(statement, ctx);
-
-      return createCompiledQuery(
-        compiled.query,
-        [],
-        "command",
-        {
-          ...compiled.params,
-        },
-        {
-          ...compiled.paramTypes,
-        },
-        undefined,
-        {
-          rootSourceName: table.originalName,
-          tableName: table.originalName,
-        },
-      );
+      if (initialState.kind === "values") {
+        if (initialState.rows.length === 0) {
+          throw createClientValidationError("insert().values() must be called with at least one row before execute()");
+        }
+        return compileInsertValues(table, initialState.rows);
+      }
+      return compileInsertFromSelect(table, initialState.query);
     },
   } as InsertBuilder<TTable>;
 

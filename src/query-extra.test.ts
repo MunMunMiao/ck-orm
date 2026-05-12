@@ -1358,7 +1358,7 @@ describe("ck-orm query extras", function describeClickHouseORMQueryExtras() {
     ).toThrow("cannot provide generated columns: shardDay");
 
     expect(() => createInsertBuilder(generatedOrders)[compileQuerySymbol]()).toThrow(
-      "insert().values() must be called with at least one row before execute()",
+      "insert() requires .values(rows) or .fromSelect(selectBuilder) before execute()",
     );
     expect(() => createInsertBuilder(ckAlias(generatedOrders, "g"))).toThrow(
       "insert() requires a base table and does not accept aliased table targets",
@@ -1927,5 +1927,734 @@ describe("ck-orm bare SelectBuilder as subquery source", function describeBareBu
 
     expect(normalizeSql(built.query)).toContain("as `named_sub`");
     expect(normalizeSql(built.query)).toContain("as `__sub_1`");
+  });
+
+  it("compiles insert.fromSelect into INSERT INTO ... SELECT", function testInsertFromSelectBasicSql() {
+    const db = createQueryClient();
+    const compiled = buildCompiled(
+      db
+        .insert(orders)
+        .fromSelect(db.select({ id: orders.id, name: orders.name, amount: orders.amount }).from(orders))
+        [compileQuerySymbol](),
+    );
+
+    expect(normalizeSql(compiled.query)).toBe(
+      "insert into `orders` (`id`, `name`, `amount`) select `orders`.`id` as `id`, `orders`.`name` as `name`, `orders`.`amount` as `amount` from `orders`",
+    );
+    expect(compiled.params).toEqual({});
+  });
+
+  it("aligns insert column list with the select projection key order, not table column order", function testInsertFromSelectKeyOrder() {
+    const db = createQueryClient();
+    const compiled = buildCompiled(
+      db
+        .insert(orders)
+        .fromSelect(db.select({ amount: orders.amount, id: orders.id, name: orders.name }).from(orders))
+        [compileQuerySymbol](),
+    );
+
+    // Projection-key order is `amount, id, name`; insert column list mirrors
+    // that so ClickHouse's position-based alignment lands each projection in
+    // the right column even though the table-declared order is `id, name, amount`.
+    expect(normalizeSql(compiled.query)).toContain("insert into `orders` (`amount`, `id`, `name`)");
+    expect(normalizeSql(compiled.query)).toContain(
+      "select `orders`.`amount` as `amount`, `orders`.`id` as `id`, `orders`.`name` as `name` from `orders`",
+    );
+  });
+
+  it("flows WHERE parameters from the nested select into the outer compile context", function testInsertFromSelectParamFlow() {
+    const db = createQueryClient();
+    const compiled = buildCompiled(
+      db
+        .insert(orders)
+        .fromSelect(
+          db
+            .select({ id: orders.id, name: orders.name, amount: orders.amount })
+            .from(orders)
+            .where(gt(orders.amount, 100)),
+        )
+        [compileQuerySymbol](),
+    );
+
+    expect(normalizeSql(compiled.query)).toContain("where `orders`.`amount` > {orm_param1:Float64}");
+    expect(compiled.params).toEqual({ orm_param1: 100 });
+  });
+
+  it("renders a WITH-CTE in the nested select between the INSERT clause and the SELECT", function testInsertFromSelectWithCte() {
+    const db = createQueryClient();
+    const totals = db.$with("totals").as(db.select({ id: orders.id }).from(orders));
+
+    const compiled = buildCompiled(
+      db
+        .insert(orders)
+        .fromSelect(
+          db
+            .with(totals)
+            .select({ id: orders.id, name: orders.name, amount: orders.amount })
+            .from(orders)
+            .innerJoin(totals, eq(orders.id, totals.id)),
+        )
+        [compileQuerySymbol](),
+    );
+
+    expect(normalizeSql(compiled.query)).toContain("insert into `orders` (`id`, `name`, `amount`) with `totals` as");
+    expect(normalizeSql(compiled.query)).toContain("inner join `totals`");
+  });
+
+  it("rejects insert.fromSelect when required columns are missing from the projection", function testInsertFromSelectMissingRequired() {
+    const db = createQueryClient();
+    expect(() =>
+      createInsertBuilder(orders)
+        .fromSelect(
+          // Cast to `never` so the runtime branch is exercised even though
+          // the FromSelectShapeConstraint type would already reject this.
+          db.select({ id: orders.id, name: orders.name }).from(orders) as never,
+        )
+        [compileQuerySymbol](),
+    ).toThrow("insert().fromSelect() select is missing required columns: amount");
+  });
+
+  it("rejects insert.fromSelect when the projection includes a column the target table does not have", function testInsertFromSelectUnknownColumn() {
+    const db = createQueryClient();
+    expect(() =>
+      createInsertBuilder(orders)
+        .fromSelect(
+          db
+            .select({
+              id: orders.id,
+              name: orders.name,
+              amount: orders.amount,
+              extra_ghost: orders.id,
+            })
+            .from(orders) as never,
+        )
+        [compileQuerySymbol](),
+    ).toThrow('insert().fromSelect() projects unknown column "extra_ghost"');
+  });
+
+  it("rejects insert.fromSelect when targeting a generated column", function testInsertFromSelectGenerated() {
+    const generatedOrders = ckTable(
+      "fs_generated_orders",
+      {
+        id: int32(),
+        name: string(),
+        amount: float64(),
+        shardDay: int32("shard_day").materialized(sql`toYYYYMM(id)`),
+      },
+      (table) => ({
+        engine: "MergeTree",
+        orderBy: [table.id],
+      }),
+    );
+    const db = createQueryClient();
+    expect(() =>
+      createInsertBuilder(generatedOrders)
+        .fromSelect(
+          db
+            .select({
+              id: orders.id,
+              name: orders.name,
+              amount: orders.amount,
+              shardDay: orders.id,
+            })
+            .from(orders) as never,
+        )
+        [compileQuerySymbol](),
+    ).toThrow('insert().fromSelect() cannot target generated column "shardDay"');
+  });
+
+  it("rejects insert.fromSelect that follows .values() and vice versa", function testInsertBuilderMutualExclusion() {
+    const db = createQueryClient();
+    const sourceSelect = db.select({ id: orders.id, name: orders.name, amount: orders.amount }).from(orders);
+
+    const valuesFirst = createInsertBuilder(orders).values({
+      id: 1,
+      name: "alice",
+      amount: 1,
+    });
+    expect(() =>
+      (valuesFirst as unknown as { fromSelect(q: never): unknown }).fromSelect(sourceSelect as never),
+    ).toThrow("insert().fromSelect() cannot follow insert().values()");
+
+    const fromSelectFirst = createInsertBuilder(orders).fromSelect(sourceSelect as never);
+    expect(() =>
+      (
+        fromSelectFirst as unknown as {
+          values(rows: { id: number; name: string; amount: number }): unknown;
+        }
+      ).values({ id: 1, name: "alice", amount: 1 }),
+    ).toThrow("insert().values() cannot follow insert().fromSelect()");
+
+    expect(() =>
+      (fromSelectFirst as unknown as { fromSelect(q: never): unknown }).fromSelect(sourceSelect as never),
+    ).toThrow("insert().fromSelect() cannot be called twice");
+  });
+
+  it("rejects insert.fromSelect when handed something other than a SelectBuilder", function testInsertFromSelectNonBuilder() {
+    expect(() =>
+      createInsertBuilder(orders).fromSelect({
+        // shape-faking object missing the `[selectBuilderKindSymbol]` brand
+        execute: async () => [],
+        buildSelectionItems: () => [],
+      } as never),
+    ).toThrow("insert().fromSelect() expects a SelectBuilder");
+  });
+
+  it("rejects insert.fromSelect on a select that projects no columns", function testInsertFromSelectEmptyProjection() {
+    const emptyOrders = ckTable("fs_empty_orders", {
+      id: int32(),
+    });
+    const _db = createQueryClient();
+    const emptyBuilder = createSelectBuilder<Record<string, unknown>>({
+      selection: {},
+    }).from(emptyOrders);
+    expect(() =>
+      createInsertBuilder(emptyOrders)
+        .fromSelect(emptyBuilder as never)
+        [compileQuerySymbol](),
+    ).toThrow("insert().fromSelect() requires the select query to project at least one column");
+  });
+
+  it("rejects insert without .values() or .fromSelect()", function testInsertEmptyExecute() {
+    expect(() => createInsertBuilder(orders)[compileQuerySymbol]()).toThrow(
+      "insert() requires .values(rows) or .fromSelect(selectBuilder) before execute()",
+    );
+  });
+
+  it("renders configured physical column names in both the INSERT list and SELECT aliases", function testInsertFromSelectPhysicalNameMapping() {
+    const remappedTarget = ckTable("fs_remap_target", {
+      dealTicket: int32("deal_ticket"),
+      userId: int32("user_id"),
+      label: string(),
+    });
+    const remappedSource = ckTable("fs_remap_source", {
+      dealTicket: int32("deal_ticket"),
+      userId: int32("user_id"),
+      label: string(),
+    });
+    const db = createQueryClient();
+
+    const compiled = buildCompiled(
+      db
+        .insert(remappedTarget)
+        .fromSelect(
+          db
+            .select({
+              userId: remappedSource.userId,
+              dealTicket: remappedSource.dealTicket,
+              label: remappedSource.label,
+            })
+            .from(remappedSource),
+        )
+        [compileQuerySymbol](),
+    );
+
+    // INSERT column list must use the physical names (`deal_ticket`,
+    // `user_id`) — ClickHouse stores the columns under those names and the
+    // ORM has to address them directly. SELECT aliases, on the other hand,
+    // are read by no one (CH aligns INSERT cols ↔ SELECT projection by
+    // position, not by name), so they default to the JS key. The
+    // ck-orm-side guarantee that makes "by name" alignment safe is that the
+    // INSERT list and SELECT projection share the same projection-key order
+    // — `userId` first, `dealTicket` second, `label` third — not that the
+    // two lists share textual aliases.
+    expect(normalizeSql(compiled.query)).toContain("insert into `fs_remap_target` (`user_id`, `deal_ticket`, `label`)");
+    expect(normalizeSql(compiled.query)).toContain(
+      "select `fs_remap_source`.`user_id` as `userId`, `fs_remap_source`.`deal_ticket` as `dealTicket`, `fs_remap_source`.`label` as `label` from `fs_remap_source`",
+    );
+  });
+
+  it("forwards paramTypes from the nested SELECT into the compiled insert.fromSelect output", function testInsertFromSelectParamTypes() {
+    const db = createQueryClient();
+    const compiled = db
+      .insert(orders)
+      .fromSelect(
+        db
+          .select({ id: orders.id, name: orders.name, amount: orders.amount })
+          .from(orders)
+          .where(inArray(orders.id, [10, 20, 30]), gte(orders.amount, 100)),
+      )
+      [compileQuerySymbol]();
+
+    // `inArray(col, [a,b,c])` expands into one parameter per element so the
+    // server can plan it like a literal IN; the trailing `gte` adds one more.
+    // The point of the assertion is that both the params *and* paramTypes
+    // for every position in the nested SELECT survive the outer INSERT wrap.
+    expect(compiled.params).toEqual({
+      orm_param1: 10,
+      orm_param2: 20,
+      orm_param3: 30,
+      orm_param4: 100,
+    });
+    expect(compiled.paramTypes).toEqual({
+      orm_param1: "Int32",
+      orm_param2: "Int32",
+      orm_param3: "Int32",
+      orm_param4: "Float64",
+    });
+  });
+
+  it("bubbles join_use_nulls=1 forcedSettings out of a leftJoin-bearing fromSelect", function testInsertFromSelectForcedSettings() {
+    const db = createQueryClient();
+    const compiled = db
+      .insert(orders)
+      .fromSelect(
+        db
+          .select({ id: orders.id, name: orders.name, amount: orders.amount })
+          .from(orders)
+          .leftJoin(taggedOrders, eq(orders.id, taggedOrders.id)),
+      )
+      [compileQuerySymbol]();
+
+    expect(compiled.forcedSettings).toEqual({ join_use_nulls: 1 });
+  });
+
+  it("preserves builder immutability — fromSelect returns a new builder without consuming the base", function testInsertBuilderImmutability() {
+    const base = createInsertBuilder(orders);
+    const sourceSelect = createSelectBuilder<{ id: number; name: string; amount: number }>({
+      selection: { id: orders.id, name: orders.name, amount: orders.amount },
+    }).from(orders);
+
+    // After `fromSelect()` the returned builder has the from_select state…
+    const fromSelectBuilder = base.fromSelect(sourceSelect as never);
+    expect(() => (fromSelectBuilder as { [compileQuerySymbol](): unknown })[compileQuerySymbol]()).not.toThrow();
+
+    // …but the original `base` builder must remain in `empty` state, so
+    // compiling it still throws the "no values or fromSelect" error.
+    expect(() => base[compileQuerySymbol]()).toThrow(
+      "insert() requires .values(rows) or .fromSelect(selectBuilder) before execute()",
+    );
+  });
+
+  it("preserves builder immutability for .values() — appending rows on the returned builder doesn't touch the base", function testInsertValuesBuilderImmutability() {
+    const base = createInsertBuilder(orders);
+    const oneRow = base.values({ id: 1, name: "alice", amount: 1 });
+    const compiledOne = buildCompiled(oneRow[compileQuerySymbol]());
+    expect(compiledOne.query).toContain("values ({orm_param1:Int32}, {orm_param2:String}, {orm_param3:Float64})");
+
+    // .values() on the original `base` should not see the row inserted into
+    // `oneRow`'s state — it must compile a fresh 1-row VALUES with the new
+    // payload only.
+    const otherRow = base.values({ id: 2, name: "bob", amount: 2 });
+    const compiledOther = buildCompiled(otherRow[compileQuerySymbol]());
+    expect(compiledOther.params).toEqual({
+      orm_param1: 2,
+      orm_param2: "bob",
+      orm_param3: 2,
+    });
+  });
+
+  it("nests a CTE chain inside insert.fromSelect — multiple $with stages survive the wrap", function testInsertFromSelectMultiStageCte() {
+    const db = createQueryClient();
+    const a = db.$with("stage_a").as(db.select({ id: orders.id }).from(orders));
+    const b = db.$with("stage_b").as(db.select({ id: orders.id, doubled: fn.multiply(orders.amount, 2) }).from(orders));
+
+    const compiled = buildCompiled(
+      db
+        .insert(orders)
+        .fromSelect(
+          db
+            .with(a, b)
+            .select({
+              id: a.id,
+              name: orders.name,
+              amount: b.doubled,
+            })
+            .from(a)
+            .innerJoin(orders, eq(a.id, orders.id))
+            .innerJoin(b, eq(a.id, b.id)),
+        )
+        [compileQuerySymbol](),
+    );
+
+    expect(normalizeSql(compiled.query)).toContain("insert into `orders` (`id`, `name`, `amount`) with `stage_a` as");
+    expect(normalizeSql(compiled.query)).toContain(", `stage_b` as");
+    expect(normalizeSql(compiled.query)).toContain("inner join `orders` on");
+    expect(normalizeSql(compiled.query)).toContain("inner join `stage_b`");
+  });
+
+  it("accepts a fromSelect whose source is a labelled subquery built via .as('alias')", function testInsertFromSelectSubqueryAsSource() {
+    const db = createQueryClient();
+    const sub = db
+      .select({ id: orders.id, name: orders.name, amount: orders.amount })
+      .from(orders)
+      .where(gt(orders.amount, 10))
+      .as("filtered_orders");
+
+    const compiled = buildCompiled(
+      db
+        .insert(orders)
+        .fromSelect(
+          db
+            .select({
+              id: sub.id,
+              name: sub.name,
+              amount: sub.amount,
+            })
+            .from(sub),
+        )
+        [compileQuerySymbol](),
+    );
+
+    expect(normalizeSql(compiled.query)).toContain("insert into `orders` (`id`, `name`, `amount`)");
+    expect(normalizeSql(compiled.query)).toContain("from (select");
+    expect(normalizeSql(compiled.query)).toContain(") as `filtered_orders`");
+    expect(normalizeSql(compiled.query)).toContain("where `orders`.`amount` > {orm_param1:Float64}");
+  });
+
+  it("rejects fromSelect when the target table is an alias", function testInsertFromSelectAliasTarget() {
+    expect(() => createInsertBuilder(ckAlias(orders, "o"))).toThrow(
+      "insert() requires a base table and does not accept aliased table targets",
+    );
+  });
+
+  it("rejects fromSelect projecting a non-column-ref expression into a nested target column", function testInsertFromSelectNestedExpressionRejected() {
+    const nestedTarget = ckTable("fs_nested_expr", {
+      id: int32(),
+      events: nested({
+        name: string(),
+        score: int32(),
+      }),
+    });
+    const db = createQueryClient();
+
+    // `orders.name` is a plain string column, not a nested column ref —
+    // ck-orm rejects this at compile time because a single SQL expression
+    // cannot fan out into the multiple parallel array fields a nested
+    // column expands to physically.
+    expect(() =>
+      createInsertBuilder(nestedTarget)
+        .fromSelect(
+          db
+            .select({
+              id: orders.id,
+              events: orders.name,
+            })
+            .from(orders) as never,
+        )
+        [compileQuerySymbol](),
+    ).toThrow('insert().fromSelect() projection for nested column "events" must be a direct nested column reference');
+  });
+
+  it("accepts fromSelect that omits an optional nested column on the target", function testInsertFromSelectNestedOmitted() {
+    const nestedTarget = ckTable("fs_nested_omit", {
+      id: int32(),
+      events: nested({
+        name: string(),
+        score: int32(),
+      }),
+    });
+    const db = createQueryClient();
+
+    // Nested column is optional in `$inferInsert` (Part A) — omit it from
+    // the projection, ClickHouse fills it with an empty parallel array
+    // server-side. Note: no `as never` cast — types accept this directly.
+    const compiled = buildCompiled(
+      createInsertBuilder(nestedTarget)
+        .fromSelect(db.select({ id: orders.id }).from(orders))
+        [compileQuerySymbol](),
+    );
+
+    expect(normalizeSql(compiled.query)).toContain("insert into `fs_nested_omit` (`id`)");
+    expect(normalizeSql(compiled.query)).not.toContain("`events`");
+  });
+
+  it("wraps an inner SELECT in a subquery and fans out nested column refs into dot-path projections", function testInsertFromSelectNestedFanOut() {
+    const fanOutSource = ckTable("fs_fan_out_src", {
+      id: int32(),
+      events: nested({
+        name: string(),
+        score: int32(),
+      }),
+    });
+    const fanOutTarget = ckTable("fs_fan_out_tgt", {
+      id: int32(),
+      events: nested({
+        name: string(),
+        score: int32(),
+      }),
+    });
+    const db = createQueryClient();
+
+    const compiled = buildCompiled(
+      createInsertBuilder(fanOutTarget)
+        .fromSelect(
+          db
+            .select({
+              id: fanOutSource.id,
+              events: fanOutSource.events,
+            })
+            .from(fanOutSource),
+        )
+        [compileQuerySymbol](),
+    );
+
+    const sqlText = normalizeSql(compiled.query);
+    // INSERT list expanded to dot-path identifiers (each segment quoted separately)
+    expect(sqlText).toContain("insert into `fs_fan_out_tgt` (`id`, `events`.`name`, `events`.`score`)");
+    // Outer SELECT projects dot-path columns from the inner wrap-subquery
+    expect(sqlText).toContain("`__ck_inner`.`id`, `__ck_inner`.`events`.`name`, `__ck_inner`.`events`.`score`");
+    expect(sqlText).toContain("from (select");
+    expect(sqlText).toContain(") as `__ck_inner`");
+  });
+
+  it("rejects fromSelect when the source nested shape is missing a target field", function testInsertFromSelectNestedShapeMismatch() {
+    const slimSource = ckTable("fs_slim_src", {
+      id: int32(),
+      events: nested({
+        name: string(),
+        // no `score` field on the source
+      }),
+    });
+    const wideTarget = ckTable("fs_wide_tgt", {
+      id: int32(),
+      events: nested({
+        name: string(),
+        score: int32(),
+      }),
+    });
+    const db = createQueryClient();
+
+    expect(() =>
+      createInsertBuilder(wideTarget)
+        .fromSelect(
+          db
+            .select({
+              id: slimSource.id,
+              events: slimSource.events,
+            })
+            .from(slimSource) as never,
+        )
+        [compileQuerySymbol](),
+    ).toThrow('insert().fromSelect() nested column "events" shape mismatch: target requires field "score"');
+  });
+
+  it("rejects fromSelect that targets a generated column even with the from_select alignment", function testInsertFromSelectGeneratedExplicit() {
+    const generatedTarget = ckTable(
+      "fs_generated_explicit",
+      {
+        id: int32(),
+        name: string(),
+        amount: float64(),
+        shardDay: int32("shard_day").materialized(sql`toYYYYMM(id)`),
+      },
+      (table) => ({
+        engine: "MergeTree",
+        orderBy: [table.id],
+      }),
+    );
+    const db = createQueryClient();
+
+    expect(() =>
+      createInsertBuilder(generatedTarget)
+        .fromSelect(
+          db
+            .select({
+              id: orders.id,
+              name: orders.name,
+              amount: orders.amount,
+              shardDay: orders.id,
+            })
+            .from(orders) as never,
+        )
+        [compileQuerySymbol](),
+    ).toThrow('insert().fromSelect() cannot target generated column "shardDay"');
+  });
+
+  it("flips the runtime nestedRequiredOnInsert flag on the column produced by .requiredOnInsert()", function testRequiredOnInsertRuntimeFlag() {
+    const base = nested({ name: string(), score: int32() });
+    expect(base.nestedRequiredOnInsert).toBeFalsy();
+
+    const refined = base.requiredOnInsert();
+    expect(refined.nestedRequiredOnInsert).toBe(true);
+    // The chain produces a fresh instance (so the flag participates in the
+    // insert table-metadata snapshot below).
+    expect(refined).not.toBe(base);
+
+    // Subsequent calls remain idempotent at the semantic level — the flag
+    // stays `true`. (Object identity changes again because each call rebuilds
+    // the column, but consumers care about the flag, not the instance.)
+    const refinedTwice = refined.requiredOnInsert();
+    expect(refinedTwice.nestedRequiredOnInsert).toBe(true);
+
+    // `requiredOnInsert()` on a non-nested column also sets the flag but
+    // has no effect downstream because the column has no `nestedShape` to
+    // be required about — exercises the chain method body for the
+    // non-nested path so coverage stays at 100%.
+    const stringColumn = string();
+    const stringChained = stringColumn.requiredOnInsert();
+    expect(stringChained.nestedRequiredOnInsert).toBe(true);
+    expect(stringChained.nestedShape).toBeUndefined();
+  });
+
+  it("enforces requiredOnInsert at runtime for insert.fromSelect (`as never` bypass cannot drop required nested data)", function testRequiredOnInsertRuntimeGuard() {
+    const sinkRequired = ckTable("fs_req_runtime_guard", {
+      id: int32(),
+      events: nested({ name: string(), score: int32() }).requiredOnInsert(),
+    });
+    const db = createQueryClient();
+
+    // The type guard would catch this at compile time; cast through `never`
+    // simulates a user who bypassed the type layer. Runtime must still
+    // refuse — otherwise the contract becomes "TS-only" and a stale
+    // forwarder could land silently incomplete rows.
+    expect(() =>
+      createInsertBuilder(sinkRequired)
+        .fromSelect(db.select({ id: orders.id }).from(orders) as never)
+        [compileQuerySymbol](),
+    ).toThrow("insert().fromSelect() select is missing required columns: events");
+  });
+
+  it("propagates nestedShape through CTE references so wrap-subquery still recognises them as nested column refs", function testInsertFromSelectNestedThroughCte() {
+    const nestedSource = ckTable("fs_cte_src", {
+      id: int32(),
+      events: nested({ name: string(), score: int32() }),
+    });
+    const nestedSink = ckTable("fs_cte_sink", {
+      id: int32(),
+      events: nested({ name: string(), score: int32() }),
+    });
+    const db = createQueryClient();
+
+    // The CTE projects the nested column through one level of indirection.
+    // `buildReferenceColumns` must propagate the source column's `nestedShape`
+    // onto the CTE reference, otherwise `compileInsertFromSelect` would see
+    // `kind: "expression"` without nested metadata and reject it.
+    const filtered = db
+      .$with("filtered")
+      .as(
+        db
+          .select({ id: nestedSource.id, events: nestedSource.events })
+          .from(nestedSource)
+          .where(gt(nestedSource.id, 0)),
+      );
+    const compiled = buildCompiled(
+      db
+        .with(filtered)
+        .insert(nestedSink)
+        .fromSelect(db.with(filtered).select({ id: filtered.id, events: filtered.events }).from(filtered))
+        [compileQuerySymbol](),
+    );
+
+    const sqlText = normalizeSql(compiled.query);
+    expect(sqlText).toContain("insert into `fs_cte_sink` (`id`, `events`.`name`, `events`.`score`)");
+    // Inner SELECT projects `filtered.events` as a single column; the outer
+    // wrap-subquery accesses `.name` / `.score` sub-fields via dot-path.
+    expect(sqlText).toContain("`__ck_inner`.`events`.`name`, `__ck_inner`.`events`.`score`");
+    expect(sqlText).toContain("with `filtered` as");
+  });
+
+  it("propagates nestedShape through .as('alias') subquery references", function testInsertFromSelectNestedThroughSubquery() {
+    const nestedSource = ckTable("fs_sub_src", {
+      id: int32(),
+      events: nested({ name: string(), score: int32() }),
+    });
+    const nestedSink = ckTable("fs_sub_sink", {
+      id: int32(),
+      events: nested({ name: string(), score: int32() }),
+    });
+    const db = createQueryClient();
+
+    // `.as("aliased")` wraps the select into a subquery whose columns are
+    // synthesised via `buildReferenceColumns`. The nested shape must survive
+    // that wrap so the outer fromSelect can pick it up.
+    const aliased = db.select({ id: nestedSource.id, events: nestedSource.events }).from(nestedSource).as("aliased");
+
+    const compiled = buildCompiled(
+      createInsertBuilder(nestedSink)
+        .fromSelect(db.select({ id: aliased.id, events: aliased.events }).from(aliased))
+        [compileQuerySymbol](),
+    );
+
+    const sqlText = normalizeSql(compiled.query);
+    expect(sqlText).toContain("insert into `fs_sub_sink` (`id`, `events`.`name`, `events`.`score`)");
+    expect(sqlText).toContain("`__ck_inner`.`events`.`name`, `__ck_inner`.`events`.`score`");
+    expect(sqlText).toContain("as `aliased`");
+  });
+
+  it("accepts a source nested shape that is a superset of the target", function testInsertFromSelectNestedSourceSuperset() {
+    // Source nested has more fields than target — target.fieldKeys ⊆
+    // source.fieldKeys, so the missing-field check at the start of the
+    // nested branch never trips. ClickHouse ignores the extra source field
+    // at the wire level.
+    const richSource = ckTable("fs_rich_src", {
+      id: int32(),
+      events: nested({
+        name: string(),
+        score: int32(),
+        tag: string(),
+      }),
+    });
+    const slimTarget = ckTable("fs_slim_tgt", {
+      id: int32(),
+      events: nested({
+        name: string(),
+        score: int32(),
+      }),
+    });
+    const db = createQueryClient();
+
+    const compiled = buildCompiled(
+      createInsertBuilder(slimTarget)
+        .fromSelect(db.select({ id: richSource.id, events: richSource.events }).from(richSource) as never)
+        [compileQuerySymbol](),
+    );
+
+    const sqlText = normalizeSql(compiled.query);
+    expect(sqlText).toContain("insert into `fs_slim_tgt` (`id`, `events`.`name`, `events`.`score`)");
+    // Only `name` and `score` are projected on the outer SELECT — the source
+    // `tag` field is intentionally dropped by ck-orm because the target has
+    // no slot for it.
+    expect(sqlText).toContain("`__ck_inner`.`events`.`name`, `__ck_inner`.`events`.`score`");
+    expect(sqlText).not.toContain("`__ck_inner`.`events`.`tag`");
+  });
+
+  it("supports two nested columns side-by-side in one fromSelect projection", function testInsertFromSelectMultipleNestedColumns() {
+    const dualSource = ckTable("fs_dual_src", {
+      id: int32(),
+      lineItems: nested({ sku: string(), qty: int32() }),
+      statusHistory: nested({ status: string(), at: int32() }),
+    });
+    const dualSink = ckTable("fs_dual_sink", {
+      id: int32(),
+      lineItems: nested({ sku: string(), qty: int32() }),
+      statusHistory: nested({ status: string(), at: int32() }),
+    });
+    const db = createQueryClient();
+
+    const compiled = buildCompiled(
+      createInsertBuilder(dualSink)
+        .fromSelect(
+          db
+            .select({
+              id: dualSource.id,
+              lineItems: dualSource.lineItems,
+              statusHistory: dualSource.statusHistory,
+            })
+            .from(dualSource),
+        )
+        [compileQuerySymbol](),
+    );
+
+    const sqlText = normalizeSql(compiled.query);
+    // Both nested columns expand independently and stay adjacent in their
+    // projection-key order.
+    expect(sqlText).toContain(
+      "insert into `fs_dual_sink` (`id`, `lineItems`.`sku`, `lineItems`.`qty`, `statusHistory`.`status`, `statusHistory`.`at`)",
+    );
+    expect(sqlText).toContain(
+      "`__ck_inner`.`id`, `__ck_inner`.`lineItems`.`sku`, `__ck_inner`.`lineItems`.`qty`, `__ck_inner`.`statusHistory`.`status`, `__ck_inner`.`statusHistory`.`at`",
+    );
+  });
+
+  it("rejects compiling an explicit empty-rows values() state", function testInsertValuesEmptyRowsRejected() {
+    // Direct construction with `{ kind: "values", rows: [] }` bypasses the
+    // public `.values(...)` factory (which normalises to non-empty rows).
+    // The compile path must still surface the 0-row guard so a stale builder
+    // can't accidentally produce an empty INSERT statement.
+    const empty = createInsertBuilder(orders, undefined, { kind: "values", rows: [] });
+    expect(() => empty[compileQuerySymbol]()).toThrow(
+      "insert().values() must be called with at least one row before execute()",
+    );
   });
 });

@@ -20,6 +20,7 @@ import {
   type Decoder,
   type Encoder,
   type InferData,
+  type NestedColumnBrand,
   type SqlExpression,
 } from "./query-shared";
 import { type SQLFragment, sql, trustSqlExpressionObject } from "./sql";
@@ -60,6 +61,11 @@ export interface Column<
   readonly ddl?: ColumnDdlConfig;
   readonly decimalConfig?: DecimalParams;
   readonly nestedShape?: Record<string, AnyColumn>;
+  // Runtime mirror of `NestedColumnBrand`'s `TRequiredOnInsert`. Only set when
+  // `.requiredOnInsert()` has been called; consumed by `compileInsertFromSelect`
+  // to surface a runtime error when a `as never`-bypass leaves a
+  // requiredOnInsert nested column missing from the projection.
+  readonly nestedRequiredOnInsert?: boolean;
   mapToDriverValue(value: TData): unknown;
   mapFromDriverValue(value: unknown): TData;
   cast(precision: number, scale: number): SQLFragment<string>;
@@ -68,26 +74,64 @@ export interface Column<
   ): Column<TData, TSqlType, TNextTableName, TNextTableAlias>;
   default(
     expression: DdlFragmentInput,
-  ): Column<TData, TSqlType, TTableName, TTableAlias> & ColumnIoMarker<TData, false, true>;
+  ): PreserveNestedBrand<
+    this,
+    TData,
+    Column<TData, TSqlType, TTableName, TTableAlias> & ColumnIoMarker<TData, false, true>
+  >;
   materialized(
     expression: DdlFragmentInput,
   ): Column<TData, TSqlType, TTableName, TTableAlias> & ColumnIoMarker<never, true, false>;
   aliasExpr(
     expression: DdlFragmentInput,
   ): Column<TData, TSqlType, TTableName, TTableAlias> & ColumnIoMarker<never, true, false>;
-  comment(text: string): Column<TData, TSqlType, TTableName, TTableAlias>;
-  codec(expression: DdlFragmentInput): Column<TData, TSqlType, TTableName, TTableAlias>;
-  ttl(expression: DdlFragmentInput): Column<TData, TSqlType, TTableName, TTableAlias>;
-  $type<TIo extends { select: unknown; insert?: unknown }>(): Column<TIo["select"], TSqlType, TTableName, TTableAlias> &
-    ColumnIoMarker<TIo extends { insert: infer I } ? I : TIo["select"], false, false>;
-  $type<TNext>(): Column<TNext, TSqlType, TTableName, TTableAlias>;
+  comment(text: string): PreserveNestedBrand<this, TData, Column<TData, TSqlType, TTableName, TTableAlias>>;
+  codec(
+    expression: DdlFragmentInput,
+  ): PreserveNestedBrand<this, TData, Column<TData, TSqlType, TTableName, TTableAlias>>;
+  ttl(expression: DdlFragmentInput): PreserveNestedBrand<this, TData, Column<TData, TSqlType, TTableName, TTableAlias>>;
+  $type<TIo extends { select: unknown; insert?: unknown }>(): PreserveNestedBrand<
+    this,
+    TIo extends { insert: infer I } ? I : TIo["select"],
+    Column<TIo["select"], TSqlType, TTableName, TTableAlias> &
+      ColumnIoMarker<TIo extends { insert: infer I } ? I : TIo["select"], false, false>
+  >;
+  $type<TNext>(): PreserveNestedBrand<this, TNext, Column<TNext, TSqlType, TTableName, TTableAlias>>;
   $validator<TSchema extends StandardSchemaV1<unknown, unknown>>(
     schema: TSchema,
-  ): Column<InferStandardSchemaOutput<TSchema>, TSqlType, TTableName, TTableAlias> &
-    ColumnIoMarker<InferStandardSchemaInput<TSchema>, false, false>;
+  ): PreserveNestedBrand<
+    this,
+    InferStandardSchemaInput<TSchema>,
+    Column<InferStandardSchemaOutput<TSchema>, TSqlType, TTableName, TTableAlias> &
+      ColumnIoMarker<InferStandardSchemaInput<TSchema>, false, false>
+  >;
+  /**
+   * Opt a `nested(...)` column back into "required on insert" at the type
+   * layer. The default for nested columns is optional in `$inferInsert`
+   * because ck-orm encodes a missing value as SQL `DEFAULT` (ClickHouse fills
+   * an empty parallel array), but business code may want the TS layer to
+   * enforce that nested data is always supplied.
+   *
+   * Calling `requiredOnInsert()` on a non-nested column is a runtime no-op
+   * and a type-level intersection with an unused `NestedColumnBrand<TData,
+   * true>` — harmless but pointless. The intended use is exclusively on
+   * `ckType.nested(...)` columns.
+   */
+  requiredOnInsert(): Column<TData, TSqlType, TTableName, TTableAlias> & NestedColumnBrand<TData, true>;
 }
 
 export type AnyColumn = Column<unknown, string, string | undefined, string | undefined>;
+
+// Internal helper for column-chain methods: when the column being chained off
+// carries a `NestedColumnBrand`, intersect a fresh `NestedColumnBrand<TNewInsert,
+// TRequiredOnInsert>` onto `TBase`. This keeps the nested-optional brand
+// sticky through `.default()` / `.$type()` / `.$validator()` chains, which
+// historically reset `ColumnIoMarker` and would otherwise flip nested
+// columns back to "required on insert".
+type PreserveNestedBrand<TSelf, TNewInsert, TBase> =
+  TSelf extends NestedColumnBrand<unknown, infer TRequiredOnInsert>
+    ? TBase & NestedColumnBrand<TNewInsert, TRequiredOnInsert>
+    : TBase;
 
 export type DdlFragmentInput = string | SQLFragment<unknown>;
 
@@ -110,6 +154,11 @@ type ColumnFactoryConfig<TData, TSqlType extends string> = {
   readonly nestedShape?: Record<string, AnyColumn>;
   readonly rejectObjectInput?: boolean;
   readonly validator?: StandardSchemaV1<unknown, unknown>;
+  // Runtime mirror of `NestedColumnBrand`'s TRequiredOnInsert. Set to `true`
+  // by `Column.requiredOnInsert()` so the insert compile path (specifically
+  // `compileInsertFromSelect`'s required-column scan) can enforce the user's
+  // business contract even when the type guard was bypassed with `as never`.
+  readonly nestedRequiredOnInsert?: boolean;
 };
 
 const identity = <TData>(value: TData) => value;
@@ -618,6 +667,7 @@ const createColumnFactory = <
     ddl: config.ddl,
     decimalConfig: config.decimalConfig,
     nestedShape: config.nestedShape,
+    nestedRequiredOnInsert: config.nestedRequiredOnInsert,
     // Direct reference — no extra forwarding closure on the per-row decode
     // loop. Wide tables decoding millions of rows skip a function call per
     // column-cell.
@@ -688,6 +738,17 @@ const createColumnFactory = <
     $type<TNext>() {
       return createColumnFactory<TNext, TSqlType, TTableName, TTableAlias>(
         config as unknown as ColumnFactoryConfig<TNext, TSqlType>,
+        binding,
+      );
+    },
+    // `requiredOnInsert()` flips the runtime mirror of `NestedColumnBrand`'s
+    // `TRequiredOnInsert` parameter so the insert compile path can enforce
+    // the user's business contract even when the type-layer guard was
+    // bypassed with `as never`. We rebuild the column via `createColumnFactory`
+    // so the flag becomes a stable field on the new instance.
+    requiredOnInsert() {
+      return createColumnFactory<TData, TSqlType, TTableName, TTableAlias>(
+        { ...config, nestedRequiredOnInsert: true },
         binding,
       );
     },
@@ -858,21 +919,25 @@ export interface JsonColumn<
   // erases back to plain `Column`; the runtime path methods are still
   // attached and callable (verified in tests), but you need a type
   // assertion if you want to use them through the static type.
-  $type<TIo extends { select: JsonShape; insert?: unknown }>(): JsonColumn<TIo["select"], TTableName, TTableAlias> &
-    ColumnIoMarker<TIo extends { insert: infer I } ? I : TIo["select"], false, false>;
-  $type<TNext extends JsonShape>(): JsonColumn<TNext, TTableName, TTableAlias>;
+  $type<TIo extends { select: JsonShape; insert?: unknown }>(): PreserveNestedBrand<
+    this,
+    TIo extends { insert: infer I } ? I : TIo["select"],
+    JsonColumn<TIo["select"], TTableName, TTableAlias> &
+      ColumnIoMarker<TIo extends { insert: infer I } ? I : TIo["select"], false, false>
+  >;
+  $type<TNext extends JsonShape>(): PreserveNestedBrand<this, TNext, JsonColumn<TNext, TTableName, TTableAlias>>;
   default(
     expression: DdlFragmentInput,
-  ): JsonColumn<TData, TTableName, TTableAlias> & ColumnIoMarker<TData, false, true>;
+  ): PreserveNestedBrand<this, TData, JsonColumn<TData, TTableName, TTableAlias> & ColumnIoMarker<TData, false, true>>;
   materialized(
     expression: DdlFragmentInput,
   ): JsonColumn<TData, TTableName, TTableAlias> & ColumnIoMarker<never, true, false>;
   aliasExpr(
     expression: DdlFragmentInput,
   ): JsonColumn<TData, TTableName, TTableAlias> & ColumnIoMarker<never, true, false>;
-  comment(text: string): JsonColumn<TData, TTableName, TTableAlias>;
-  codec(expression: DdlFragmentInput): JsonColumn<TData, TTableName, TTableAlias>;
-  ttl(expression: DdlFragmentInput): JsonColumn<TData, TTableName, TTableAlias>;
+  comment(text: string): PreserveNestedBrand<this, TData, JsonColumn<TData, TTableName, TTableAlias>>;
+  codec(expression: DdlFragmentInput): PreserveNestedBrand<this, TData, JsonColumn<TData, TTableName, TTableAlias>>;
+  ttl(expression: DdlFragmentInput): PreserveNestedBrand<this, TData, JsonColumn<TData, TTableName, TTableAlias>>;
   bind<TNextTableName extends string, TNextTableAlias extends string | undefined = undefined>(
     binding: ColumnBinding<TNextTableName, TNextTableAlias>,
   ): JsonColumn<TData, TNextTableName, TNextTableAlias>;
@@ -1442,12 +1507,43 @@ export function lowCardinality<TInner extends AnyColumn>(
     decimalConfig: inner.decimalConfig,
   });
 }
-export function nested<TShape extends Record<string, AnyColumn>>(shape: TShape): NestedColumn<TShape>;
-export function nested<TShape extends Record<string, AnyColumn>>(name: string, shape: TShape): NestedColumn<TShape>;
+/**
+ * ClickHouse `Nested(...)` type — a parallel-array structure that looks like
+ * an `Array<{...}>` on the JS side but is stored as N parallel `Array(T)`
+ * physical columns server-side.
+ *
+ * **Insert model**: nested columns are **optional** in `$inferInsert`. This
+ * is a ck-orm convenience — the ClickHouse schema has no explicit DEFAULT
+ * clause; ck-orm simply emits `DEFAULT` in the INSERT statement when the
+ * value is missing, and ClickHouse fills an empty array for every parallel
+ * field. To require a value at the type layer, call `.requiredOnInsert()`.
+ *
+ * **fromSelect**: nested columns support two modes:
+ * 1. Omit the nested key from the SELECT projection — ClickHouse fills the
+ *    target's empty parallel arrays server-side. This is the simplest mode.
+ * 2. Project a direct nested-column reference (e.g.
+ *    `select({ events: src.events })`) — ck-orm wraps the SELECT in a
+ *    subquery and rewrites the outer projection to dot-path access on each
+ *    nested field, so the target's physical fields receive their data
+ *    without round-tripping through the JS process.
+ *
+ * What is **not** supported: projecting a computed expression into a nested
+ * column (e.g. `select({ events: fn.multiIf(...) })`). A single SQL
+ * expression cannot populate the multiple parallel array fields. ck-orm
+ * surfaces a friendly error and points callers at `.values(...)` /
+ * `.insertJsonEachRow(...)` for row-wise computed insertion.
+ */
+export function nested<TShape extends Record<string, AnyColumn>>(
+  shape: TShape,
+): NestedColumn<TShape> & NestedColumnBrand<{ [K in keyof TShape]: InferData<TShape[K]> }[]>;
+export function nested<TShape extends Record<string, AnyColumn>>(
+  name: string,
+  shape: TShape,
+): NestedColumn<TShape> & NestedColumnBrand<{ [K in keyof TShape]: InferData<TShape[K]> }[]>;
 export function nested<TShape extends Record<string, AnyColumn>>(
   first: string | TShape,
   second?: TShape,
-): NestedColumn<TShape> {
+): NestedColumn<TShape> & NestedColumnBrand<{ [K in keyof TShape]: InferData<TShape[K]> }[]> {
   const { name, value: shape } = parseNamedValue<TShape>("nested", first, second);
   // `shape` is fixed for the lifetime of this column. Captures the entries
   // here so the encode/decode hot loops never re-walk `Object.entries(shape)`
@@ -1500,7 +1596,7 @@ export function nested<TShape extends Record<string, AnyColumn>>(
         }
         return record;
       }),
-  });
+  }) as NestedColumn<TShape> & NestedColumnBrand<{ [K in keyof TShape]: InferData<TShape[K]> }[]>;
 }
 export function aggregateFunction<TData = string>(
   name: string,

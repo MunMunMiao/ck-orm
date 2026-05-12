@@ -24,6 +24,8 @@ declare const sourceKeyBrand: unique symbol;
 declare const insertDataBrand: unique symbol;
 declare const isGeneratedBrand: unique symbol;
 declare const hasDefaultBrand: unique symbol;
+declare const nestedColumnBrand: unique symbol;
+declare const nestedRequiredBrand: unique symbol;
 
 export type Decoder<TData> = (value: unknown) => TData;
 
@@ -58,6 +60,26 @@ export type IsColumnGenerated<TValue> =
 
 export type ColumnHasDefault<TValue> =
   TValue extends ColumnIoMarker<unknown, boolean, infer D> ? (D extends true ? true : false) : false;
+
+// Phantom marker carrying nested-column insert data. Set by `ckType.nested()`
+// and preserved across every column-chain method (`.default` / `.$type` /
+// `.$validator` / etc) because it uses unique symbols orthogonal to
+// `ColumnIoMarker`. Drives `RequiredInsertKeys` to treat nested columns as
+// optional on insert by default — mirroring the runtime where a missing
+// nested value becomes ClickHouse's empty parallel array.
+//
+// `TRequiredOnInsert` is flipped to `true` by `Column.requiredOnInsert()` for
+// callers who want a business-level "must supply nested data" guard at the
+// type layer.
+export interface NestedColumnBrand<TInsert = unknown, TRequiredOnInsert extends boolean = false> {
+  readonly [nestedColumnBrand]?: TInsert;
+  readonly [nestedRequiredBrand]?: TRequiredOnInsert;
+}
+
+export type IsNestedColumn<TValue> = TValue extends NestedColumnBrand<unknown, boolean> ? true : false;
+
+export type IsNestedRequiredOnInsert<TValue> =
+  TValue extends NestedColumnBrand<unknown, infer R> ? (R extends true ? true : false) : false;
 
 export interface Selection<TData = unknown, TSourceKey extends string | undefined = string | undefined>
   extends TypedValue<TData> {

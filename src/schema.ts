@@ -2,7 +2,14 @@ import type { AnyColumn, Column, DdlFragmentInput, JsonColumn, JsonShape } from 
 import { createClientValidationError } from "./errors";
 import { isColumnLike } from "./internal/column";
 import { assertValidSqlIdentifier } from "./internal/identifier";
-import type { ColumnHasDefault, ColumnIoMarker, IsColumnGenerated } from "./query-shared";
+import type {
+  ColumnHasDefault,
+  ColumnIoMarker,
+  IsColumnGenerated,
+  IsNestedColumn,
+  IsNestedRequiredOnInsert,
+  NestedColumnBrand,
+} from "./query-shared";
 import { type SQLFragment, sql } from "./sql";
 
 type InferSelect<TColumns extends Record<string, AnyColumn>> = {
@@ -12,36 +19,66 @@ type InferSelect<TColumns extends Record<string, AnyColumn>> = {
 // Pull the insert-side TData out of a column. Defaults to the column's select
 // TData when the user hasn't called `.$type<{select, insert}>()` to diverge
 // the two — every `Column<X, ...>` already extends `ColumnIoMarker<X, false,
-// false>` so the brand is always populated.
-type InsertDataOf<TColumn> =
-  TColumn extends ColumnIoMarker<infer TInsert, boolean, boolean>
-    ? TInsert
-    : TColumn extends Column<infer TData, string>
-      ? TData
-      : never;
+// false>` so the brand is always populated. Nested columns carry a separate
+// `NestedColumnBrand<TInsert, ...>` because their insert shape (`Array<{...}>`)
+// must survive `.$type` / `.$validator` chains that otherwise reset
+// `ColumnIoMarker`.
+/** @internal */
+export type InsertDataOf<TColumn> =
+  TColumn extends NestedColumnBrand<infer TNestedInsert, boolean>
+    ? TNestedInsert
+    : TColumn extends ColumnIoMarker<infer TInsert, boolean, boolean>
+      ? TInsert
+      : TColumn extends Column<infer TData, string>
+        ? TData
+        : never;
 
-type RequiredInsertKeys<TColumns extends Record<string, AnyColumn>> = {
+// `RequiredInsertKeys` order matters: nested columns are checked *before*
+// `ColumnHasDefault` so that `.$type`/`.$validator` chains (which reset
+// `ColumnIoMarker` back to `<…, false, false>`) cannot flip a nested column
+// back to required. Only `.requiredOnInsert()` (Part C) deliberately opts
+// nested back into required via `IsNestedRequiredOnInsert`.
+/** @internal */
+export type RequiredInsertKeys<TColumns extends Record<string, AnyColumn>> = {
   [K in keyof TColumns]: IsColumnGenerated<TColumns[K]> extends true
     ? never
-    : ColumnHasDefault<TColumns[K]> extends true
-      ? never
-      : K;
+    : IsNestedColumn<TColumns[K]> extends true
+      ? IsNestedRequiredOnInsert<TColumns[K]> extends true
+        ? K
+        : never
+      : ColumnHasDefault<TColumns[K]> extends true
+        ? never
+        : K;
 }[keyof TColumns];
 
-type OptionalInsertKeys<TColumns extends Record<string, AnyColumn>> = {
+/** @internal */
+export type OptionalInsertKeys<TColumns extends Record<string, AnyColumn>> = {
   [K in keyof TColumns]: IsColumnGenerated<TColumns[K]> extends true
     ? never
-    : ColumnHasDefault<TColumns[K]> extends true
-      ? K
-      : never;
+    : IsNestedColumn<TColumns[K]> extends true
+      ? IsNestedRequiredOnInsert<TColumns[K]> extends true
+        ? never
+        : K
+      : ColumnHasDefault<TColumns[K]> extends true
+        ? K
+        : never;
 }[keyof TColumns];
+
+/** @internal */
+export type AllInsertableKeys<TColumns extends Record<string, AnyColumn>> =
+  | RequiredInsertKeys<TColumns>
+  | OptionalInsertKeys<TColumns>;
 
 // Flatten intersection types into a single object type so structural equality
 // helpers (`Equal<A, B>`) compare cleanly against the analogous select model.
 type Flatten<T> = T extends infer U ? { [K in keyof U]: U[K] } : never;
 
-// Insert model: drop MATERIALIZED / ALIAS columns entirely, make DEFAULT
-// columns optional, and use the per-column insert TData for the rest.
+// Insert model: drop MATERIALIZED / ALIAS columns entirely, make DEFAULT and
+// `nested(...)` columns optional, and use the per-column insert TData for the
+// rest. Nested columns are optional because ck-orm encodes a missing value as
+// SQL `DEFAULT`, which ClickHouse expands into an empty parallel array — there
+// is no explicit DEFAULT clause on the schema side. Use `.requiredOnInsert()`
+// to opt back into required at the type layer.
 type InferInsert<TColumns extends Record<string, AnyColumn>> = Flatten<
   {
     [K in RequiredInsertKeys<TColumns>]: InsertDataOf<TColumns[K]>;
@@ -59,6 +96,12 @@ type BoundColumns<
   // / `arrayPath` methods that must survive binding — intersect the bound
   // column shape with `Pick<JsonColumn<T>, ...>` so the methods reappear
   // alongside the new `TTableName` / `TTableAlias` sourceKey.
+  //
+  // `NestedColumnBrand` (set by `ckType.nested(...)`) must also survive
+  // binding, otherwise `RequiredInsertKeys` would lose track of nested
+  // columns after `bindColumns` rebinds them to a specific table. The brand
+  // is intersected back in via a dedicated `NestedColumnBrand` extends-branch
+  // below.
   [K in keyof TColumns]: TColumns[K] extends JsonColumn<infer TJsonData>
     ? TColumns[K] extends ColumnIoMarker<infer TInsert, infer TGen, infer THas>
       ? Column<TJsonData, string, TTableName, TTableAlias> &
@@ -66,11 +109,19 @@ type BoundColumns<
           ColumnIoMarker<TInsert, TGen, THas>
       : Column<TJsonData, string, TTableName, TTableAlias> &
           Pick<JsonColumn<TJsonData>, "path" | "castPath" | "subobject" | "merged" | "arrayPath">
-    : TColumns[K] extends Column<infer TData, infer TSqlType, string | undefined, string | undefined>
-      ? TColumns[K] extends ColumnIoMarker<infer TInsert, infer TGen, infer THas>
-        ? Column<TData, TSqlType, TTableName, TTableAlias> & ColumnIoMarker<TInsert, TGen, THas>
-        : Column<TData, TSqlType, TTableName, TTableAlias>
-      : never;
+    : TColumns[K] extends NestedColumnBrand<infer TNestedInsert, infer TNestedRequired>
+      ? TColumns[K] extends Column<infer TData, infer TSqlType, string | undefined, string | undefined>
+        ? TColumns[K] extends ColumnIoMarker<infer TInsert, infer TGen, infer THas>
+          ? Column<TData, TSqlType, TTableName, TTableAlias> &
+              NestedColumnBrand<TNestedInsert, TNestedRequired> &
+              ColumnIoMarker<TInsert, TGen, THas>
+          : Column<TData, TSqlType, TTableName, TTableAlias> & NestedColumnBrand<TNestedInsert, TNestedRequired>
+        : never
+      : TColumns[K] extends Column<infer TData, infer TSqlType, string | undefined, string | undefined>
+        ? TColumns[K] extends ColumnIoMarker<infer TInsert, infer TGen, infer THas>
+          ? Column<TData, TSqlType, TTableName, TTableAlias> & ColumnIoMarker<TInsert, TGen, THas>
+          : Column<TData, TSqlType, TTableName, TTableAlias>
+        : never;
 };
 
 // Internal compile-time guard: `JsonShape` re-exported here only to keep the
