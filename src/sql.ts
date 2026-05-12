@@ -509,6 +509,14 @@ export const compileSql = (statement: SQLFragment<unknown>, initialContext?: Par
     paramTypes: { ...(initialContext?.paramTypes ?? {}) },
     nextParamIndex: initialContext?.nextParamIndex ?? 0,
   };
+  // Forward symbol-keyed metadata (e.g. ck-orm's per-compile bare-builder /
+  // anonymous-CTE alias state) so deferred lazy refs evaluated during this
+  // inner compile resolve against the same state the prebuild phase used.
+  if (initialContext) {
+    for (const sym of Object.getOwnPropertySymbols(initialContext)) {
+      (ctx as unknown as Record<symbol, unknown>)[sym] = (initialContext as unknown as Record<symbol, unknown>)[sym];
+    }
+  }
   const query = statement[compileSqlSymbol](ctx);
   return {
     query,

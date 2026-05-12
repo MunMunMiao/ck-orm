@@ -123,16 +123,24 @@ type CompileState = {
 };
 const compileStateStackStore = new WeakMap<BuildContext, CompileState[]>();
 
-// Per-compile state for bare-SelectBuilder subqueries. Keyed by
-// BuildContext so each top-level compile gets its own numbering, snapshot
-// tests stay stable, and entries GC with the context. Same pattern as
-// `compileStateStackStore` above.
+// Per-compile state for bare-SelectBuilder subqueries and anonymous CTEs.
+// Each top-level compile gets its own numbering, snapshot tests stay
+// stable, and entries GC with the context.
+//
+// The state is attached to the BuildContext as an enumerable own symbol
+// property (not a WeakMap<ctx, state>): when `compileSql` spreads the
+// caller's ctx into a fresh inner ctx, the symbol property goes along for
+// the ride, so deferred lazy refs (e.g. `${cte.col}` embedded in a sql
+// template via `wrapSql`) resolve against the same state during the inner
+// compile phase that prebuild used.
 type BareBuilderCtxState = {
   counter: number;
   aliases: WeakMap<AnySelectBuilder, string>;
   usedAsSource: WeakSet<AnySelectBuilder>;
+  cteCounter: number;
+  cteAliases: WeakMap<AnyCte, string>;
 };
-const bareBuilderCtxState = new WeakMap<BuildContext, BareBuilderCtxState>();
+const bareBuilderStateSymbol = Symbol("clickhouseORMBareBuilderState");
 
 export const compileWithContextSymbol = Symbol("clickhouseORMCompileWithContext");
 export const compileQuerySymbol = Symbol("clickhouseORMCompileQuery");
@@ -330,11 +338,21 @@ const defineHidden = <T extends object>(target: T, key: PropertyKey, value: unkn
 };
 
 const getBareBuilderState = (ctx: BuildContext): BareBuilderCtxState => {
-  let state = bareBuilderCtxState.get(ctx);
-  if (!state) {
-    state = { counter: 0, aliases: new WeakMap(), usedAsSource: new WeakSet() };
-    bareBuilderCtxState.set(ctx, state);
-  }
+  const ctxWithState = ctx as BuildContext & { [bareBuilderStateSymbol]?: BareBuilderCtxState };
+  const existing = ctxWithState[bareBuilderStateSymbol];
+  if (existing) return existing;
+  const state: BareBuilderCtxState = {
+    counter: 0,
+    aliases: new WeakMap(),
+    usedAsSource: new WeakSet(),
+    cteCounter: 0,
+    cteAliases: new WeakMap(),
+  };
+  // Assign via direct property write so the field is enumerable: own
+  // symbol-keyed enumerable properties get carried across `compileSql`'s
+  // `{ ...initialContext }` spread, keeping prebuild and inner-compile
+  // resolutions on the same state.
+  ctxWithState[bareBuilderStateSymbol] = state;
   return state;
 };
 
@@ -344,6 +362,44 @@ const resolveAutoSubqueryAlias = (ctx: BuildContext, builder: AnySelectBuilder):
   if (cached) return cached;
   const alias = `__sub_${++state.counter}`;
   state.aliases.set(builder, alias);
+  return alias;
+};
+
+// CTE object's own fields. Column refs sharing these keys would otherwise
+// overwrite the CTE's `name`/`kind`/etc via the auto-attach loop and break
+// SQL rendering (e.g. `db.$with("t").as(db.select({ name: ... }))` —
+// without this guard, `cte.name` becomes the column expression and
+// `sql.identifier(cte.name)` fails). The collision keys keep their CTE
+// meaning; the column ref stays available via `cte.columns[key]`.
+const FORBIDDEN_CTE_COLUMN_KEYS = {
+  kind: true,
+  name: true,
+  query: true,
+  columns: true,
+} as const satisfies Record<string, true>;
+
+// Attaches each column ref as a non-enumerable own property of the CTE
+// object, skipping keys that collide with the CTE's own fields. Mirrors
+// the bare-SelectBuilder auto-attach loop in `createSelectBuilder`.
+const attachCteColumnRefs = (cte: AnyCte, columns: SourceColumns): void => {
+  for (const key of Object.keys(columns)) {
+    if (key in FORBIDDEN_CTE_COLUMN_KEYS) continue;
+    defineHidden(cte, key, columns[key]);
+  }
+};
+
+// Anonymous CTEs (no user-supplied name) — alias resolved at compile time
+// like bare subqueries. WeakMap-cached so the same CTE renders as the
+// same `__cte_N` across `renderCtes` (WITH definition) and `renderSource`
+// (FROM/JOIN reference) within one compile. CTEs intentionally lack the
+// `usedAsSource` first-use check: SQL allows referencing a CTE multiple
+// times.
+const resolveAnonymousCteAlias = (ctx: BuildContext, cte: AnyCte): string => {
+  const state = getBareBuilderState(ctx);
+  const cached = state.cteAliases.get(cte);
+  if (cached) return cached;
+  const alias = `__cte_${++state.cteCounter}`;
+  state.cteAliases.set(cte, alias);
   return alias;
 };
 
@@ -698,22 +754,20 @@ const createReferenceExpression = <TData, TSourceKey extends string>(
   return expression;
 };
 
-// Column refs on a bare (un-aliased) SelectBuilder. The alias isn't known
-// until compile time — we resolve it per BuildContext so the same builder
-// always renders as the same `__sub_N` within one compile and the column
-// ref's `alias.column` prefix stays consistent with the source's alias.
-// sourceKey is deliberately omitted — bare-builder source keys aren't known
-// until compile time; nullable propagation for left-joined bare builders is
-// not supported in this pass (would require a stable per-builder identity
-// string separate from the SQL alias).
-const createBareBuilderReferenceExpression = <TData>(
-  owningBuilder: AnySelectBuilder,
+// Column refs whose SQL alias isn't known until compile time (bare
+// SelectBuilder subqueries, anonymous CTEs). The resolver closure looks up
+// the per-BuildContext alias so `subq.x` / `cte.x` and the source's WITH
+// definition / FROM rendering all share the same `__sub_N` / `__cte_N`.
+// sourceKey is deliberately omitted — without a stable string key, callers
+// that rely on it (nullable-join tracking) skip these refs.
+const createLazyAliasReferenceExpression = <TData>(
+  resolveAlias: (ctx: BuildContext) => string,
   columnName: string,
   decoder: Decoder<TData>,
   sqlType?: string,
 ): SqlSelection<TData, string> =>
   createExpression<TData, string>({
-    compile: (ctx) => sql.identifier({ table: resolveAutoSubqueryAlias(ctx, owningBuilder), column: columnName }),
+    compile: (ctx) => sql.identifier({ table: resolveAlias(ctx), column: columnName }),
     decoder,
     sqlType,
   });
@@ -766,7 +820,7 @@ const renderSource = (source: AnySource, ctx: BuildContext): SQLFragment => {
     case "subquery":
       return sql`${SQL_OPEN_PAREN}${sql.raw(compileNestedQuery(source.query, ctx).statement)}${SQL_PAREN_AS}${sql.identifier(source.alias)}`;
     case "cte":
-      return sql.identifier(source.name);
+      return sql.identifier(source.name ?? resolveAnonymousCteAlias(ctx, source));
     case "table-function":
       return source.compileSource(ctx);
   }
@@ -844,6 +898,9 @@ const getSourceKey = (source: AnySource): string | undefined => {
     case "subquery":
       return source.alias;
     case "cte":
+      // Anonymous CTEs resolve their alias at compile time inside a
+      // BuildContext (same constraint as bare builders above). Callers
+      // that need a stable string source key skip anonymous CTEs.
       return source.name;
     case "table-function":
       return source.alias;
@@ -1005,7 +1062,8 @@ const renderCtes = (ctes: readonly AnyCte[], ctx: BuildContext): SQLFragment | u
   }
 
   const cteParts = ctes.map((cte) => {
-    return sql`${sql.identifier(cte.name)}${SQL_AS_OPEN}${sql.raw(compileNestedQuery(cte.query, ctx).statement)}${SQL_CLOSE_PAREN}`;
+    const effectiveName = cte.name ?? resolveAnonymousCteAlias(ctx, cte);
+    return sql`${sql.identifier(effectiveName)}${SQL_AS_OPEN}${sql.raw(compileNestedQuery(cte.query, ctx).statement)}${SQL_CLOSE_PAREN}`;
   });
 
   return sql`${SQL_WITH}${joinSqlParts(cteParts, ", ")}`;
@@ -1890,7 +1948,12 @@ export const createSelectBuilder = <
       defineHidden(
         builder,
         item.key,
-        createBareBuilderReferenceExpression(builder, item.sqlAlias, item.expression.decoder, item.expression.sqlType),
+        createLazyAliasReferenceExpression(
+          (ctx) => resolveAutoSubqueryAlias(ctx, builder),
+          item.sqlAlias,
+          item.expression.decoder,
+          item.expression.sqlType,
+        ),
       );
     }
   }
@@ -2361,9 +2424,20 @@ type CteFromQuery<TQuery, TName extends string> = {
   readonly columns: ReferenceColumns<SelectBuilderRow<TQuery>, TName>;
 } & ReferenceColumns<SelectBuilderRow<TQuery>, TName>;
 
+// Anonymous CTE — name is assigned per-compile (`__cte_N`) instead of by
+// the user. Column refs use the same lazy-alias mechanism as bare
+// SelectBuilder subqueries; their sourceKey is widened to `string`
+// because the actual alias isn't known at type-creation time.
+type CteFromAnonymousQuery<TQuery> = {
+  readonly kind: "cte";
+  readonly name: undefined;
+  readonly query: AnySelectBuilder<SelectBuilderRow<TQuery>>;
+  readonly columns: ReferenceColumns<SelectBuilderRow<TQuery>, string>;
+} & ReferenceColumns<SelectBuilderRow<TQuery>, string>;
+
 export type AnyCte = {
   readonly kind: "cte";
-  readonly name: string;
+  readonly name: string | undefined;
   readonly query: AnySelectBuilder<Record<string, unknown>>;
   readonly columns: SourceColumns;
 };
@@ -2387,6 +2461,11 @@ export interface QueryClient<TJoinUseNulls extends JoinUseNulls = 1> {
     as: <TQuery>(
       query: TQuery & (SelectBuilderRow<TQuery> extends never ? never : unknown),
     ) => CteFromQuery<TQuery, TName>;
+  };
+  $with(): {
+    as: <TQuery>(
+      query: TQuery & (SelectBuilderRow<TQuery> extends never ? never : unknown),
+    ) => CteFromAnonymousQuery<TQuery>;
   };
   with(...ctes: AnyCte[]): QueryClient<TJoinUseNulls>;
 }
@@ -2438,21 +2517,44 @@ export const createQueryClient = <TJoinUseNulls extends JoinUseNulls = 1>(
       return createInsertBuilder(table, state.runner);
     },
 
-    $with<TName extends string>(name: TName) {
+    $with(name?: string) {
       return {
-        as: <TQuery>(
-          query: TQuery & (SelectBuilderRow<TQuery> extends never ? never : unknown),
-        ): CteFromQuery<TQuery, TName> => {
+        as: <TQuery>(query: TQuery & (SelectBuilderRow<TQuery> extends never ? never : unknown)) => {
           const selectQuery = query as unknown as AnySelectBuilder<SelectBuilderRow<TQuery>>;
           const selectionItems = selectQuery.buildSelectionItems();
-          const columns = buildReferenceColumns<SelectBuilderRow<TQuery>, TName>(name, selectionItems);
-          const cte = {
-            kind: "cte" as const,
+
+          if (name === undefined) {
+            // Anonymous CTE — alias resolved per-compile via the cte object's
+            // identity. Column refs close over `cte` so all references render
+            // with the same `__cte_N` as the WITH definition.
+            const columns: SourceColumns = {};
+            const cte: AnyCte = {
+              kind: "cte",
+              name: undefined,
+              query: selectQuery as AnySelectBuilder<Record<string, unknown>>,
+              columns,
+            };
+            for (const item of selectionItems) {
+              columns[item.key] = createLazyAliasReferenceExpression(
+                (ctx) => resolveAnonymousCteAlias(ctx, cte),
+                item.sqlAlias,
+                item.expression.decoder,
+                item.expression.sqlType,
+              );
+            }
+            attachCteColumnRefs(cte, columns);
+            return cte as unknown as CteFromAnonymousQuery<TQuery>;
+          }
+
+          const columns = buildReferenceColumns<SelectBuilderRow<TQuery>, string>(name, selectionItems);
+          const cte: AnyCte = {
+            kind: "cte",
             name,
-            query: selectQuery,
+            query: selectQuery as AnySelectBuilder<Record<string, unknown>>,
             columns,
           };
-          return Object.assign(cte, columns) as CteFromQuery<TQuery, TName>;
+          attachCteColumnRefs(cte, columns);
+          return cte as unknown as CteFromQuery<TQuery, string>;
         },
       };
     },

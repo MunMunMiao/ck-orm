@@ -2658,3 +2658,449 @@ describe("ck-orm bare SelectBuilder as subquery source", function describeBareBu
     );
   });
 });
+
+describe("ck-orm anonymous CTE via $with()", function describeAnonymousCte() {
+  it("renders WITH __cte_1 and references the same alias in outer FROM", function testAnonBasicShape() {
+    const db = createQueryClient();
+    const totals = db.$with().as(db.select({ id: orders.id }).from(orders));
+
+    const built = buildCompiled(db.with(totals).select({ id: totals.id }).from(totals)[compileQuerySymbol]());
+
+    expect(normalizeSql(built.query)).toContain("with `__cte_1` as (select `orders`.`id` as `id` from `orders`)");
+    expect(normalizeSql(built.query)).toContain("select `__cte_1`.`id` as `id`");
+    expect(normalizeSql(built.query)).toContain("from `__cte_1`");
+  });
+
+  it("resets the anonymous-CTE counter on each top-level compile", function testAnonCounterStability() {
+    const db = createQueryClient();
+    const totals = db.$with().as(db.select({ id: orders.id }).from(orders));
+    const query = db.with(totals).select({ id: totals.id }).from(totals);
+
+    const first = buildCompiled(query[compileQuerySymbol]());
+    const second = buildCompiled(query[compileQuerySymbol]());
+
+    expect(first.query).toBe(second.query);
+    expect(normalizeSql(first.query)).toContain("`__cte_1`");
+  });
+
+  it("numbers multiple anonymous CTEs in declaration order", function testAnonMultipleCtes() {
+    const db = createQueryClient();
+    const a = db.$with().as(db.select({ id: orders.id }).from(orders));
+    const b = db.$with().as(db.select({ id: orders.id, doubled: fn.multiply(orders.amount, 2) }).from(orders));
+
+    const built = buildCompiled(
+      db
+        .with(a, b)
+        .select({ aId: a.id, bDoubled: b.doubled })
+        .from(a)
+        .innerJoin(b, eq(a.id, b.id))
+        [compileQuerySymbol](),
+    );
+
+    expect(normalizeSql(built.query)).toContain("`__cte_1` as (");
+    expect(normalizeSql(built.query)).toContain("`__cte_2` as (");
+    expect(normalizeSql(built.query)).toContain("`__cte_1`.`id` as `aId`");
+    expect(normalizeSql(built.query)).toContain("`__cte_2`.`doubled` as `bDoubled`");
+    expect(normalizeSql(built.query)).toContain("from `__cte_1`");
+    expect(normalizeSql(built.query)).toContain("inner join `__cte_2`");
+  });
+
+  it("allows referencing the same anonymous CTE in FROM and JOIN without error", function testAnonRepeatRef() {
+    const db = createQueryClient();
+    const totals = db.$with().as(db.select({ id: orders.id, amount: orders.amount }).from(orders));
+
+    const built = buildCompiled(
+      db
+        .with(totals)
+        .select({ id: totals.id })
+        .from(totals)
+        .innerJoin(orders, eq(totals.id, orders.id))
+        [compileQuerySymbol](),
+    );
+
+    expect(normalizeSql(built.query)).toContain("from `__cte_1`");
+    expect(normalizeSql(built.query)).toContain("inner join `orders` on `__cte_1`.`id` = `orders`.`id`");
+  });
+
+  it("mixes named and anonymous CTEs without crosstalk", function testAnonMixedNamed() {
+    const db = createQueryClient();
+    const named = db.$with("named_totals").as(db.select({ id: orders.id }).from(orders));
+    const anon = db.$with().as(db.select({ id: orders.id }).from(orders));
+
+    const built = buildCompiled(
+      db
+        .with(named, anon)
+        .select({ namedId: named.id, anonId: anon.id })
+        .from(named)
+        .innerJoin(anon, eq(named.id, anon.id))
+        [compileQuerySymbol](),
+    );
+
+    expect(normalizeSql(built.query)).toContain("`named_totals` as (");
+    expect(normalizeSql(built.query)).toContain("`__cte_1` as (");
+    expect(normalizeSql(built.query)).toContain("`named_totals`.`id` as `namedId`");
+    expect(normalizeSql(built.query)).toContain("`__cte_1`.`id` as `anonId`");
+  });
+
+  it("resolves the same anonymous CTE alias when referenced from a nested CTE query", function testAnonNestedRef() {
+    const db = createQueryClient();
+    const cte1 = db.$with().as(db.select({ id: orders.id }).from(orders));
+    // cte2 references cte1 in its FROM but doesn't redeclare it — both are
+    // attached on the outer `db.with(cte1, cte2)` below.
+    const cte2 = db.$with().as(db.select({ id: cte1.id }).from(cte1));
+
+    const built = buildCompiled(db.with(cte1, cte2).select({ id: cte2.id }).from(cte2)[compileQuerySymbol]());
+
+    // cte1 is __cte_1 in the outer WITH; the nested CTE's body must reference
+    // the same __cte_1 alias inside its FROM clause.
+    expect(normalizeSql(built.query)).toContain("`__cte_1` as (select `orders`.`id` as `id` from `orders`)");
+    expect(normalizeSql(built.query)).toContain("`__cte_2` as (select `__cte_1`.`id` as `id` from `__cte_1`)");
+    expect(normalizeSql(built.query)).toContain("from `__cte_2`");
+  });
+
+  it("uses anonymous CTE column refs in WHERE and ORDER BY clauses", function testAnonInWhereOrderBy() {
+    const db = createQueryClient();
+    const totals = db.$with().as(
+      db
+        .select({ id: orders.id, total: fn.sum(orders.amount).as("t") })
+        .from(orders)
+        .groupBy(orders.id),
+    );
+
+    const built = buildCompiled(
+      db
+        .with(totals)
+        .select({ id: totals.id, total: totals.total })
+        .from(totals)
+        .where(gt(totals.total, 100))
+        .orderBy(desc(totals.total), totals.id)
+        [compileQuerySymbol](),
+    );
+
+    // Every column reference (WHERE / ORDER BY / SELECT) must use the same
+    // auto alias — proves the lazy resolver returns the cached id across
+    // multiple compile-time touchpoints. `desc()` / default ASC produce
+    // upper-case DESC / ASC suffixes in the compiled SQL.
+    expect(normalizeSql(built.query)).toContain("where `__cte_1`.`t` >");
+    expect(normalizeSql(built.query)).toContain("order by `__cte_1`.`t` DESC, `__cte_1`.`id` ASC");
+    expect(normalizeSql(built.query)).toContain("select `__cte_1`.`id` as `id`, `__cte_1`.`t` as `total`");
+  });
+
+  it("uses anonymous CTE column refs in HAVING after GROUP BY", function testAnonInHaving() {
+    const db = createQueryClient();
+    const totals = db.$with().as(db.select({ id: orders.id, amount: orders.amount }).from(orders));
+
+    const built = buildCompiled(
+      db
+        .with(totals)
+        .select({ id: totals.id, sumAmount: fn.sum(totals.amount).as("sum_amount") })
+        .from(totals)
+        .groupBy(totals.id)
+        .having(gt(fn.sum(totals.amount), 0))
+        [compileQuerySymbol](),
+    );
+
+    expect(normalizeSql(built.query)).toContain("group by `__cte_1`.`id`");
+    expect(normalizeSql(built.query)).toContain("having sum(`__cte_1`.`amount`) >");
+  });
+
+  it("keeps __sub_N and __cte_N counters independent when mixing bare subqueries with anonymous CTEs", function testAnonAndBareCountersIndependent() {
+    const db = createQueryClient();
+    const anonCte = db.$with().as(db.select({ id: orders.id }).from(orders));
+    const bareSub = db.select({ id: orders.id }).from(orders);
+
+    const built = buildCompiled(
+      db
+        .with(anonCte)
+        .select({ id: anonCte.id })
+        .from(anonCte)
+        .innerJoin(bareSub, (joined) => eq(anonCte.id, joined.id))
+        [compileQuerySymbol](),
+    );
+
+    // Bare subquery gets __sub_1, anonymous CTE gets __cte_1 — separate
+    // counters guarantee neither numbering races against the other.
+    expect(normalizeSql(built.query)).toContain("`__cte_1` as (");
+    expect(normalizeSql(built.query)).toContain("as `__sub_1`");
+    expect(normalizeSql(built.query)).not.toContain("`__cte_2`");
+    expect(normalizeSql(built.query)).not.toContain("`__sub_2`");
+  });
+
+  it("supports count(anonymousCte) with predicate when nested as a scalar subquery", function testAnonCount() {
+    const db = createQueryClient();
+    const totals = db.$with().as(db.select({ id: orders.id, amount: orders.amount }).from(orders));
+
+    // `db.count(...)` returns a CountQuery (Selection-shaped, no compileQuerySymbol).
+    // Wrap it as a scalar subquery inside another SELECT to exercise the
+    // anonymous CTE rendering on the count path via .compile().
+    const cteDb = db.with(totals);
+    const built = buildCompiled(
+      db
+        .select({
+          id: orders.id,
+          total: cteDb.count(totals, gt(totals.amount, 5)).toSafe().as("total"),
+        })
+        .from(orders)
+        [compileQuerySymbol](),
+    );
+
+    expect(normalizeSql(built.query)).toContain("with `__cte_1` as (");
+    expect(normalizeSql(built.query)).toContain("from `__cte_1`");
+    expect(normalizeSql(built.query)).toContain("where `__cte_1`.`amount` >");
+  });
+
+  it("supports anonymous CTE inside insert().fromSelect()", function testAnonInsertFromSelect() {
+    const db = createQueryClient();
+    // The anonymous CTE projects all three orders columns. `cte.columns.name`
+    // is used in the outer SELECT because `name` is one of the CTE-reserved
+    // keys (kind/name/query/columns) and is therefore not auto-attached on
+    // the cte object — access via `cte.columns.name` is the documented
+    // escape hatch. Mirrors the bare-SelectBuilder forbidden-keys behaviour.
+    const filtered = db.$with().as(db.select({ id: orders.id, name: orders.name, amount: orders.amount }).from(orders));
+
+    const built = buildCompiled(
+      db
+        .insert(orders)
+        .fromSelect(
+          db
+            .with(filtered)
+            .select({ id: filtered.id, name: filtered.columns.name, amount: filtered.amount })
+            .from(filtered),
+        )
+        [compileQuerySymbol](),
+    );
+
+    expect(normalizeSql(built.query)).toContain("insert into `orders`");
+    expect(normalizeSql(built.query)).toContain("with `__cte_1` as (");
+    expect(normalizeSql(built.query)).toContain("`__cte_1`.`id` as `id`");
+    expect(normalizeSql(built.query)).toContain("`__cte_1`.`name` as `name`");
+    expect(normalizeSql(built.query)).toContain("`__cte_1`.`amount` as `amount`");
+    expect(normalizeSql(built.query)).toContain("from `__cte_1`");
+  });
+
+  it("masks CTE-reserved column keys (kind/name/query/columns) — access via cte.columns instead", function testAnonReservedKeys() {
+    const db = createQueryClient();
+    // A user selection that collides on the CTE-reserved keys. Without the
+    // mask, `Object.assign(cte, columns)` would overwrite `cte.name`/etc and
+    // break SQL rendering (`sql.identifier(cte.name)` would receive an
+    // expression object). With the mask, the CTE meta survives intact.
+    const cte = db.$with().as(db.select({ name: orders.name, query: orders.id, id: orders.id }).from(orders));
+
+    // CTE meta still has the correct shape — name remains undefined for
+    // anonymous, query is the inner select, columns map exposes ALL refs
+    // (including the masked ones).
+    expect(cte.name).toBeUndefined();
+    expect(typeof cte.query).toBe("object");
+    expect(cte.columns.name).toBeDefined();
+    expect(cte.columns.query).toBeDefined();
+    expect(cte.columns.id).toBeDefined();
+    // Non-reserved keys still attach directly:
+    expect(typeof (cte as unknown as Record<string, unknown>).id).toBe("object");
+
+    const built = buildCompiled(
+      db
+        .with(cte)
+        .select({
+          id: cte.id,
+          n: cte.columns.name,
+          q: cte.columns.query,
+        })
+        .from(cte)
+        [compileQuerySymbol](),
+    );
+
+    // SQL still renders correctly — the inner names appear unmangled.
+    expect(normalizeSql(built.query)).toContain(
+      "with `__cte_1` as (select `orders`.`name` as `name`, `orders`.`id` as `query`, `orders`.`id` as `id` from `orders`)",
+    );
+    expect(normalizeSql(built.query)).toContain("`__cte_1`.`id` as `id`");
+    expect(normalizeSql(built.query)).toContain("`__cte_1`.`name` as `n`");
+    expect(normalizeSql(built.query)).toContain("`__cte_1`.`query` as `q`");
+  });
+
+  it("supports three-level nesting of anonymous CTEs", function testAnonThreeLevelNesting() {
+    const db = createQueryClient();
+    const level1 = db.$with().as(db.select({ id: orders.id, amount: orders.amount }).from(orders));
+    const level2 = db
+      .$with()
+      .as(db.select({ id: level1.id, doubled: fn.multiply(level1.amount, 2).as("d") }).from(level1));
+    const level3 = db
+      .$with()
+      .as(db.select({ id: level2.id, quad: fn.multiply(level2.doubled, 2).as("q") }).from(level2));
+
+    const built = buildCompiled(
+      db.with(level1, level2, level3).select({ id: level3.id, q: level3.quad }).from(level3)[compileQuerySymbol](),
+    );
+
+    // Each level resolves to a distinct __cte_N and inner references the prior level.
+    expect(normalizeSql(built.query)).toContain("`__cte_1` as (select `orders`.`id` as `id`");
+    expect(normalizeSql(built.query)).toContain("`__cte_2` as (select `__cte_1`.`id` as `id`");
+    expect(normalizeSql(built.query)).toContain("`__cte_3` as (select `__cte_2`.`id` as `id`");
+    expect(normalizeSql(built.query)).toContain("from `__cte_3`");
+  });
+
+  it("preserves alias identity when the same anonymous CTE column ref appears in many places", function testAnonRefCacheHit() {
+    const db = createQueryClient();
+    // A column ref used in SELECT, WHERE, GROUP BY, HAVING, ORDER BY — five
+    // separate touchpoints. Each must call resolveAnonymousCteAlias and hit
+    // the same cached `__cte_1` value.
+    const cte = db.$with().as(db.select({ id: orders.id, amount: orders.amount }).from(orders));
+
+    const built = buildCompiled(
+      db
+        .with(cte)
+        .select({ id: cte.id, total: fn.sum(cte.amount).as("total") })
+        .from(cte)
+        .where(gt(cte.amount, 0))
+        .groupBy(cte.id)
+        .having(gt(fn.sum(cte.amount), 1))
+        .orderBy(cte.id)
+        [compileQuerySymbol](),
+    );
+
+    // Sanity: every reference is `__cte_1`, none accidentally becomes `__cte_2`.
+    expect(normalizeSql(built.query)).not.toContain("`__cte_2`");
+    expect(normalizeSql(built.query)).toContain("select `__cte_1`.`id`");
+    expect(normalizeSql(built.query)).toContain("sum(`__cte_1`.`amount`)");
+    expect(normalizeSql(built.query)).toContain("where `__cte_1`.`amount` >");
+    expect(normalizeSql(built.query)).toContain("group by `__cte_1`.`id`");
+    expect(normalizeSql(built.query)).toContain("order by `__cte_1`.`id`");
+  });
+
+  it("supports leftJoin with anonymous CTE source", function testAnonLeftJoin() {
+    const db = createQueryClient();
+    const totals = db.$with().as(db.select({ id: orders.id, amount: orders.amount }).from(orders));
+
+    const built = buildCompiled(
+      db
+        .with(totals)
+        .select({ id: orders.id, name: orders.name, total: totals.amount })
+        .from(orders)
+        .leftJoin(totals, eq(orders.id, totals.id))
+        [compileQuerySymbol](),
+    );
+
+    expect(normalizeSql(built.query)).toContain("left join `__cte_1` on `orders`.`id` = `__cte_1`.`id`");
+    expect(normalizeSql(built.query)).toContain("`__cte_1`.`amount` as `total`");
+  });
+
+  it("accepts an anonymous CTE whose query already carries CTEs (chained .with)", function testAnonChainedClient() {
+    const db = createQueryClient();
+    const baseCte = db.$with("base").as(db.select({ id: orders.id }).from(orders));
+
+    // Inner client carrying `baseCte` builds the anonymous CTE's body.
+    const innerDb = db.with(baseCte);
+    const derived = innerDb.$with().as(innerDb.select({ id: baseCte.id }).from(baseCte));
+
+    const built = buildCompiled(innerDb.with(derived).select({ id: derived.id }).from(derived)[compileQuerySymbol]());
+
+    expect(normalizeSql(built.query)).toContain("`base` as (select `orders`.`id` as `id` from `orders`)");
+    expect(normalizeSql(built.query)).toContain("`__cte_1` as (");
+    expect(normalizeSql(built.query)).toContain("from `__cte_1`");
+  });
+
+  it("does not leak the anonymous CTE auto-alias between two independently compiled queries", function testAnonAcrossQueries() {
+    const db = createQueryClient();
+    const aCte = db.$with().as(db.select({ id: orders.id }).from(orders));
+    const bCte = db.$with().as(db.select({ id: orders.id }).from(orders));
+
+    // Query 1: only aCte → must be __cte_1
+    const q1 = buildCompiled(db.with(aCte).select({ id: aCte.id }).from(aCte)[compileQuerySymbol]());
+    // Query 2: only bCte → also __cte_1 (counter resets per compile)
+    const q2 = buildCompiled(db.with(bCte).select({ id: bCte.id }).from(bCte)[compileQuerySymbol]());
+
+    expect(normalizeSql(q1.query)).toContain("`__cte_1`");
+    expect(normalizeSql(q2.query)).toContain("`__cte_1`");
+  });
+
+  it("named $with() still infers literal alias type and renders the user-supplied name", function testNamedPathUnchanged() {
+    const db = createQueryClient();
+    // Existing named path: the literal "totals" must appear in SQL verbatim.
+    const named = db.$with("totals").as(db.select({ id: orders.id }).from(orders));
+
+    expect(named.kind).toBe("cte");
+    expect(named.name).toBe("totals");
+
+    const built = buildCompiled(db.with(named).select({ id: named.id }).from(named)[compileQuerySymbol]());
+    expect(normalizeSql(built.query)).toContain("`totals` as (");
+    expect(normalizeSql(built.query)).toContain("from `totals`");
+    expect(normalizeSql(built.query)).not.toContain("__cte_");
+  });
+
+  it("anonymous CTE object exposes name === undefined and kind === 'cte'", function testAnonCteShape() {
+    const db = createQueryClient();
+    const cte = db.$with().as(db.select({ id: orders.id }).from(orders));
+
+    expect(cte.kind).toBe("cte");
+    expect(cte.name).toBeUndefined();
+    expect(typeof cte.id).toBe("object");
+  });
+
+  it("anonymous CTE built on one QueryClient instance is usable from another", function testAnonAddedToConsumingClient() {
+    // A library helper that returns an anonymous CTE attached to a freshly
+    // created QueryClient — the consumer threads it through their own `db`
+    // via `.with(cte)`. This is the realistic factory pattern.
+    const factoryDb = createQueryClient();
+    const reusableCte = factoryDb.$with().as(factoryDb.select({ id: orders.id }).from(orders));
+
+    const consumerDb = createQueryClient();
+    const built = buildCompiled(
+      consumerDb.with(reusableCte).select({ id: reusableCte.id }).from(reusableCte)[compileQuerySymbol](),
+    );
+
+    expect(normalizeSql(built.query)).toContain("`__cte_1` as (");
+    expect(normalizeSql(built.query)).toContain("from `__cte_1`");
+  });
+
+  it("rewriting the WeakMap cache hit path: two consecutive same-builder compiles still produce __cte_1", function testAnonCacheHitAcrossCompiles() {
+    // This targets the `if (cached) return cached;` branch in
+    // resolveAnonymousCteAlias. The first compile populates the cache via
+    // renderCtes; renderSource then hits it. Subsequent compile uses a fresh
+    // ctx, so the WeakMap is empty for that ctx — coverage of both miss and
+    // hit branches comes naturally from any multi-touchpoint test, but we
+    // assert it explicitly here.
+    const db = createQueryClient();
+    const cte = db.$with().as(db.select({ id: orders.id }).from(orders));
+    const query = db.with(cte).select({ id: cte.id }).from(cte);
+
+    const first = buildCompiled(query[compileQuerySymbol]());
+    const second = buildCompiled(query[compileQuerySymbol]());
+    const third = buildCompiled(query[compileQuerySymbol]());
+
+    expect(first.query).toBe(second.query);
+    expect(second.query).toBe(third.query);
+    expect(normalizeSql(first.query)).toContain("`__cte_1`");
+  });
+
+  it("forwards anonymous CTE alias state into inner compileSql ctx (lazy refs inside expr() resolve correctly)", function testAnonAliasForwardingIntoCompileSql() {
+    // Regression: when a lazy column ref is embedded inside a sql template
+    // via `expr(sql`coalesce(${cte.col}, 0)`)`, normalizeTemplateValue wraps
+    // it as a runtime chunk that gets evaluated during the inner compileSql
+    // pass (a fresh ctx copy made by `compileSql`). Without forwarding the
+    // bare-builder / CTE alias state through the copy, the inner ctx miss
+    // would re-allocate `__cte_1` for the second CTE, producing
+    // `coalesce(__cte_1.col, 0)` while the CTE is actually defined as
+    // `__cte_2` in the WITH clause — wrong SQL.
+    const db = createQueryClient();
+    const a = db.$with().as(db.select({ id: orders.id }).from(orders));
+    const b = db.$with().as(db.select({ id: orders.id, amount: orders.amount }).from(orders));
+
+    const built = buildCompiled(
+      db
+        .with(a, b)
+        .select({
+          id: a.id,
+          fallback: expr(sql`coalesce(${b.amount}, 0)`).as("fallback"),
+        })
+        .from(a)
+        .leftJoin(b, eq(a.id, b.id))
+        [compileQuerySymbol](),
+    );
+
+    expect(normalizeSql(built.query)).toContain("`__cte_1` as (select `orders`.`id` as `id` from `orders`)");
+    expect(normalizeSql(built.query)).toContain("`__cte_2` as (");
+    // The CRITICAL assertion: coalesce references __cte_2.amount, not __cte_1.amount.
+    expect(normalizeSql(built.query)).toContain("coalesce(`__cte_2`.`amount`, 0) as `fallback`");
+    expect(normalizeSql(built.query)).toContain("left join `__cte_2` on `__cte_1`.`id` = `__cte_2`.`id`");
+  });
+});
