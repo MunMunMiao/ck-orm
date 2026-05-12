@@ -134,6 +134,22 @@ const scanTopLevelSemicolons = (statement: string) => {
     }
   }
 
+  // If we exit the loop in a non-code, non-line-comment state, the input has
+  // an unterminated literal / block comment / heredoc. Line comments are
+  // allowed to run to EOF (their terminator is `\n`, which is implicit at
+  // end-of-input). Letting unterminated literals through would smuggle a
+  // semicolon inside a never-closing string past the multi-statement scan
+  // and turn the wire query into something other than what the user wrote.
+  if (state === "single_quote" || state === "double_quote" || state === "backtick") {
+    throw createClientValidationError("Unterminated string literal in SQL statement");
+  }
+  if (state === "block_comment") {
+    throw createClientValidationError("Unterminated block comment in SQL statement");
+  }
+  if (state === "heredoc") {
+    throw createClientValidationError(`Unterminated heredoc literal ${heredocTerminator} in SQL statement`);
+  }
+
   return {
     positions,
     sawCodeAfterSemicolon,

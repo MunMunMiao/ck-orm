@@ -328,11 +328,51 @@ const remapExpressionListInput = (
   return remapExpressionInput(boundColumns, value as AnyColumn | DdlFragmentInput);
 };
 
+// Reserved column-key names that would otherwise be shadowed by table metadata
+// in the `Object.assign({}, boundColumns, tableBase)` layering below. The
+// merge silently drops the colliding column refs from the top-level table
+// object — they stay reachable via `table.columns[key]`, but `table.<key>`
+// returns the metadata. This is a real friction: OpenTelemetry / SigNoz
+// trace schemas use `kind` as a standard column name (span kind), so a hard
+// `throw` would break legitimate users. Instead we emit a one-shot warning
+// per (table, key) pair so the collision is visible without forcing a rename.
+const RESERVED_TABLE_KEYS: ReadonlySet<string> = new Set([
+  "kind",
+  "tableName",
+  "originalName",
+  "alias",
+  "columns",
+  "options",
+  "$inferSelect",
+  "$inferInsert",
+]);
+
+// Module-scoped dedup so the same `ckTable(name, columns)` definition doesn't
+// log every time the module that defines it is re-imported (multi-test-file
+// scenarios). Keyed on `tableName + ":" + collidingKey` for stability across
+// hot-reload-free environments.
+const warnedReservedKeyCollisions = new Set<string>();
+
 export const ckTable = <TName extends string, TColumns extends Record<string, AnyColumn>>(
   name: TName,
   columns: TColumns,
   options?: TableOptionsInput<TColumns, TName>,
 ): TableWithColumns<BoundColumns<TColumns, TName>, TName> => {
+  const reservedCollisions = Object.keys(columns).filter((key) => RESERVED_TABLE_KEYS.has(key));
+  if (reservedCollisions.length > 0) {
+    const fresh = reservedCollisions.filter((key) => {
+      const dedupKey = `${name}:${key}`;
+      if (warnedReservedKeyCollisions.has(dedupKey)) return false;
+      warnedReservedKeyCollisions.add(dedupKey);
+      return true;
+    });
+    if (fresh.length > 0) {
+      console.warn(
+        `[ck-orm] ckTable("${name}") column keys collide with reserved table metadata fields: ${fresh.join(", ")}. ` +
+          `The top-level \`table.<key>\` access returns the metadata field; access the column ref via \`table.columns[key]\` instead.`,
+      );
+    }
+  }
   const boundColumns = bindColumns(name, columns);
   const tableBase = {
     kind: "table" as const,

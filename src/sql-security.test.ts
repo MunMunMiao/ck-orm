@@ -277,6 +277,21 @@ describe("ck-orm sql security", function describeSqlSecurity() {
     );
   });
 
+  it("rejects unterminated string literals so semicolons can't be smuggled inside them", function testUnterminatedStringLiteral() {
+    // `'hello\` ends inside a single-quoted literal — pre-fix the scanner
+    // silently exited and the input would have been treated as a single
+    // legitimate statement, letting an attacker stash `; DROP TABLE x` after
+    // the opening quote.
+    expect(() => normalizeSingleStatementSql("SELECT 'hello\\", "x")).toThrow("Unterminated string literal");
+    expect(() => normalizeSingleStatementSql('SELECT "hello', "x")).toThrow("Unterminated string literal");
+    expect(() => normalizeSingleStatementSql("SELECT `col", "x")).toThrow("Unterminated string literal");
+  });
+
+  it("rejects unterminated block comments and heredocs", function testUnterminatedBlocks() {
+    expect(() => normalizeSingleStatementSql("SELECT 1 /* never closes", "x")).toThrow("Unterminated block comment");
+    expect(() => normalizeSingleStatementSql("SELECT $tag$ body but no closer", "x")).toThrow("Unterminated heredoc");
+  });
+
   it("rejects raw AggregateFunction type arguments with unsafe tokens", function testAggregateFunctionArgTypes() {
     expect(aggregateFunction("quantile(0.5)", "Float64").sqlType).toBe("AggregateFunction(quantile(0.5), Float64)");
     expect(() => aggregateFunction("quantile(now())", "Float64")).toThrow("Invalid aggregate function name");

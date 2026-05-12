@@ -493,7 +493,10 @@ export const formatQueryParamValue = (
     }
     return `[${parts.join(",")}]`;
   }
-  if (!(value instanceof Map || typeof value === "object")) {
+  // `null` already short-circuited above; Map is itself `typeof === "object"`,
+  // so this single guard catches every value not handled by the earlier
+  // primitive / Date / Array branches.
+  if (typeof value !== "object") {
     throw createClientValidationError(`Unsupported query parameter value: ${String(value)}`);
   }
 

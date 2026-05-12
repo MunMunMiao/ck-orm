@@ -1,6 +1,6 @@
 import type { AnyColumn } from "./columns";
 import { createClientValidationError, createInternalError } from "./errors";
-import { getArrayElementType } from "./internal/clickhouse-type";
+import { getArrayElementType, unwrapNullableLowCardinalityType } from "./internal/clickhouse-type";
 import { isColumnLike } from "./internal/column";
 import { type CountMode, type CountModeResult, getCountDecoder, getCountSqlType, wrapCountSql } from "./internal/count";
 import { isPlainObject } from "./internal/predicates";
@@ -378,13 +378,30 @@ const FORBIDDEN_CTE_COLUMN_KEYS = {
   columns: true,
 } as const satisfies Record<string, true>;
 
-// Attaches each column ref as a non-enumerable own property of the CTE
-// object, skipping keys that collide with the CTE's own fields. Mirrors
-// the bare-SelectBuilder auto-attach loop in `createSelectBuilder`.
-const attachCteColumnRefs = (cte: AnyCte, columns: SourceColumns): void => {
+// Subquery's own fields. Selection keys colliding with these would otherwise
+// overwrite `subquery.kind` / `alias` / `query` / `columns` via the auto-attach
+// loop and break SQL rendering (e.g. `db.select({ kind: src.x }).from(src).as("s")`
+// — without this guard, `subquery.kind` becomes the column expression and
+// `renderSource`'s `switch (source.kind)` falls through every case). The
+// collision keys keep their subquery meaning; the column ref stays available
+// via `subquery.columns[key]`.
+const FORBIDDEN_SUBQUERY_COLUMN_KEYS = {
+  kind: true,
+  alias: true,
+  query: true,
+  columns: true,
+} as const satisfies Record<string, true>;
+
+// Attaches each column ref as a non-enumerable own property of `target`,
+// skipping keys that collide with the target's own metadata fields. Shared by
+// CTE / Subquery / bare-SelectBuilder auto-attach paths — each supplies its
+// own forbidden-key table (see `FORBIDDEN_CTE_COLUMN_KEYS` etc.). Centralised
+// here so a future addition (a new source kind, a new metadata field) can't
+// accidentally skip the guard the way `.as()` did before this rewrite.
+const attachSafeColumnRefs = (target: object, columns: SourceColumns, forbiddenKeys: Record<string, true>): void => {
   for (const key of Object.keys(columns)) {
-    if (key in FORBIDDEN_CTE_COLUMN_KEYS) continue;
-    defineHidden(cte, key, columns[key]);
+    if (key in forbiddenKeys) continue;
+    defineHidden(target, key, columns[key]);
   }
 };
 
@@ -477,7 +494,10 @@ const popCompileState = (ctx: BuildContext): void => {
 };
 
 const getActiveCompileState = (ctx: BuildContext): CompileState | undefined => {
-  return compileStateStackStore.get(ctx)?.at(-1);
+  // Index access avoids `Array.prototype.at`'s negative-index wrap check on a
+  // hot path — every nested forced-setting collection runs through here.
+  const stack = compileStateStackStore.get(ctx);
+  return stack && stack.length > 0 ? stack[stack.length - 1] : undefined;
 };
 
 const collectForcedSettings = (ctx: BuildContext, settings: ForcedSettings | undefined): void => {
@@ -679,7 +699,15 @@ const compileInsertColumnValue = (
     return SQL_NULL;
   }
   const encoded = entry.column.mapToDriverValue(value as never);
-  if (isJsonInsertSqlType(entry.sqlType) && encoded !== null && encoded !== undefined) {
+  // Unwrap Nullable / LowCardinality before checking for JSON — keeps this
+  // defensive path future-proof if ClickHouse ever permits `LowCardinality(JSON)`
+  // or a similar wrapper. The wire-format step (stringify + cast) is identical
+  // regardless of the outer wrapper.
+  if (
+    isJsonInsertSqlType(unwrapNullableLowCardinalityType(entry.sqlType)) &&
+    encoded !== null &&
+    encoded !== undefined
+  ) {
     // Stringify the encoded plain object so the server-side String→JSON
     // implicit cast can handle it. `mapToDriverValue` already validated the
     // shape, so the stringify call is purely a wire-format step.
@@ -1268,6 +1296,17 @@ type SelectBuilderState<
   readonly joinUseNulls: TJoinUseNulls;
 };
 
+// Frozen sentinels reused across every builder that doesn't supply a value
+// for the corresponding state field. The chain methods (`innerJoin`,
+// `leftJoin`, `groupBy`, `orderBy`, ...) all rebuild these arrays with
+// `[...state.x, newItem]`, so the underlying sentinels are never mutated.
+// Sharing one frozen array per slot avoids allocating four empty arrays per
+// chain step (which on a 5-method chain is 20 dead allocations).
+const EMPTY_CTES: AnyCte[] = Object.freeze([]) as unknown as AnyCte[];
+const EMPTY_JOINS: JoinClause[] = Object.freeze([]) as unknown as JoinClause[];
+const EMPTY_GROUP_BY: SqlSelection[] = Object.freeze([]) as unknown as SqlSelection[];
+const EMPTY_ORDER_BY: SqlOrder[] = Object.freeze([]) as unknown as SqlOrder[];
+
 const normalizeSelectBuilderState = <
   TResult extends Record<string, unknown>,
   TSelection extends SelectionRecord | undefined,
@@ -1276,15 +1315,15 @@ const normalizeSelectBuilderState = <
   config?: SelectBuilderConfig<TResult> & { selection?: TSelection },
 ): SelectBuilderState<TResult, TSelection, KnownQuerySource | undefined, JoinedSources, TJoinUseNulls> => {
   return {
-    ctes: config?.ctes ?? [],
+    ctes: config?.ctes ?? EMPTY_CTES,
     runner: config?.runner,
     selection: config?.selection,
     fromSource: config?.fromSource,
-    joins: config?.joins ?? [],
+    joins: config?.joins ?? EMPTY_JOINS,
     whereClause: config?.whereClause,
-    groupByItems: config?.groupByItems ?? [],
+    groupByItems: config?.groupByItems ?? EMPTY_GROUP_BY,
     havingClause: config?.havingClause,
-    orderByItems: config?.orderByItems ?? [],
+    orderByItems: config?.orderByItems ?? EMPTY_ORDER_BY,
     limitValue: config?.limitValue,
     offsetValue: config?.offsetValue,
     limitByValue: config?.limitByValue,
@@ -1523,7 +1562,16 @@ export const createSelectBuilder = <
     return state.joinUseNulls === 1;
   };
 
-  const getNullableSources = (): Set<string> => {
+  // Builder state is immutable for the instance's lifetime (every chain method
+  // returns a fresh builder via `clone`). That means both the nullable-source
+  // map and the resolved selection items can be computed exactly once per
+  // instance — both are called multiple times in a single use (auto-attach,
+  // `.as()`, `compileWithContextSymbol`, `db.$with().as()`,
+  // `insert.fromSelect()` etc.). Cache them in closure-private slots.
+  let memoNullableSources: ReadonlySet<string> | undefined;
+  let memoSelectionItems: SelectionItem[] | undefined;
+
+  const computeNullableSources = (): ReadonlySet<string> => {
     const result = new Set<string>();
     if (!isNullableJoinEnabled()) {
       return result;
@@ -1540,7 +1588,13 @@ export const createSelectBuilder = <
     return result;
   };
 
-  const buildSelectionItems = (): SelectionItem[] => {
+  const getNullableSources = (): ReadonlySet<string> => {
+    if (memoNullableSources) return memoNullableSources;
+    memoNullableSources = computeNullableSources();
+    return memoNullableSources;
+  };
+
+  const computeSelectionItems = (): SelectionItem[] => {
     if (state.selection) {
       return normalizeSelectionRecord(state.selection, getNullableSources());
     }
@@ -1596,6 +1650,12 @@ export const createSelectBuilder = <
     }
 
     return selectionItems;
+  };
+
+  const buildSelectionItems = (): SelectionItem[] => {
+    if (memoSelectionItems) return memoSelectionItems;
+    memoSelectionItems = computeSelectionItems();
+    return memoSelectionItems;
   };
 
   const builder = {
@@ -1925,14 +1985,19 @@ export const createSelectBuilder = <
     as<TAlias extends string>(alias: TAlias): Subquery<TResult, TAlias> {
       const selectionItems = buildSelectionItems();
       const columns = buildReferenceColumns<TResult, TAlias>(alias, selectionItems);
-      const subquery = {
-        kind: "subquery" as const,
+      const subquery: AnySubquery = {
+        kind: "subquery",
         alias,
-        query: builder as AnySelectBuilder<TResult>,
+        query: builder as AnySelectBuilder<Record<string, unknown>>,
         columns,
       };
-
-      return Object.assign(subquery, columns) as Subquery<TResult, TAlias>;
+      // Hide column refs as non-enumerable own properties, skipping any keys
+      // that collide with the subquery's own metadata fields (see
+      // FORBIDDEN_SUBQUERY_COLUMN_KEYS). Previously this path used
+      // `Object.assign(subquery, columns)`, which would happily overwrite
+      // `subquery.kind` / `alias` etc. when the user picked a colliding name.
+      attachSafeColumnRefs(subquery, columns, FORBIDDEN_SUBQUERY_COLUMN_KEYS);
+      return subquery as unknown as Subquery<TResult, TAlias>;
     },
   } as SelectBuilderWithRefs<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>;
 
@@ -1943,19 +2008,16 @@ export const createSelectBuilder = <
   // `state.selection != null` guarantees the early-return branch, so it
   // cannot hit the "missing source/columns" throw path.
   if (state.selection != null) {
+    const autoRefs: SourceColumns = {};
     for (const item of buildSelectionItems()) {
-      if (item.key in FORBIDDEN_AUTO_COLUMN_KEYS) continue;
-      defineHidden(
-        builder,
-        item.key,
-        createLazyAliasReferenceExpression(
-          (ctx) => resolveAutoSubqueryAlias(ctx, builder),
-          item.sqlAlias,
-          item.expression.decoder,
-          item.expression.sqlType,
-        ),
+      autoRefs[item.key] = createLazyAliasReferenceExpression(
+        (ctx) => resolveAutoSubqueryAlias(ctx, builder),
+        item.sqlAlias,
+        item.expression.decoder,
+        item.expression.sqlType,
       );
     }
+    attachSafeColumnRefs(builder, autoRefs, FORBIDDEN_AUTO_COLUMN_KEYS);
   }
 
   return builder;
@@ -2542,7 +2604,7 @@ export const createQueryClient = <TJoinUseNulls extends JoinUseNulls = 1>(
                 item.expression.sqlType,
               );
             }
-            attachCteColumnRefs(cte, columns);
+            attachSafeColumnRefs(cte, columns, FORBIDDEN_CTE_COLUMN_KEYS);
             return cte as unknown as CteFromAnonymousQuery<TQuery>;
           }
 
@@ -2553,7 +2615,7 @@ export const createQueryClient = <TJoinUseNulls extends JoinUseNulls = 1>(
             query: selectQuery as AnySelectBuilder<Record<string, unknown>>,
             columns,
           };
-          attachCteColumnRefs(cte, columns);
+          attachSafeColumnRefs(cte, columns, FORBIDDEN_CTE_COLUMN_KEYS);
           return cte as unknown as CteFromQuery<TQuery, string>;
         },
       };

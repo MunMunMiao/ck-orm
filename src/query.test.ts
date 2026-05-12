@@ -725,4 +725,52 @@ describe("ck-orm query compile", function describeClickHouseORMQueryCompile() {
         [compileQuerySymbol](),
     ).toThrow('Conflicting forced setting "join_use_nulls"');
   });
+
+  it("memoises buildSelectionItems() per builder instance", function testBuildSelectionItemsMemo() {
+    // Builder state is immutable for the instance's lifetime; calling
+    // `buildSelectionItems()` twice on the same builder must return the same
+    // array reference so downstream consumers (auto-attach, .as(), compile)
+    // don't re-walk `Object.entries(selection)` per call.
+    const sb = publicDb.select({ id: users.id, name: users.name }).from(users);
+    expect(sb.buildSelectionItems()).toBe(sb.buildSelectionItems());
+
+    // Chain method clones produce a fresh builder with its own memo slot —
+    // the cached array MUST NOT leak across instances (would break per-instance
+    // alias state if a hypothetical mutation happened later).
+    const sb2 = sb.where(eq(users.id, 1));
+    expect(sb2.buildSelectionItems()).not.toBe(sb.buildSelectionItems());
+  });
+
+  it("protects subquery metadata fields from selection-key collisions on .as()", function testSubqueryAsKeyCollision() {
+    // Selection keys deliberately collide with `Subquery`'s own fields
+    // (`kind`, `alias`, `query`, `columns`). Pre-fix, `Object.assign` would
+    // overwrite those fields with column refs and break `renderSource`'s
+    // `switch (source.kind)` plus `sql.identifier(source.alias)`.
+    const sub = publicDb
+      .select({
+        kind: users.id,
+        alias: users.name,
+        query: users.id,
+        columns: users.name,
+        userId: users.id,
+      })
+      .from(users)
+      .as("s");
+
+    expect(sub.kind).toBe("subquery");
+    expect(sub.alias).toBe("s");
+    expect(typeof (sub.query as { execute?: unknown }).execute).toBe("function");
+    // Column refs collide with metadata names — they are not exposed as own
+    // properties on the subquery, but stay reachable via `sub.columns[key]`.
+    expect(typeof sub.columns.kind).toBe("object");
+    expect(typeof sub.columns.alias).toBe("object");
+    expect(typeof sub.columns.query).toBe("object");
+    expect(typeof sub.columns.columns).toBe("object");
+    // Non-colliding keys are still attached as direct refs.
+    expect(typeof (sub as unknown as { userId: unknown }).userId).toBe("object");
+
+    // SQL compiles cleanly because `source.kind === "subquery"` survives.
+    const compiled = publicDb.select({ id: sub.columns.userId }).from(sub)[compileQuerySymbol]();
+    expect(compiled.statement).toMatch(/from \(select .* from `users`\) as `s`/);
+  });
 });
