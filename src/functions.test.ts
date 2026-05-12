@@ -981,13 +981,7 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     // Equivalent to:
     //   intDiv(toInt64(toUnixTimestamp(time_utc)) - anchor, bucket) * bucket + anchor
     const bucketTs = fn.plus<number>(
-      fn.multiply(
-        fn.intDiv(
-          fn.minus(fn.toInt64(fn.toUnixTimestamp(timeUtc)), anchor),
-          bucketSeconds,
-        ),
-        bucketSeconds,
-      ),
+      fn.multiply(fn.intDiv(fn.minus(fn.toInt64(fn.toUnixTimestamp(timeUtc)), anchor), bucketSeconds), bucketSeconds),
       anchor,
     );
 
@@ -1029,9 +1023,7 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
 
     // Another Selection (fn.toInt64 result) as right operand
     const withSel = fn.minus(fn.toInt64(id), fn.toInt64(id));
-    expect(compileExpression(withSel).query).toContain(
-      "minus(toInt64(`orders`.`id`), toInt64(`orders`.`id`))",
-    );
+    expect(compileExpression(withSel).query).toContain("minus(toInt64(`orders`.`id`), toInt64(`orders`.`id`))");
 
     // Literal as left operand still works (parameterized)
     const litLeft = fn.divide(100, id);

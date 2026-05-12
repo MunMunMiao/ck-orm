@@ -1108,10 +1108,7 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
         bucketInt64: fn
           .plus(
             fn.multiply(
-              fn.intDiv(
-                fn.minus(fn.toInt64(fn.toUnixTimestamp(users.created_at, "UTC")), anchor),
-                bucketSeconds,
-              ),
+              fn.intDiv(fn.minus(fn.toInt64(fn.toUnixTimestamp(users.created_at, "UTC")), anchor), bucketSeconds),
               bucketSeconds,
             ),
             anchor,
