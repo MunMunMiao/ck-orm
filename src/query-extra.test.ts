@@ -122,6 +122,13 @@ describe("ck-orm query extras", function describeClickHouseORMQueryExtras() {
     expect(() => db.select().from(tableFn.call("numbers", 5)).buildSelectionItems()).toThrow(
       "select() without explicit selection requires a source with known columns",
     );
+    // Bare SelectBuilder (no `.as(name)`) as a source exposes no joinable
+    // columns from outside — getSourceColumns returns undefined, so
+    // implicit `select()` falls into the same error path.
+    const bareSubquery = db.select({ id: orders.id }).from(orders);
+    expect(() => db.select().from(bareSubquery).buildSelectionItems()).toThrow(
+      "select() without explicit selection requires a source with known columns",
+    );
 
     const subquery = db
       .select({

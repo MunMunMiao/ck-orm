@@ -864,6 +864,44 @@ describe("ck-orm columns", function describeClickHouseORMColumns() {
     });
   });
 
+  it("rethrows typeHint decoder errors with the path attached", function testJsonTypeHintDecodeError() {
+    const col = json<{ user_id: string }>("p", { typeHints: { user_id: uint64() } });
+
+    // uint64() decoder rejects non-numeric strings; the error is re-thrown
+    // through rethrowDecodeWithPath so callers see the offending path.
+    expect(() => col.mapFromDriverValue({ user_id: "not-a-number" })).toThrow(/user_id/);
+  });
+
+  it("bails out of setByJsonPath when a mid-path node turns non-object between reads", function testSetByJsonPathDefensiveBailout() {
+    // Exercises the defensive early-return guard in setByJsonPath. The guard
+    // is normally unreachable because the caller pre-filters via
+    // getByJsonPath, but a getter that returns different values on each
+    // access lets us prove the guard still protects against unexpected
+    // mid-path mutation (e.g. a Proxy-backed JSON value).
+    const col = json<{ a: { b: { c: number } } }>("p", { typeHints: { "a.b.c": uint32() } });
+
+    const inner: Record<string, unknown> = {};
+    let getCalls = 0;
+    Object.defineProperty(inner, "b", {
+      get() {
+        getCalls += 1;
+        // getByJsonPath sees the object form and successfully reads leaf;
+        // setByJsonPath then re-reads the same slot and finds a number,
+        // triggering the early-return guard.
+        return getCalls === 1 ? { c: 7 } : 42;
+      },
+      enumerable: true,
+      configurable: true,
+    });
+
+    // No throw — the decoder finishes cleanly because setByJsonPath
+    // silently bails when it sees the non-object form on the second read.
+    const decoded = col.mapFromDriverValue({ a: inner });
+    expect(getCalls).toBe(2);
+    // c was never written because the mid-path bailout fired before assignment.
+    expect((decoded as { a: { b: unknown } }).a.b).toBe(42);
+  });
+
   it("renders JSON path access helpers as ClickHouse path syntax", function testJsonPathRendering() {
     const tbl = {
       // Manually bind so we can render directly without ckTable plumbing.

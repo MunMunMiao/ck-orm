@@ -1,5 +1,15 @@
 import { describe, expect, it } from "bun:test";
-import { type array, decimal, type int16, int32, type int64, type nullable, string, type uint64 } from "./columns";
+import {
+  type array,
+  decimal,
+  type int16,
+  int32,
+  type int64,
+  json,
+  type nullable,
+  string,
+  type uint64,
+} from "./columns";
 import { fn } from "./functions";
 import {
   and,
@@ -516,6 +526,36 @@ describe("ck-orm query compile", function describeClickHouseORMQueryCompile() {
     expect(normalizeSql(built.query)).toContain("insert into `order_reward_log`");
     expect(normalizeSql(built.query)).toContain("{orm_param1:Int32}");
     expect(normalizeSql(built.query)).toContain("{orm_param9:Int32}");
+  });
+
+  it("stringifies JSON-column inserts so the server-side String→JSON cast can apply", function testCompileJsonInsert() {
+    const eventLog = ckTable(
+      "event_log",
+      {
+        id: int32(),
+        payload: json<{ kind: string; count: number }>(),
+      },
+      (table) => ({
+        engine: "MergeTree",
+        orderBy: [table.id],
+      }),
+    );
+
+    const db = createQueryClient();
+    const built = buildCompiled(
+      db
+        .insert(eventLog)
+        .values({ id: 1, payload: { kind: "purchase", count: 3 } })
+        [compileQuerySymbol](),
+    );
+
+    expect(normalizeSql(built.query)).toContain("insert into `event_log`");
+    // Non-null JSON value is stringified and bound as a String param so
+    // the server-side String→JSON implicit cast can ingest it (query.ts:609).
+    expect(built.params).toEqual({
+      orm_param1: 1,
+      orm_param2: '{"kind":"purchase","count":3}',
+    });
   });
 
   it("compiles physical column names while decoding and inserting logical keys", function testLogicalAndPhysicalNames() {

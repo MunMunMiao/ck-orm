@@ -8,6 +8,7 @@ import {
   float64,
   int32,
   int64,
+  json,
   lowCardinality,
   nullable,
   string,
@@ -874,6 +875,212 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     const nullableInput = nullable(int32()).bind({ name: "maybe_id", tableName: "orders" });
     const nullIfFromNullable = fn.nullIf(nullableInput, 0);
     expect(nullIfFromNullable.sqlType).toBe("Nullable(Int32)");
+  });
+
+  it("compiles fn arithmetic operators with first-arg type propagation", function testArithmeticFns() {
+    const id = int32().bind({ name: "id", tableName: "orders" });
+
+    const plusSel = fn.plus(id, 1);
+    expect(compileExpression(plusSel).query).toContain("plus(`orders`.`id`, {orm_param1:Int64})");
+    expect(plusSel.sqlType).toBe("Int32");
+    expect(plusSel.decoder(5)).toBe(5);
+
+    const minusSel = fn.minus(id, 1);
+    expect(compileExpression(minusSel).query).toContain("minus(`orders`.`id`,");
+    expect(minusSel.sqlType).toBe("Int32");
+
+    const mulSel = fn.multiply(id, 2);
+    expect(compileExpression(mulSel).query).toContain("multiply(`orders`.`id`,");
+    expect(mulSel.sqlType).toBe("Int32");
+
+    const divSel = fn.divide(id, 2);
+    expect(compileExpression(divSel).query).toContain("divide(`orders`.`id`,");
+    expect(divSel.sqlType).toBe("Float64");
+    expect(divSel.decoder(2.5)).toBe(2.5);
+
+    const intDivSel = fn.intDiv(id, 60);
+    expect(compileExpression(intDivSel).query).toContain("intDiv(`orders`.`id`,");
+    expect(intDivSel.sqlType).toBe("Int32");
+
+    expect(compileExpression(fn.intDivOrZero(id, 60)).query).toContain("intDivOrZero(`orders`.`id`,");
+
+    const modSel = fn.modulo(id, 7);
+    expect(compileExpression(modSel).query).toContain("modulo(`orders`.`id`,");
+    expect(modSel.sqlType).toBe("Int32");
+
+    expect(compileExpression(fn.moduloOrZero(id, 7)).query).toContain("moduloOrZero(`orders`.`id`,");
+
+    expect(compileExpression(fn.abs(id)).query).toContain("abs(`orders`.`id`)");
+    expect(compileExpression(fn.negate(id)).query).toContain("negate(`orders`.`id`)");
+
+    // Chained over a `toInt64` result: sqlType + decoder both inherit the Int64
+    // string-decoded representation. Use `.mapWith(...)` to switch the runtime
+    // decoder when JS `number` is the desired output.
+    const int64Chain = fn.intDiv(fn.toInt64(id), 60);
+    expect(int64Chain.sqlType).toBe("Int64");
+    expect(int64Chain.decoder(123)).toBe("123");
+    const remapped = int64Chain.mapWith<number>((v) => Number(v));
+    expect(remapped.decoder("123")).toBe(123);
+  });
+
+  it("inherits column types across decimal/float64/uint64 arithmetic chains", function testArithmeticAcrossTypeFamilies() {
+    const price = decimal({ precision: 18, scale: 2 }).bind({ name: "price", tableName: "orders" });
+    const qty = uint64().bind({ name: "qty", tableName: "orders" });
+    const ratio = float64().bind({ name: "ratio", tableName: "orders" });
+
+    // Decimal column → keeps Decimal(18, 2) sqlType + string decoder
+    const totalSel = fn.multiply(price, qty);
+    expect(compileExpression(totalSel).query).toContain("multiply(`orders`.`price`, `orders`.`qty`)");
+    expect(totalSel.sqlType).toBe("Decimal(18, 2)");
+    expect(totalSel.decoder("12.50")).toBe("12.50");
+
+    // UInt64 column → keeps UInt64 sqlType + string decoder
+    const inflated = fn.plus(qty, 100);
+    expect(inflated.sqlType).toBe("UInt64");
+    expect(inflated.decoder("18446744073709551615")).toBe("18446744073709551615");
+
+    // Float64 column → keeps Float64 sqlType + number decoder
+    const adjusted = fn.minus(ratio, 0.1);
+    expect(adjusted.sqlType).toBe("Float64");
+    expect(adjusted.decoder(0.5)).toBe(0.5);
+
+    // divide always promotes to Float64 + number, regardless of input type
+    const decimalDivide = fn.divide(price, qty);
+    expect(decimalDivide.sqlType).toBe("Float64");
+    expect(decimalDivide.decoder(1.25)).toBe(1.25);
+  });
+
+  it("parameterizes literal operands with their inferred ClickHouse types", function testArithmeticLiteralParametrization() {
+    const id = int32().bind({ name: "id", tableName: "orders" });
+
+    // Integer literal → Int64 param
+    const intCompiled = compileExpression(fn.intDiv(id, 60));
+    expect(intCompiled.paramTypes.orm_param1).toBe("Int64");
+    expect(intCompiled.params.orm_param1).toBe(60);
+
+    // Float literal → Float64 param
+    const floatCompiled = compileExpression(fn.multiply(id, 1.5));
+    expect(floatCompiled.paramTypes.orm_param1).toBe("Float64");
+    expect(floatCompiled.params.orm_param1).toBe(1.5);
+
+    // BigInt literal → Int64 param
+    const bigintCompiled = compileExpression(fn.plus(id, 1234567890123456789n));
+    expect(bigintCompiled.paramTypes.orm_param1).toBe("Int64");
+
+    // String literal (negative) → still parameterized
+    const negCompiled = compileExpression(fn.minus(id, -5));
+    expect(negCompiled.paramTypes.orm_param1).toBe("Int64");
+    expect(negCompiled.params.orm_param1).toBe(-5);
+  });
+
+  it("composes nested arithmetic mirroring the ck.expr<number>(ckSql) bucket pattern", function testArithmeticBucketComposition() {
+    const timeUtc = dateTime().bind({ name: "time_utc", tableName: "mt_deal" });
+    const anchor = 1700000000;
+    const bucketSeconds = 60;
+
+    // Equivalent to:
+    //   intDiv(toInt64(toUnixTimestamp(time_utc)) - anchor, bucket) * bucket + anchor
+    const bucketTs = fn.plus<number>(
+      fn.multiply(
+        fn.intDiv(
+          fn.minus(fn.toInt64(fn.toUnixTimestamp(timeUtc)), anchor),
+          bucketSeconds,
+        ),
+        bucketSeconds,
+      ),
+      anchor,
+    );
+
+    const compiled = compileExpression(bucketTs);
+    expect(compiled.query).toContain("plus(");
+    expect(compiled.query).toContain("multiply(intDiv(minus(toInt64(toUnixTimestamp(`mt_deal`.`time_utc`)),");
+    // sqlType is inherited from the leftmost toInt64 → Int64
+    expect(bucketTs.sqlType).toBe("Int64");
+    // The runtime decoder is intStringDecoder (from toInt64); generic <number> is a TS hint only.
+    // Production code should pair with .mapWith(Number) if JS number is required.
+    expect(bucketTs.decoder("1767225600")).toBe("1767225600");
+    const decoded = bucketTs.mapWith<number>((v) => Number(v)).decoder("1767225600");
+    expect(decoded).toBe(1767225600);
+  });
+
+  it("handles unary abs/negate and OrZero variants with zero divisor", function testArithmeticUnaryAndSafeVariants() {
+    const id = int32().bind({ name: "id", tableName: "orders" });
+
+    // abs / negate keep first-arg sqlType
+    expect(fn.abs(id).sqlType).toBe("Int32");
+    expect(fn.negate(id).sqlType).toBe("Int32");
+
+    // Compose: abs(negate(id)) — both inherit Int32
+    const composed = fn.abs(fn.negate(id));
+    expect(compileExpression(composed).query).toContain("abs(negate(`orders`.`id`))");
+    expect(composed.sqlType).toBe("Int32");
+
+    // OrZero variants render the safe function name; ClickHouse handles 0-divisor semantics
+    expect(compileExpression(fn.intDivOrZero(id, 0)).query).toContain("intDivOrZero(`orders`.`id`,");
+    expect(compileExpression(fn.moduloOrZero(id, 0)).query).toContain("moduloOrZero(`orders`.`id`,");
+  });
+
+  it("renders SQL fragments and other expressions as operands", function testArithmeticAcceptsSqlFragments() {
+    const id = int32().bind({ name: "id", tableName: "orders" });
+
+    // sql.raw fragment as right operand — emitted verbatim, no parameterization
+    const withRaw = fn.plus(id, sql.raw("now()"));
+    expect(compileExpression(withRaw).query).toContain("plus(`orders`.`id`, now())");
+
+    // Another Selection (fn.toInt64 result) as right operand
+    const withSel = fn.minus(fn.toInt64(id), fn.toInt64(id));
+    expect(compileExpression(withSel).query).toContain(
+      "minus(toInt64(`orders`.`id`), toInt64(`orders`.`id`))",
+    );
+
+    // Literal as left operand still works (parameterized)
+    const litLeft = fn.divide(100, id);
+    expect(compileExpression(litLeft).query).toContain("divide({orm_param1:Int64}, `orders`.`id`)");
+    expect(litLeft.sqlType).toBe("Float64");
+  });
+
+  it("compiles fn.jsonPath / jsonCast / jsonSubobject / jsonMerged / jsonArray dynamic-path helpers", function testDynamicJsonHelpers() {
+    const payload = json<{ a: { b: number }; tags: string[] }>("payload").bind({
+      key: "payload",
+      name: "payload",
+      tableName: "events",
+    });
+
+    // jsonPath — `column.<path>` with passthrough decoder
+    const pathSel = fn.jsonPath<string>(payload, "a.b");
+    expect(compileExpression(pathSel).query).toContain("`events`.`payload`.a.b");
+    expect(pathSel.decoder("raw")).toBe("raw");
+
+    // jsonCast — `column.<path>.:<sqlType>` with the cast column's decoder
+    const castSel = fn.jsonCast(payload, "a.b", uint64());
+    expect(compileExpression(castSel).query).toContain("`events`.`payload`.a.b.:UInt64");
+    expect(castSel.sqlType).toBe("UInt64");
+    expect(castSel.decoder("123")).toBe("123");
+
+    // jsonSubobject — `column.^<head>(.tail)?`
+    const subSingleSel = fn.jsonSubobject(payload, "a");
+    expect(compileExpression(subSingleSel).query).toContain("`events`.`payload`.^a");
+    const subNestedSel = fn.jsonSubobject(payload, "a.b");
+    expect(compileExpression(subNestedSel).query).toContain("`events`.`payload`.^a.b");
+    expect(subSingleSel.decoder({ a: 1 })).toEqual({ a: 1 });
+
+    // jsonMerged — `column.@<head>(.tail)?`
+    const mergedSingleSel = fn.jsonMerged(payload, "a");
+    expect(compileExpression(mergedSingleSel).query).toContain("`events`.`payload`.@a");
+    const mergedNestedSel = fn.jsonMerged(payload, "a.b");
+    expect(compileExpression(mergedNestedSel).query).toContain("`events`.`payload`.@a.b");
+    expect(mergedSingleSel.decoder({ shared: true })).toEqual({ shared: true });
+
+    // jsonArray — `column.<path>[]` array-expansion view
+    const arraySel = fn.jsonArray<string>(payload, "tags");
+    expect(compileExpression(arraySel).query).toContain("`events`.`payload`.tags[]");
+    expect(arraySel.decoder(["a", "b"])).toEqual(["a", "b"]);
+
+    // dynamicType — `dynamicType(expression)` runtime type-name introspection
+    const dtSel = fn.dynamicType(fn.jsonPath(payload, "a.b"));
+    expect(compileExpression(dtSel).query).toContain("dynamicType(`events`.`payload`.a.b)");
+    expect(dtSel.sqlType).toBe("String");
+    expect(dtSel.decoder("UInt64")).toBe("UInt64");
   });
 
   it("compiles fn.positionCaseInsensitive helpers", function testPositionCaseInsensitiveFns() {

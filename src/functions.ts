@@ -1515,6 +1515,55 @@ const scalarFns = {
       sqlType,
     });
   },
+  /** Binary `a + b`. Return type/decoder tracks `left`. ClickHouse: `plus(a, b)`. */
+  plus<TData = unknown>(left: unknown, right: unknown): Selection<TData> {
+    return createFirstArgFunction<TData>("plus", [left, right]);
+  },
+  /** Binary `a - b`. Return type/decoder tracks `left`. */
+  minus<TData = unknown>(left: unknown, right: unknown): Selection<TData> {
+    return createFirstArgFunction<TData>("minus", [left, right]);
+  },
+  /** Binary `a * b`. Return type/decoder tracks `left`. */
+  multiply<TData = unknown>(left: unknown, right: unknown): Selection<TData> {
+    return createFirstArgFunction<TData>("multiply", [left, right]);
+  },
+  /**
+   * Binary `a / b`. ClickHouse always promotes to `Float64`, so the result is
+   * decoded as JS `number` regardless of input types. Use `intDiv` for integer
+   * truncation that preserves the integer family.
+   */
+  divide(left: unknown, right: unknown): Selection<number> {
+    return createNumberExpression("divide", [left, right], "Float64");
+  },
+  /** Integer division (truncates toward zero). Return type tracks `left`. */
+  intDiv<TData = unknown>(left: unknown, right: unknown): Selection<TData> {
+    return createFirstArgFunction<TData>("intDiv", [left, right]);
+  },
+  /** Integer division that returns `0` when `right` is `0`. Return type tracks `left`. */
+  intDivOrZero<TData = unknown>(left: unknown, right: unknown): Selection<TData> {
+    return createFirstArgFunction<TData>("intDivOrZero", [left, right]);
+  },
+  /** Remainder of integer division. Return type tracks `left`. */
+  modulo<TData = unknown>(left: unknown, right: unknown): Selection<TData> {
+    return createFirstArgFunction<TData>("modulo", [left, right]);
+  },
+  /** Remainder that returns `0` when `right` is `0`. Return type tracks `left`. */
+  moduloOrZero<TData = unknown>(left: unknown, right: unknown): Selection<TData> {
+    return createFirstArgFunction<TData>("moduloOrZero", [left, right]);
+  },
+  /**
+   * Absolute value. ClickHouse promotes signed integers to their unsigned
+   * counterpart (e.g. `Int64` → `UInt64`); the first-arg decoder is still
+   * correct for the common `number` case. Pass `<string>` if the input is a
+   * `toInt64`/`toUInt64` result and you want to preserve the string form.
+   */
+  abs<TData = unknown>(value: unknown): Selection<TData> {
+    return createFirstArgFunction<TData>("abs", [value]);
+  },
+  /** Arithmetic negation `-value`. Return type/decoder tracks `value`. */
+  negate<TData = unknown>(value: unknown): Selection<TData> {
+    return createFirstArgFunction<TData>("negate", [value]);
+  },
   tuple(...args: unknown[]): Selection<unknown[]> {
     return createFunctionExpression("tuple", args, {
       decoder: arrayDecoder<unknown>("tuple"),

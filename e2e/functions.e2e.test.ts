@@ -1015,6 +1015,163 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
     });
   });
 
+  it("supports fn arithmetic operators against real ClickHouse", async function testArithmeticOperators() {
+    const db = createE2EDb();
+
+    const rows = await db
+      .select({
+        id: users.id,
+        plusTen: fn.plus(users.id, 10).as("plus_ten"),
+        minusOne: fn.minus(users.id, 1).as("minus_one"),
+        timesThree: fn.multiply(users.id, 3).as("times_three"),
+        halfFloat: fn.divide(users.id, 2).as("half_float"),
+        halfInt: fn.intDiv(users.id, 2).as("half_int"),
+        modTwo: fn.modulo(users.id, 2).as("mod_two"),
+        negated: fn.negate(users.id).as("negated"),
+        absOfNegated: fn.abs(fn.negate(users.id)).as("abs_of_negated"),
+        // OrZero variants: ClickHouse returns 0 instead of raising on zero divisor.
+        safeDiv: fn.intDivOrZero(users.id, 0).as("safe_div"),
+        safeMod: fn.moduloOrZero(users.id, 0).as("safe_mod"),
+      })
+      .from(users)
+      .where(ck.lte(users.id, 3))
+      .orderBy(users.id);
+
+    expect(rows).toEqual([
+      {
+        id: 1,
+        plusTen: 11,
+        minusOne: 0,
+        timesThree: 3,
+        halfFloat: 0.5,
+        halfInt: 0,
+        modTwo: 1,
+        negated: -1,
+        absOfNegated: 1,
+        safeDiv: 0,
+        safeMod: 0,
+      },
+      {
+        id: 2,
+        plusTen: 12,
+        minusOne: 1,
+        timesThree: 6,
+        halfFloat: 1,
+        halfInt: 1,
+        modTwo: 0,
+        negated: -2,
+        absOfNegated: 2,
+        safeDiv: 0,
+        safeMod: 0,
+      },
+      {
+        id: 3,
+        plusTen: 13,
+        minusOne: 2,
+        timesThree: 9,
+        halfFloat: 1.5,
+        halfInt: 1,
+        modTwo: 1,
+        negated: -3,
+        absOfNegated: 3,
+        safeDiv: 0,
+        safeMod: 0,
+      },
+    ]);
+  });
+
+  it("reproduces the bucket-timestamp expr pattern using only fn.* arithmetic", async function testArithmeticBucketTimestamp() {
+    const db = createE2EDb();
+    // Seed: users.created_at = 2026-01-01 00:00:00 + (id - 1) seconds (UTC).
+    // Anchor at midnight 2026-01-01 UTC, bucket size 60s.
+    // The bucket calculation snaps each row's unix-seconds down to the
+    // nearest 60-second boundary relative to anchor:
+    //   intDiv(toInt64(toUnixTimestamp(created_at)) - anchor, 60) * 60 + anchor.
+    const anchor = 1767225600;
+    const bucketSeconds = 60;
+
+    const rows = await db
+      .select({
+        id: users.id,
+        // Pure number path: stays in Int32 family, sqlType + decoder both inherit number.
+        bucketNumber: fn
+          .plus(
+            fn.multiply(
+              fn.intDiv(fn.minus(fn.toUnixTimestamp(users.created_at, "UTC"), anchor), bucketSeconds),
+              bucketSeconds,
+            ),
+            anchor,
+          )
+          .as("bucket_number"),
+        // Int64 path mirroring the user's original ck.expr<number> example.
+        // Int64 chain emits a string decoder; .mapWith(Number) opts into JS number.
+        bucketInt64: fn
+          .plus(
+            fn.multiply(
+              fn.intDiv(
+                fn.minus(fn.toInt64(fn.toUnixTimestamp(users.created_at, "UTC")), anchor),
+                bucketSeconds,
+              ),
+              bucketSeconds,
+            ),
+            anchor,
+          )
+          .mapWith<number>((value) => Number(value))
+          .as("bucket_int64"),
+      })
+      .from(users)
+      .where(ck.lte(users.id, 5))
+      .orderBy(users.id);
+
+    // All five rows fall within the same 60-second bucket starting at anchor.
+    expect(rows).toEqual([
+      { id: 1, bucketNumber: anchor, bucketInt64: anchor },
+      { id: 2, bucketNumber: anchor, bucketInt64: anchor },
+      { id: 3, bucketNumber: anchor, bucketInt64: anchor },
+      { id: 4, bucketNumber: anchor, bucketInt64: anchor },
+      { id: 5, bucketNumber: anchor, bucketInt64: anchor },
+    ]);
+  });
+
+  it("uses fn arithmetic operators inside where/orderBy/groupBy clauses", async function testArithmeticInClauses() {
+    const db = createE2EDb();
+
+    // WHERE: select rows where id % 2 == 0 (even ids only)
+    const evenRows = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(ck.eq(fn.modulo(users.id, 2), 0), ck.lte(users.id, 6))
+      .orderBy(users.id);
+    expect(evenRows).toEqual([{ id: 2 }, { id: 4 }, { id: 6 }]);
+
+    // ORDER BY: sort by negate(id) desc → id ascending in result
+    const orderedRows = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(ck.lte(users.id, 3))
+      .orderBy(ck.desc(fn.negate(users.id)));
+    expect(orderedRows).toEqual([{ id: 1 }, { id: 2 }, { id: 3 }]);
+
+    // GROUP BY: count rows per intDiv(id, 2) bucket
+    const groupRows = await db
+      .select({
+        bucket: fn.intDiv(users.id, 2).as("bucket"),
+        cnt: fn.count().as("cnt"),
+      })
+      .from(users)
+      .where(ck.lte(users.id, 6))
+      .groupBy(fn.intDiv(users.id, 2))
+      .orderBy(ck.asc(fn.intDiv(users.id, 2)));
+    // id=1 → bucket 0; id=2,3 → bucket 1; id=4,5 → bucket 2; id=6,7 → bucket 3
+    // With where id<=6: bucket 0 → {1}, bucket 1 → {2,3}, bucket 2 → {4,5}, bucket 3 → {6}
+    expect(groupRows).toEqual([
+      { bucket: 0, cnt: 1 },
+      { bucket: 1, cnt: 2 },
+      { bucket: 2, cnt: 2 },
+      { bucket: 3, cnt: 1 },
+    ]);
+  });
+
   it("supports tableFn.call against the numbers table function", async function testTableFunction() {
     const db = createE2EDb();
     const numbers = fn.table.call("numbers", 5).as("n");
