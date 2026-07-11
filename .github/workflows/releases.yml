@@ -6,19 +6,15 @@ on:
 jobs:
   releases-core:
     runs-on: ubuntu-latest
+    container: node:24
     permissions:
       contents: read
       id-token: write
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - run: npm install --global bun
       - run: bun install --frozen-lockfile
       - run: bun run build
       - run: |
-          umask 077
-          printf '%s\n' "//registry.npmjs.org/:_authToken=$NPM_TOKEN" > "$HOME/.npmrc"
-          npm whoami
           cd dist
           npm publish --access public
-        env:
-          NPM_TOKEN: ${{secrets.NPM_TOKEN}}
