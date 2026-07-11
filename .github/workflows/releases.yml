@@ -14,6 +14,11 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun run build
-      - run: cd dist && npm publish --access public
+      - run: |
+          umask 077
+          printf '%s\n' "//registry.npmjs.org/:_authToken=$NPM_TOKEN" > "$HOME/.npmrc"
+          npm whoami
+          cd dist
+          npm publish --access public
         env:
-          NPM_CONFIG_TOKEN: ${{secrets.NPM_TOKEN}}
+          NPM_TOKEN: ${{secrets.NPM_TOKEN}}
