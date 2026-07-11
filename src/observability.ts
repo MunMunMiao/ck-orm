@@ -265,6 +265,7 @@ export const createLoggerInstrumentation = (
         durationMs: event.durationMs,
         outcome: "error",
         rowCount: event.rowCount,
+        partialRowCount: event.partialRowCount,
         errorKind: isClickHouseORMError(event.error) ? event.error.kind : undefined,
         executionState: isClickHouseORMError(event.error) ? event.error.executionState : undefined,
         httpStatus: isClickHouseORMError(event.error) ? event.error.httpStatus : undefined,
@@ -297,9 +298,10 @@ export const createTracingInstrumentation = (
     if (event.format) {
       span.setAttribute("db.response.format", event.format);
     }
-    if (shouldIncludeRowCount(options.includeRowCount, event.mode) && typeof event.rowCount === "number") {
-      span.setAttribute("db.response.row_count", event.rowCount);
-      span.setAttribute("db.response.returned_rows", event.rowCount);
+    const rowCount = "error" in event ? event.partialRowCount : event.rowCount;
+    if (shouldIncludeRowCount(options.includeRowCount, event.mode) && typeof rowCount === "number") {
+      span.setAttribute("db.response.row_count", rowCount);
+      span.setAttribute("db.response.returned_rows", rowCount);
     }
     span.setAttribute("db.query.duration_ms", event.durationMs);
     span.setAttribute("ck_orm.duration_ms", event.durationMs);

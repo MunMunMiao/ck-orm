@@ -3182,11 +3182,17 @@ export const createSessionId = () => {
   return `ck_orm_${createUuid().replaceAll("-", "_")}`;
 };
 
-export const expr = <TData = unknown>(
+export function expr<TData>(value: SQLFragment<TData>): Selection<TData>;
+export function expr<TData = unknown>(
   value: SQLFragment,
   config?: { decoder?: Decoder<TData>; sqlType?: string },
-): Selection<TData> =>
-  wrapSql(value, {
+): Selection<TData>;
+export function expr<TData = unknown>(
+  value: SQLFragment,
+  config?: { decoder?: Decoder<TData>; sqlType?: string },
+): Selection<TData> {
+  return wrapSql(value, {
     decoder: (config?.decoder ?? value.decoder) as Decoder<TData>,
     sqlType: config?.sqlType,
   });
+}

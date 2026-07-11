@@ -130,9 +130,13 @@ describe("ck-orm observability", function describeClickHouseORMObservability() {
       startedAt: 100,
     });
 
+    const errorEvent = createQueryErrorEvent(event, new Error("boom"), 20, 0);
+    expect(errorEvent.partialRowCount).toBe(0);
+    expect(errorEvent.rowCount).toBe(0);
+
     await warnOnly.onQueryStart?.(event);
     await warnOnly.onQuerySuccess?.(createQuerySuccessEvent(event, 10, 1));
-    await warnOnly.onQueryError?.(createQueryErrorEvent(event, new Error("boom"), 20, 0));
+    await warnOnly.onQueryError?.(errorEvent);
 
     await debugEnabled.onQueryStart?.(event);
     await debugEnabled.onQuerySuccess?.(createQuerySuccessEvent(event, 10, 1));
@@ -523,6 +527,7 @@ describe("ck-orm observability", function describeClickHouseORMObservability() {
     expect(traced.spans[1]?.exceptions).toEqual([boom]);
     expect(traced.spans[1]?.attributes["error.type"]).toBe("Error");
     expect(traced.spans[1]?.attributes["db.response.row_count"]).toBe(3);
+    expect(traced.spans[1]?.attributes["db.response.returned_rows"]).toBe(3);
 
     const noCountTracer = createCapturedTracer();
     const noCountInstrumentation = createTracingInstrumentation({

@@ -142,46 +142,7 @@ Builder queries are thenable, so `await query` executes the query directly.
 
 ## Examples
 
-The README is the reference path. The [`examples/`](./examples) directory is the copy-and-adapt path.
-
-Start here by task:
-
-| Task | Example |
-| --- | --- |
-| Basic builder query, filters, aggregate, `FINAL` | [`examples/basic-select.ts`](./examples/basic-select.ts) |
-| Neutral probe telemetry schema covering Date/Date32, JSON, Tuple, Nested, Nullable | [`examples/schema/probe.ts`](./examples/schema/probe.ts) |
-| Dynamic filters, explicit NULL predicates, value-level `undefined` guardrails | [`examples/null-and-optional-filters.ts`](./examples/null-and-optional-filters.ts) |
-| Date/Date32 predicate encoders and DateTime formatting/conversion helpers | [`examples/date-time-formatting.ts`](./examples/date-time-formatting.ts) |
-| Nested, Nullable, Tuple, JSON, Array, and calendar-date writes | [`examples/nested-nullable-writes.ts`](./examples/nested-nullable-writes.ts) |
-| Tuple scopes and raw Tuple `query_params` | [`examples/tuple-params-and-scopes.ts`](./examples/tuple-params-and-scopes.ts) |
-| Schema options, column name mapping, column metadata, inferred row/insert types | [`examples/schema-and-types.ts`](./examples/schema-and-types.ts) |
-| Inserts, raw `query_params`, direct value binding | [`examples/params-and-insert.ts`](./examples/params-and-insert.ts) |
-| Raw SQL templates, identifiers, table functions | [`examples/raw-sql.ts`](./examples/raw-sql.ts) |
-| Probe JSON extraction, array helpers, `arrayJoin(arrayZip(...))`, tuple scopes | [`examples/json-array-functions.ts`](./examples/json-array-functions.ts) |
-| CTEs, subqueries, joins | [`examples/cte-and-subquery.ts`](./examples/cte-and-subquery.ts) |
-| Left join null semantics and `withSettings()` | [`examples/joins-and-settings.ts`](./examples/joins-and-settings.ts) |
-| Session temporary tables | [`examples/session-temp-table.ts`](./examples/session-temp-table.ts) |
-| Large filter scopes with session temp tables and streaming export | [`examples/large-scope-session.ts`](./examples/large-scope-session.ts) |
-| Runtime methods, logger, instrumentation, endpoint helpers | [`examples/runtime-observability.ts`](./examples/runtime-observability.ts) |
-| Advanced compiled-query integration | [`examples/advanced-compiled-query.ts`](./examples/advanced-compiled-query.ts) |
-| Count modes and error guards | [`examples/count-and-errors.ts`](./examples/count-and-errors.ts) |
-
-Public API coverage by guide:
-
-| API family | README section | Example files |
-| --- | --- | --- |
-| `ckType`, `ckTable`, `ckAlias`, model inference | [Schema DSL](#schema-dsl) | [`schema-and-types.ts`](./examples/schema-and-types.ts), [`schema/probe.ts`](./examples/schema/probe.ts) |
-| `clickhouseClient`, connection config, settings | [Client configuration](#client-configuration) | [`basic-select.ts`](./examples/basic-select.ts), [`runtime-observability.ts`](./examples/runtime-observability.ts) |
-| `select`, joins, filters, grouping, ordering, `limitBy`, CTEs | [Query builder](#query-builder) | [`basic-select.ts`](./examples/basic-select.ts), [`cte-and-subquery.ts`](./examples/cte-and-subquery.ts), [`null-and-optional-filters.ts`](./examples/null-and-optional-filters.ts), [`tuple-params-and-scopes.ts`](./examples/tuple-params-and-scopes.ts) |
-| `count`, `count().toSafe()`, `count().toMixed()` | [`db.count()`](#dbcount) | [`count-and-errors.ts`](./examples/count-and-errors.ts) |
-| `insert`, `insertJsonEachRow` | [Writes](#writes) | [`params-and-insert.ts`](./examples/params-and-insert.ts), [`nested-nullable-writes.ts`](./examples/nested-nullable-writes.ts), [`large-scope-session.ts`](./examples/large-scope-session.ts) |
-| `ckSql`, `ck.expr`, `query_params`, identifiers | [Raw SQL](#raw-sql) | [`raw-sql.ts`](./examples/raw-sql.ts), [`params-and-insert.ts`](./examples/params-and-insert.ts), [`tuple-params-and-scopes.ts`](./examples/tuple-params-and-scopes.ts) |
-| `fn.*` scalar, aggregate, JSON, array, tuple, table helpers | [Functions and table functions](#functions-and-table-functions) | [`json-array-functions.ts`](./examples/json-array-functions.ts), [`date-time-formatting.ts`](./examples/date-time-formatting.ts), [`tuple-params-and-scopes.ts`](./examples/tuple-params-and-scopes.ts), [`raw-sql.ts`](./examples/raw-sql.ts) |
-| `runInSession`, temporary tables, session concurrency | [Sessions and temporary tables](#sessions-and-temporary-tables) | [`session-temp-table.ts`](./examples/session-temp-table.ts), [`large-scope-session.ts`](./examples/large-scope-session.ts) |
-| `execute`, `stream`, `command`, `ping`, `replicasStatus`, `withSettings` | [Runtime methods](#runtime-methods) | [`runtime-observability.ts`](./examples/runtime-observability.ts), [`raw-sql.ts`](./examples/raw-sql.ts) |
-| `executeCompiled`, `iteratorCompiled`, `ck.decodeRow`, `ck.createSessionId`, `CompiledQuery` | [Runtime methods](#runtime-methods) | [`advanced-compiled-query.ts`](./examples/advanced-compiled-query.ts) |
-| logger, tracing, instrumentation | [Observability](#observability) | [`runtime-observability.ts`](./examples/runtime-observability.ts) |
-| error guards and error fields | [Error model](#error-model) | [`count-and-errors.ts`](./examples/count-and-errors.ts) |
+The README is the reference path for API examples. Runnable ClickHouse coverage lives in [`e2e/`](./e2e), including production-shaped scenario schemas in [`e2e/scenarios.ts`](./e2e/scenarios.ts).
 
 ## Mental model
 
@@ -1623,6 +1584,17 @@ const query = db.select({
 });
 ```
 
+When the fragment is typed, `ck.expr()` keeps that type. An untyped fragment
+intentionally remains `unknown`; pass a generic or decoder when its result is
+known outside the schema:
+
+```ts
+const status = ck.expr(ckSql<string>`'closed'`); // Selection<string>
+const enabled = ck.expr<boolean>(ckSql`1`, {
+  decoder: (value) => Number(value) === 1,
+});
+```
+
 ### Raw query formats
 
 Raw eager queries only support `JSON` output:
@@ -1662,7 +1634,7 @@ ckSql.decimal(ckSql`sum(a) - sum(b)`, 20, 5);
 measurementLog.value.cast(20, 2); // column shortcut
 ```
 
-- `sum` / `sumIf` widen P to ≥ 38; `min` / `max` keep the column's P. Auto-cast also fires through `nullable(decimal(...))` and `lowCardinality(decimal(...))`.
+- `sum` / `sumIf` widen P to ≥ 38; `min` / `max` keep the column's P. For schema Decimal columns, `fn.sum()` and `fn.sumIf()` are `Selection<string>`; Float columns are `Selection<number>`. Auto-cast also fires through `nullable(decimal(...))` and `lowCardinality(decimal(...))`.
 - `avg` is **not** auto-cast — ClickHouse computes `avg(Decimal)` over Float64, so `fn.avg` returns `Selection<number>`. For exact Decimal averages, use `ckSql.decimal(ckSql\`sum(x) / count(x)\`, P, S)`.
 - `column.cast(P, S)` casts the column, not the aggregate — using it bare inside `GROUP BY` raises `NOT_AN_AGGREGATE`. Use `fn.sum(column)` or wrap the aggregate.
 - Inserts reject non-string/number objects (e.g. raw `decimal.js` instances) — pass `.toFixed(scale)`:
@@ -1699,6 +1671,27 @@ Generic, conversion, aggregate, JSON, tuple, and table-related helpers include:
 - `fn.arrayJoin()`
 - `fn.tupleElement()`
 - `fn.not()`
+
+### Typed tuple aggregation
+
+`fn.tuple()` preserves each item type. The one-value `groupArray` form keeps
+that tuple type and decoder, and unary `fn.arrayReverseSort()` keeps the same
+array item type:
+
+```ts
+import { ckTable, ckType, fn } from "ck-orm";
+
+const historyOrder = ckTable("history_order", {
+  closedAt: ckType.dateTime64({ precision: 3 }),
+  active: ckType.bool(),
+  id: ckType.int32(),
+});
+const pageRow = fn.tuple(historyOrder.closedAt, historyOrder.active, historyOrder.id);
+const items = fn.arrayReverseSort(fn.withParams("groupArray", [21], pageRow));
+// Selection<[Date, boolean, number][]>
+```
+
+The existing explicit-generic form remains available for raw or dynamic cases.
 
 Array helper names mirror the canonical headings in the ClickHouse [Array functions](https://clickhouse.com/docs/sql-reference/functions/array-functions) reference. Alias-only names stay available through `fn.call(...)` instead of expanding the public API twice.
 

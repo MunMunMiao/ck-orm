@@ -440,9 +440,9 @@ export const chainedColumns = ckTable(
   }),
 );
 
-export { scenarioSchema } from "../examples/schema/scenarios";
+export { scenarioSchema } from "./scenarios";
 
-import { scenarioSchema as _scenarioSchema } from "../examples/schema/scenarios";
+import { scenarioSchema as _scenarioSchema } from "./scenarios";
 
 export const e2eSchema = {
   users,

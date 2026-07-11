@@ -60,9 +60,9 @@ Each E2E run follows the same sequence:
 2. The `seed` service runs `e2e/seed.ts`
    - drops the old database
    - recreates `ck_orm_e2e`
-   - creates the schema round-trip tables and scenario tables
+   - creates the schema round-trip tables and the small retained scenario set
    - generates deterministic test data programmatically
-   - keeps the scenario dataset at a fixed six-figure scale
+   - keeps the shared dataset at a fixed six-figure scale
 3. `dataset-smoke.e2e.test.ts` runs first
    - if row counts, key distributions, or deterministic invariants fail, the rest of the suite stops immediately
 4. If smoke passes, the full `bun test e2e` run starts
@@ -112,7 +112,7 @@ The current E2E suite covers:
   - `db.count(...).toUnsafe()`, `.toSafe()`, and `.toMixed()`
   - session-scoped counts over temporary tables and `FINAL` subqueries
 - function coverage
-  - all `fn.*`
+  - public `fn.*` helpers used by the supported DSL paths
   - `fn.table.call('numbers', ...)`
 - write-path coverage
   - `insert()` via direct await and explicit `.execute()`
@@ -183,8 +183,6 @@ The current E2E suite covers:
   - repeated `role` propagation
   - merged `http_headers` with runtime-owned `Authorization`
   - response compression through transparent fetch sampling against real ClickHouse
-
-See [api-matrix.md](./api-matrix.md) for the API-to-test coverage map.
 
 ## Dataset notes
 

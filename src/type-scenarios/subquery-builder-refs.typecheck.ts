@@ -38,8 +38,8 @@ const bareAfterFrom = db
 type _BareOwnerIdRefType = typeof bareAfterFrom.owner_id;
 type _BareOwnerIdAssert = Expect<Equal<_BareOwnerIdRefType, Selection<number, string>>>;
 type _BareTotalRefType = typeof bareAfterFrom.total;
-// fn.sum widens to `number | string` (Float64-style accumulators) — match that.
-type _BareTotalAssert = Expect<Equal<_BareTotalRefType, Selection<number | string, string>>>;
+// Float64 columns decode to `number` through fn.sum.
+type _BareTotalAssert = Expect<Equal<_BareTotalRefType, Selection<number, string>>>;
 
 // 2. Column refs survive chain methods: `.where()`, `.orderBy()`, `.limit()`.
 const chained = bareAfterFrom.where(undefined).orderBy(orders.id).limit(5);

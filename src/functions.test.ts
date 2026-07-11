@@ -2,7 +2,9 @@ import { describe, expect, it } from "bun:test";
 import {
   array as arrayColumn,
   bfloat16,
+  bool,
   dateTime,
+  dateTime64,
   decimal,
   float32,
   float64,
@@ -1516,7 +1518,8 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
   });
 
   it("decodes tuple/arrayZip/jsonExtract container helpers", function testContainerDecoders() {
-    expect(fn.tuple().decoder([1, 2])).toEqual([1, 2]);
+    expect(fn.tuple().decoder([])).toEqual([]);
+    expect(() => fn.tuple().decoder([1, 2])).toThrow("tuple: expected 0 items, got 2");
     expect(() => fn.tuple().decoder("bad")).toThrow("Cannot convert value to tuple array");
 
     expect(fn.arrayZip().decoder([[1, 2]])).toEqual([[1, 2]]);
@@ -1527,6 +1530,36 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     expect(fn.jsonExtract(sql.raw("payload"), nullable(string())).decoder("vip")).toBe("vip");
 
     expect(fn.tupleElement<string>(fn.tuple("ticket"), 1).decoder("ticket")).toBe("ticket");
+  });
+
+  it("decodes tuple aggregation and sorting through their input decoders", function testCompositeDecoderPropagation() {
+    expect(() => fn.arrayReverseSort([3, 1, 2]).decoder("bad")).toThrow(
+      "Cannot convert value to arrayReverseSort array",
+    );
+    expect(() => fn.arrayReverseSort(sql.raw("x -> -x"), [3, 1, 2]).decoder("bad")).toThrow(
+      "Cannot convert value to arrayReverseSort array",
+    );
+
+    const closedAt = dateTime64({ precision: 3 });
+    const active = bool();
+    const rawItem = ["2026-07-11T12:34:56.789Z", 1];
+    const expectedItem = [new Date("2026-07-11T12:34:56.789Z"), true];
+    const item = fn.tuple(closedAt, active);
+
+    expect(item.decoder(rawItem)).toEqual(expectedItem);
+    expect(() => item.decoder([rawItem[0]])).toThrow("tuple: expected 2 items, got 1");
+
+    const grouped = fn.withParams("groupArray", [21], item);
+    expect(grouped.decoder([rawItem])).toEqual([expectedItem]);
+    expect(() => grouped.decoder(undefined)).toThrow("Cannot convert value to groupArray array");
+
+    expect(fn.tuple("literal", 1).decoder(["literal", 1])).toEqual(["literal", 1]);
+
+    const sorted = fn.arrayReverseSort(grouped);
+    expect(sorted.decoder([rawItem])).toEqual([expectedItem]);
+
+    const sortedDates = fn.arrayReverseSort(arrayColumn(dateTime64({ precision: 3 })));
+    expect(sortedDates.decoder([rawItem[0]])).toEqual([expectedItem[0]]);
   });
 
   it("decodes scalar array operations (has/exists/indexOf/length/etc.)", function testArrayScalarOps() {

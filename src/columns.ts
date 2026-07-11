@@ -2,7 +2,7 @@ import { toBoolean, toDate, toIntegerNumber, toIntegerString, toNumber, toString
 import { createClientValidationError, createDecodeError, type DecodeError, isDecodeError } from "./errors";
 import { assertIntegerInRange, assertNonNegativeInteger, assertPositiveInteger } from "./internal/assert";
 import { normalizeAggregateFunctionSignature, normalizeClickHouseTypeLiteral } from "./internal/clickhouse-type";
-import { assertDecimalParams, type DecimalParams, formatDecimalSqlType } from "./internal/decimal";
+import { assertDecimalParams, type DecimalParams, type DecimalSqlType, formatDecimalSqlType } from "./internal/decimal";
 import { escapeSqlSingleQuoted } from "./internal/escape";
 import { assertValidSqlIdentifier } from "./internal/identifier";
 import { assertJsonPathIdentifier, parseJsonPathSegments } from "./internal/json-path";
@@ -820,7 +820,7 @@ export type Float64<TData extends number = number> = Column<TData, "Float64">;
 export type BFloat16<TData extends number = number> = Column<TData, "BFloat16">;
 export type StringColumn<TData extends string = string> = Column<TData, "String">;
 export type FixedString<TData extends string = string> = Column<TData, `FixedString(${number})`>;
-export type Decimal<TData extends string = string> = Column<TData, string>;
+export type Decimal<TData extends string = string> = Column<TData, DecimalSqlType>;
 export type DateColumn<TData extends Date = Date> = Column<TData, "Date">;
 export type Date32<TData extends Date = Date> = Column<TData, "Date32">;
 export type Time<TData extends string = string> = Column<TData, "Time">;
@@ -947,7 +947,7 @@ export type Dynamic<TData = unknown> = Column<TData, "Dynamic">;
 export type QBit<TData extends readonly number[] = readonly number[]> = Column<TData, string>;
 export type Enum8<TData extends string = string> = Column<TData, string>;
 export type Enum16<TData extends string = string> = Column<TData, string>;
-export type Nullable<TInner extends AnyColumn> = Column<InferData<TInner> | null, string>;
+export type Nullable<TInner extends AnyColumn> = Column<InferData<TInner> | null, `Nullable(${TInner["sqlType"]})`>;
 export type ArrayColumn<TInner extends AnyColumn> = Column<InferData<TInner>[], string>;
 export type TupleColumn<TItems extends readonly AnyColumn[]> = Column<
   { [K in keyof TItems]: InferData<TItems[K]> },
@@ -958,7 +958,10 @@ export type MapColumn<_TKey extends AnyColumn, TValue extends AnyColumn> = Colum
   string
 >;
 export type VariantColumn<TItems extends readonly AnyColumn[]> = Column<InferData<TItems[number]>, string>;
-export type LowCardinality<TInner extends AnyColumn> = Column<InferData<TInner>, string>;
+export type LowCardinality<TInner extends AnyColumn> = Column<
+  InferData<TInner>,
+  `LowCardinality(${TInner["sqlType"]})`
+>;
 export type NestedColumn<TShape extends Record<string, AnyColumn>> = Column<
   { [K in keyof TShape]: InferData<TShape[K]> }[],
   string
@@ -1136,7 +1139,7 @@ export const date32 = (name?: string): Date32<Date> =>
  * Therefore Date inputs are rejected; callers must pass `'HH:MM:SS[.fff]'`
  * strings or integers (interpreted by ClickHouse as scaled units per
  * `Time64(N)` precision). This matches the official `@clickhouse/client`
- * pattern (see `examples/node/coding/time_time64.ts`).
+ * guidance for `Time` and `Time64` values.
  */
 const createTimeEncoder = (columnLabel: "Time" | "Time64"): Encoder<string> => {
   return (value) => {
@@ -1349,9 +1352,10 @@ export function nullable<TInner extends AnyColumn>(first: string | TInner, secon
     );
   }
 
-  return createColumnFactory<InferData<TInner> | null, string>({
+  const sqlType = `Nullable(${inner.sqlType})` as `Nullable(${TInner["sqlType"]})`;
+  return createColumnFactory<InferData<TInner> | null, `Nullable(${TInner["sqlType"]})`>({
     configuredName: name,
-    sqlType: `Nullable(${inner.sqlType})`,
+    sqlType,
     mapFromDriverValue: (value) => {
       if (value === null) {
         return null;
@@ -1496,12 +1500,13 @@ export function lowCardinality<TInner extends AnyColumn>(
   second?: TInner,
 ): LowCardinality<TInner> {
   const { name, value: inner } = parseNamedValue<TInner>("lowCardinality", first, second);
-  return createColumnFactory<InferData<TInner>, string>({
+  const sqlType = `LowCardinality(${inner.sqlType})` as `LowCardinality(${TInner["sqlType"]})`;
+  return createColumnFactory<InferData<TInner>, `LowCardinality(${TInner["sqlType"]})`>({
     configuredName: name,
     // `LowCardinality(T)` is a storage hint — the wire shape and JS shape are
     // identical to `T`, so forward the inner column's encoders directly
     // instead of wrapping them in passthrough closures.
-    sqlType: `LowCardinality(${inner.sqlType})`,
+    sqlType,
     mapFromDriverValue: inner.mapFromDriverValue as Decoder<InferData<TInner>>,
     mapToDriverValue: inner.mapToDriverValue as Encoder<InferData<TInner>>,
     decimalConfig: inner.decimalConfig,

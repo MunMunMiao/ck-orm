@@ -24,7 +24,7 @@ import {
   getCountSqlType,
   wrapCountSql,
 } from "./internal/count";
-import { type DecimalParams, formatDecimalSqlType, parseDecimalSqlType } from "./internal/decimal";
+import { type DecimalParams, type DecimalSqlType, formatDecimalSqlType, parseDecimalSqlType } from "./internal/decimal";
 import { escapeSqlSingleQuoted } from "./internal/escape";
 import { assertValidSqlIdentifier } from "./internal/identifier";
 import { parseJsonPathSegments } from "./internal/json-path";
@@ -46,6 +46,28 @@ import { isSqlFragment, type SQLFragment, sql } from "./sql";
 /* ── shared helpers ────────────────────────────────────────────── */
 
 export type JsonPathSegment = string | number | bigint;
+
+type FunctionArgumentData<TValue> =
+  TValue extends SQLFragment<infer TData> ? TData : TValue extends Selection<infer TData> ? TData : unknown;
+
+type TupleData<TArgs extends readonly unknown[]> = {
+  -readonly [K in keyof TArgs]: FunctionArgumentData<TArgs[K]>;
+};
+
+type ArrayItemData<TValue> = FunctionArgumentData<TValue> extends readonly (infer TItem)[] ? TItem : never;
+
+type UnwrappedAggregateSqlType<TSqlType extends string> = TSqlType extends `Nullable(${infer TInner extends string})`
+  ? UnwrappedAggregateSqlType<TInner>
+  : TSqlType extends `LowCardinality(${infer TInner extends string})`
+    ? UnwrappedAggregateSqlType<TInner>
+    : TSqlType;
+
+type AggregateData<TExpression extends AnyColumn> =
+  UnwrappedAggregateSqlType<TExpression["sqlType"]> extends DecimalSqlType
+    ? string
+    : UnwrappedAggregateSqlType<TExpression["sqlType"]> extends "Float32" | "Float64" | "BFloat16"
+      ? number
+      : number | string;
 
 // Pre-validates `name` and returns the rendered fragment. Builders that emit
 // the same function name on every compile (the common case) call this once
@@ -387,12 +409,28 @@ const createDateTime64Cast = (expression: unknown, scale: unknown, timezone?: un
   });
 };
 
-const arrayDecoder = <TData>(label: string): Decoder<TData[]> => {
+const arrayDecoder = <TData>(label: string, itemDecoder?: Decoder<TData>): Decoder<TData[]> => {
   return (value) => {
     if (!Array.isArray(value)) {
       throw createDecodeError(`Cannot convert value to ${label} array: ${String(value)}`, value);
     }
-    return value as TData[];
+    return itemDecoder ? value.map((item) => itemDecoder(item)) : (value as TData[]);
+  };
+};
+
+const tupleDecoder = <TArgs extends readonly unknown[]>(args: TArgs): Decoder<TupleData<TArgs>> => {
+  const decoders = args.map((argument) => ensureExpression(argument).decoder);
+  return (value) => {
+    if (!Array.isArray(value)) {
+      throw createDecodeError(`Cannot convert value to tuple array: ${String(value)}`, value);
+    }
+    if (value.length !== decoders.length) {
+      throw createDecodeError(
+        `Cannot convert value to tuple: expected ${decoders.length} items, got ${value.length}`,
+        value,
+      );
+    }
+    return value.map((item, index) => decoders[index]?.(item)) as unknown as TupleData<TArgs>;
   };
 };
 
@@ -892,15 +930,52 @@ const createJsonExtractExpression = <TColumn extends AnyColumn>(
   });
 };
 
+function withParams<TValue extends Selection<unknown> | SQLFragment<unknown>>(
+  name: "groupArray",
+  parameters: readonly unknown[],
+  value: TValue,
+): Selection<FunctionArgumentData<TValue>[]>;
+function withParams<TData = unknown>(
+  name: string,
+  parameters: readonly unknown[],
+  ...args: unknown[]
+): Selection<TData>;
+function withParams(name: string, parameters: readonly unknown[], ...args: unknown[]): Selection<unknown> {
+  const isSingleGroupArray = name === "groupArray" && args.length === 1;
+  const decoder = isSingleGroupArray ? arrayDecoder("groupArray", ensureExpression(args[0]).decoder) : undefined;
+  return createParameterizedFunctionExpression(name, parameters, args, {
+    decoder,
+    sqlType: isSingleGroupArray ? "Array" : undefined,
+  });
+}
+
+const tuple = <const TArgs extends readonly unknown[]>(...args: TArgs): Selection<TupleData<TArgs>> => {
+  return createFunctionExpression<TupleData<TArgs>>("tuple", args, {
+    decoder: tupleDecoder(args),
+    sqlType: "Tuple",
+  });
+};
+
+function arrayReverseSort<TValue extends Selection<readonly unknown[]> | SQLFragment<readonly unknown[]>>(
+  array: TValue,
+): Selection<ArrayItemData<TValue>[]>;
+function arrayReverseSort<TData = unknown>(first: unknown, ...rest: unknown[]): Selection<TData[]>;
+function arrayReverseSort<TData = unknown>(first: unknown, ...rest: unknown[]): Selection<TData[]> {
+  const input = rest.length === 0 ? ensureExpression<TData[]>(first) : undefined;
+  const decoder = arrayDecoder<TData>("arrayReverseSort");
+  return createFunctionExpression<TData[]>("arrayReverseSort", [first, ...rest], {
+    decoder: input ? (value) => input.decoder(decoder(value)) : decoder,
+    sqlType: input?.sqlType ?? "Array",
+  });
+}
+
 /* ── scalar functions ──────────────────────────────────────────── */
 
 const scalarFns = {
   call<TData = unknown>(name: string, ...args: unknown[]): Selection<TData> {
     return createFunctionExpression<TData>(name, args);
   },
-  withParams<TData = unknown>(name: string, parameters: readonly unknown[], ...args: unknown[]): Selection<TData> {
-    return createParameterizedFunctionExpression<TData>(name, parameters, args);
-  },
+  withParams,
   jsonExtract<TColumn extends AnyColumn>(
     json: unknown,
     returnType: TColumn,
@@ -1564,12 +1639,7 @@ const scalarFns = {
   negate<TData = unknown>(value: unknown): Selection<TData> {
     return createFirstArgFunction<TData>("negate", [value]);
   },
-  tuple(...args: unknown[]): Selection<unknown[]> {
-    return createFunctionExpression("tuple", args, {
-      decoder: arrayDecoder<unknown>("tuple"),
-      sqlType: "Tuple",
-    });
-  },
+  tuple,
   arrayAUCPR(scores: unknown, labels: unknown, partialOffsets?: unknown): Selection<number> {
     return createNumberExpression("arrayAUCPR", withOptional([scores, labels], partialOffsets));
   },
@@ -1837,9 +1907,7 @@ const scalarFns = {
   ): Selection<TData[]> {
     return createArrayExpression<TData>("arrayReverseFill", [lambda, sourceArray, ...conditionArrays]);
   },
-  arrayReverseSort<TData = unknown>(first: unknown, ...rest: unknown[]): Selection<TData[]> {
-    return createArrayExpression<TData>("arrayReverseSort", [first, ...rest]);
-  },
+  arrayReverseSort,
   arrayReverseSplit<TData = unknown>(
     lambda: unknown,
     sourceArray: unknown,
@@ -2035,6 +2103,33 @@ const createCountSelection = <TMode extends CountMode>(
   }) as unknown as CountSelection<TMode>;
 };
 
+function sum<TExpression extends AnyColumn>(expression: TExpression): Selection<AggregateData<TExpression>>;
+function sum(expression: unknown): Selection<number | string>;
+function sum(expression: unknown): Selection<number | string> {
+  const decimalAware = buildDecimalAwareAggregate("sum", expression, { widenForSum: true });
+  if (decimalAware) return decimalAware;
+  const sqlType = isFloatingSqlType(ensureExpression(expression).sqlType) ? "Float64" : undefined;
+  return createFunctionExpression<number | string>("sum", [expression], {
+    decoder: resolveAggregateDecoder(expression),
+    sqlType,
+  });
+}
+
+function sumIf<TExpression extends AnyColumn>(
+  expression: TExpression,
+  condition: unknown,
+): Selection<AggregateData<TExpression>>;
+function sumIf(expression: unknown, condition: unknown): Selection<number | string>;
+function sumIf(expression: unknown, condition: unknown): Selection<number | string> {
+  const decimalAware = buildDecimalAwareSumIf(expression, condition);
+  if (decimalAware) return decimalAware;
+  const sqlType = isFloatingSqlType(ensureExpression(expression).sqlType) ? "Float64" : undefined;
+  return createFunctionExpression<number | string>("sumIf", [expression, condition], {
+    decoder: resolveAggregateDecoder(expression),
+    sqlType,
+  });
+}
+
 const aggregateFns = {
   count(expression?: unknown): CountSelection {
     const args = expression === undefined ? [] : [expression];
@@ -2043,24 +2138,8 @@ const aggregateFns = {
   countIf(condition: unknown): CountSelection {
     return createCountSelection((ctx) => compileFunctionCall(COUNT_IF_FN_FRAGMENT, [condition], ctx), "unsafe");
   },
-  sum(expression: unknown): Selection<number | string> {
-    const decimalAware = buildDecimalAwareAggregate("sum", expression, { widenForSum: true });
-    if (decimalAware) return decimalAware;
-    const sqlType = isFloatingSqlType(ensureExpression(expression).sqlType) ? "Float64" : undefined;
-    return createFunctionExpression<number | string>("sum", [expression], {
-      decoder: resolveAggregateDecoder(expression),
-      sqlType,
-    });
-  },
-  sumIf(expression: unknown, condition: unknown): Selection<number | string> {
-    const decimalAware = buildDecimalAwareSumIf(expression, condition);
-    if (decimalAware) return decimalAware;
-    const sqlType = isFloatingSqlType(ensureExpression(expression).sqlType) ? "Float64" : undefined;
-    return createFunctionExpression<number | string>("sumIf", [expression, condition], {
-      decoder: resolveAggregateDecoder(expression),
-      sqlType,
-    });
-  },
+  sum,
+  sumIf,
   avg(expression: unknown): Selection<number> {
     // ClickHouse `avg(Decimal)` runs internally on Float64 (sum-of-divides).
     // Don't auto-cast back to Decimal — the round-trip wouldn't recover lost

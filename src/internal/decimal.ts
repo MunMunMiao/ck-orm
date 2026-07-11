@@ -7,6 +7,8 @@ export type DecimalParams = {
   readonly scale: number;
 };
 
+export type DecimalSqlType = `Decimal(${number}, ${number})`;
+
 export const assertDecimalParams = (params: DecimalParams, label = "decimal"): void => {
   const { precision, scale } = params;
   if (!Number.isInteger(precision) || precision < 1 || precision > DECIMAL_MAX_PRECISION) {
@@ -21,7 +23,7 @@ export const assertDecimalParams = (params: DecimalParams, label = "decimal"): v
   }
 };
 
-export const formatDecimalSqlType = (params: DecimalParams): string => {
+export const formatDecimalSqlType = (params: DecimalParams): DecimalSqlType => {
   return `Decimal(${params.precision}, ${params.scale})`;
 };
 

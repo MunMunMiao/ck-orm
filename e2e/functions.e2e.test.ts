@@ -433,6 +433,34 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
     expect(presentCompositeRow.isNotVip).toBe(false);
   });
 
+  it("decodes nested tuple groupArray and arrayReverseSort values", async function testNestedTupleArrayDecoders() {
+    const db = createE2EDb();
+    const tupleValue = fn.tuple(
+      schemaPrimitives.date_time64_value,
+      schemaPrimitives.bool_value,
+      fn.toInt64OrNull("bad"),
+      schemaPrimitives.int64_value,
+      ckSql<bigint>`toInt64(9007199254740993)`.mapWith((value) => BigInt(String(value))),
+    );
+
+    const [row] = await db
+      .select({
+        items: fn.arrayReverseSort(fn.withParams("groupArray", [21], tupleValue)).as("items"),
+      })
+      .from(schemaPrimitives)
+      .where(ck.eq(schemaPrimitives.id, 1));
+
+    const presentRow = expectPresent(row, "nested tuple array row");
+    expect(presentRow.items).toHaveLength(1);
+    const item = expectPresent(presentRow.items[0], "nested tuple item");
+    expectDate(item[0]);
+    expect(item[0].getMilliseconds()).toBe(456);
+    expect(item[1]).toBe(true);
+    expect(item[2]).toBeNull();
+    expect(item[3]).toBe("-64");
+    expect(item[4]).toBe(9007199254740993n);
+  });
+
   it("reproduces ClickHouse NO_COMMON_TYPE for old numeric coalesce shapes", async function testRawNumericCoalesceCommonTypeFailures() {
     const db = createE2EDb({
       clickhouse_settings: {
