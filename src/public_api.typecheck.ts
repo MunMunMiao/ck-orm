@@ -95,9 +95,19 @@ const namespaceCount: Selection<number> = ck.fn.count();
 const namespaceCountSafe: Selection<string> = ck.fn.count().toSafe();
 const namespaceCountMixed: Selection<number | string> = ck.fn.count().toMixed();
 const namespaceCountUnsafe: Selection<number> = ck.fn.count().toUnsafe();
+const namespaceRowNumber: Selection<number> = ck.fn.over(ck.fn.rowNumber(), { orderBy: [ck.asc(users.id)] });
+const namespaceRowNumberSafe: Selection<string> = ck.fn.over(ck.fn.rowNumber().toSafe(), {
+  orderBy: [ck.asc(users.id)],
+});
+const namespaceRowNumberMixed: Selection<number | string> = ck.fn.over(ck.fn.rowNumber().toMixed(), {
+  orderBy: [ck.asc(users.id)],
+});
 void namespaceCountSafe;
 void namespaceCountMixed;
 void namespaceCountUnsafe;
+void namespaceRowNumber;
+void namespaceRowNumberSafe;
+void namespaceRowNumberMixed;
 const namespaceContains: Predicate = ck.contains(users.name, "user_100%");
 const namespaceStartsWith: Predicate = ck.startsWith(users.name, "arch_");
 const namespaceEndsWith: Predicate = ck.endsWith(users.name, "_done");

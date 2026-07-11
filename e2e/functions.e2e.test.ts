@@ -315,6 +315,74 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
     expect(presentMonthRow.firstViewedAt.getTime()).toBeLessThan(presentMonthRow.lastViewedAt.getTime());
   });
 
+  it("supports window expressions, conditional maxima and exact decimal division in builder queries", async function testHistoryQueryHelpers() {
+    const db = createE2EDb();
+    const rankInCountrySpec = {
+      partitionBy: [webEvents.country],
+      orderBy: [ck.asc(webEvents.event_id)],
+    };
+
+    const rows = await db
+      .select({
+        country: webEvents.country,
+        eventId: webEvents.event_id,
+        rankInCountry: fn.over(fn.rowNumber(), rankInCountrySpec).as("rank_in_country"),
+        safeRankInCountry: fn.over(fn.rowNumber().toSafe(), rankInCountrySpec).as("safe_rank_in_country"),
+        mixedRankInCountry: fn.over(fn.rowNumber().toMixed(), rankInCountrySpec).as("mixed_rank_in_country"),
+        totalRevenueInCountry: fn
+          .over(fn.sum(webEvents.revenue), {
+            partitionBy: [webEvents.country],
+          })
+          .as("total_revenue_in_country"),
+      })
+      .from(webEvents)
+      .where(ck.lte(webEvents.event_id, 20))
+      .orderBy(webEvents.country, webEvents.event_id);
+
+    const ranksByCountry = new Map<string, number>();
+    const revenueByCountry = new Map<string, string>();
+    for (const row of rows) {
+      const nextRank = (ranksByCountry.get(row.country) ?? 0) + 1;
+      expect(row.rankInCountry).toBe(nextRank);
+      expect(row.safeRankInCountry).toBe(String(nextRank));
+      expect(row.mixedRankInCountry).toBe(String(nextRank));
+      ranksByCountry.set(row.country, nextRank);
+      expect(row.totalRevenueInCountry).toMatch(/^\d+(?:\.\d+)?$/);
+      expect(revenueByCountry.get(row.country) ?? row.totalRevenueInCountry).toBe(row.totalRevenueInCountry);
+      revenueByCountry.set(row.country, row.totalRevenueInCountry);
+    }
+
+    const overPrecision = ckSql`toUInt64('9007199254740993')`;
+    const [overPrecisionRow] = await db
+      .select({
+        unsafe: fn.toFloat64(overPrecision).as("unsafe"),
+        safe: fn.toString(overPrecision).as("safe"),
+        mixed: fn.toUInt64(overPrecision).as("mixed"),
+      })
+      .from(webEvents)
+      .limit(1);
+    expect(expectPresent(overPrecisionRow, "over-precision conversion row")).toEqual({
+      unsafe: 9007199254740992,
+      safe: "9007199254740993",
+      mixed: "9007199254740993",
+    });
+
+    const [conditionalMaximum] = await db
+      .select({
+        maxUsRevenue: fn.maxIf(webEvents.revenue, ck.eq(webEvents.country, "US")).as("max_us_revenue"),
+      })
+      .from(webEvents);
+    expect(expectPresent(conditionalMaximum, "conditional maximum row").maxUsRevenue).toMatch(/^\d+(?:\.\d+)?$/);
+
+    const [division] = await db
+      .select({
+        exactRatio: fn.divideDecimal(fn.toDecimal64("10.00", 2), fn.toDecimal64("4.00", 2), 4).as("exact_ratio"),
+      })
+      .from(webEvents)
+      .limit(1);
+    expect(Number(expectPresent(division, "decimal division row").exactRatio)).toBe(2.5);
+  });
+
   it("supports fn.count, fn.countIf and fn.uniqExact chainable modes (toUnsafe/toSafe/toMixed)", async function testCountSelectionModes() {
     const db = createE2EDb();
 

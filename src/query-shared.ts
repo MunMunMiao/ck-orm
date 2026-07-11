@@ -111,6 +111,15 @@ export interface Order {
   readonly direction: "asc" | "desc";
 }
 
+/** @internal Window-capable `fn.*` expressions install this compiler hook. */
+export type WindowExpressionCompiler = (ctx: BuildContext, clause: SQLFragment) => SQLFragment;
+
+const windowExpressionCompilerSymbol = Symbol("clickhouseORMWindowExpressionCompiler");
+
+type WindowCapableExpression = SqlExpression<unknown> & {
+  readonly [windowExpressionCompilerSymbol]: WindowExpressionCompiler;
+};
+
 export interface SelectionMeta<TData = unknown> {
   readonly key: string;
   readonly sqlAlias: string;
@@ -128,6 +137,7 @@ export const createExpression = <TData, TSourceKey extends string | undefined = 
   sqlType?: string;
   outputAlias?: string;
   sourceKey?: TSourceKey;
+  windowCompiler?: WindowExpressionCompiler;
 }): SqlExpression<TData, TSourceKey> => {
   const expression = {
     kind: "expression" as const,
@@ -136,6 +146,7 @@ export const createExpression = <TData, TSourceKey extends string | undefined = 
     outputAlias: config.outputAlias,
     sourceKey: config.sourceKey,
     compile: config.compile,
+    [windowExpressionCompilerSymbol]: config.windowCompiler,
     as<TAlias extends string>(alias: TAlias): AliasedSelection<TData, TAlias, TSourceKey> {
       return createExpression({
         ...config,
@@ -152,6 +163,18 @@ export const createExpression = <TData, TSourceKey extends string | undefined = 
 
   return trustSqlExpressionObject(expression);
 };
+
+export const hasWindowExpressionCompiler = (value: unknown): value is WindowCapableExpression => {
+  return (
+    isExpression(value) && typeof (value as WindowCapableExpression)[windowExpressionCompilerSymbol] === "function"
+  );
+};
+
+export const compileWindowExpression = (
+  value: WindowCapableExpression,
+  ctx: BuildContext,
+  clause: SQLFragment,
+): SQLFragment => value[windowExpressionCompilerSymbol](ctx, clause);
 
 export const isExpression = (value: unknown): value is SqlExpression<unknown> => {
   return (

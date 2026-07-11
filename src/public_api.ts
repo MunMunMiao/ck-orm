@@ -198,7 +198,7 @@ export type {
   DecodeError,
 } from "./errors";
 export { isClickHouseORMError, isDecodeError } from "./errors";
-export type { JsonPathSegment } from "./functions";
+export type { JsonPathSegment, WindowSpec } from "./functions";
 export { fn } from "./functions";
 export type {
   InferStandardSchemaInput,

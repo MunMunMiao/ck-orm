@@ -32,12 +32,15 @@ import { createTableFunctionSource } from "./query";
 import {
   type BuildContext,
   compileValue,
+  compileWindowExpression,
   createExpression,
   type Decoder,
   ensureExpression,
+  hasWindowExpressionCompiler,
   type InferData,
   isExpression,
   joinSqlParts,
+  type Order,
   passThroughDecoder,
   type Selection,
 } from "./query-shared";
@@ -46,6 +49,11 @@ import { isSqlFragment, type SQLFragment, sql } from "./sql";
 /* ── shared helpers ────────────────────────────────────────────── */
 
 export type JsonPathSegment = string | number | bigint;
+
+export type WindowSpec = {
+  readonly partitionBy?: readonly Selection<unknown>[];
+  readonly orderBy?: readonly Order[];
+};
 
 type FunctionArgumentData<TValue> =
   TValue extends SQLFragment<infer TData> ? TData : TValue extends Selection<infer TData> ? TData : unknown;
@@ -81,10 +89,16 @@ const renderFunctionName = (name: string): SQLFragment => {
 // (validated on the spot). Helpers that compile the same builtin on every
 // expression should pass a fragment; one-shot dynamic-name call sites stay on
 // the string overload.
-const compileFunctionCall = (name: string | SQLFragment, args: readonly unknown[], ctx: BuildContext): SQLFragment => {
+const compileFunctionCall = (
+  name: string | SQLFragment,
+  args: readonly unknown[],
+  ctx: BuildContext,
+  windowClause?: SQLFragment,
+): SQLFragment => {
   const nameFragment = typeof name === "string" ? renderFunctionName(name) : name;
   const compiledArgs = args.map((argument) => compileValue(argument, ctx));
-  return sql`${nameFragment}(${joinSqlParts(compiledArgs, ", ")})`;
+  const call = sql`${nameFragment}(${joinSqlParts(compiledArgs, ", ")})`;
+  return windowClause === undefined ? call : sql`${call} ${windowClause}`;
 };
 
 const createFunctionExpression = <TData>(
@@ -98,6 +112,7 @@ const createFunctionExpression = <TData>(
   const nameFragment = renderFunctionName(name);
   return createExpression({
     compile: (ctx) => compileFunctionCall(nameFragment, args, ctx),
+    windowCompiler: (ctx, windowClause) => compileFunctionCall(nameFragment, args, ctx, windowClause),
     decoder: config?.decoder ?? (passThroughDecoder as Decoder<TData>),
     sqlType: config?.sqlType,
   });
@@ -113,12 +128,15 @@ const createParameterizedFunctionExpression = <TData>(
   },
 ): Selection<TData> => {
   const nameFragment = renderFunctionName(name);
+  const compile = (ctx: BuildContext, windowClause?: SQLFragment): SQLFragment => {
+    const compiledParameters = parameters.map((argument) => compileValue(argument, ctx));
+    const compiledArgs = args.map((argument) => compileValue(argument, ctx));
+    const call = sql`${nameFragment}(${joinSqlParts(compiledParameters, ", ")})(${joinSqlParts(compiledArgs, ", ")})`;
+    return windowClause === undefined ? call : sql`${call} ${windowClause}`;
+  };
   return createExpression({
-    compile: (ctx) => {
-      const compiledParameters = parameters.map((argument) => compileValue(argument, ctx));
-      const compiledArgs = args.map((argument) => compileValue(argument, ctx));
-      return sql`${nameFragment}(${joinSqlParts(compiledParameters, ", ")})(${joinSqlParts(compiledArgs, ", ")})`;
-    },
+    compile,
+    windowCompiler: (ctx, windowClause) => compile(ctx, windowClause),
     decoder: config?.decoder ?? (passThroughDecoder as Decoder<TData>),
     sqlType: config?.sqlType,
   });
@@ -202,6 +220,7 @@ const uintStringDecoder: Decoder<string> = (value) => toIntegerStringCoercion(va
 const COUNT_FN_FRAGMENT = renderFunctionName("count");
 const COUNT_IF_FN_FRAGMENT = renderFunctionName("countIf");
 const UNIQ_EXACT_FN_FRAGMENT = renderFunctionName("uniqExact");
+const ROW_NUMBER_FN_FRAGMENT = renderFunctionName("row_number");
 const JSON_EXTRACT_FN_FRAGMENT = renderFunctionName("JSONExtract");
 const COALESCE_FN_FRAGMENT = renderFunctionName("coalesce");
 const TUPLE_ELEMENT_FN_FRAGMENT = renderFunctionName("tupleElement");
@@ -454,6 +473,7 @@ type DecimalAwareAggregateConfig = {
 const buildDecimalAwareAggregate = (
   name: string,
   expression: unknown,
+  args: readonly unknown[],
   config?: DecimalAwareAggregateConfig,
 ): Selection<string> | undefined => {
   const params = resolveDecimalParams(expression);
@@ -464,31 +484,21 @@ const buildDecimalAwareAggregate = (
   // skip the per-compile validation + fragment allocation.
   const nameFragment = renderFunctionName(name);
   const sqlTypeFragment = sql.raw(sqlType);
+  const compile = (ctx: BuildContext, windowClause?: SQLFragment): SQLFragment => {
+    const compiledArgs = args.map((argument) => compileValue(argument, ctx));
+    const call = compileFunctionCall(nameFragment, compiledArgs, ctx, windowClause);
+    return sql`CAST(${call} AS ${sqlTypeFragment})`;
+  };
   return createExpression<string>({
-    compile: (ctx) => {
-      const compiledArg = compileValue(expression, ctx);
-      return sql`CAST(${nameFragment}(${compiledArg}) AS ${sqlTypeFragment})`;
-    },
+    compile,
+    windowCompiler: (ctx, windowClause) => compile(ctx, windowClause),
     decoder: stringDecoder,
     sqlType,
   });
 };
 
 const buildDecimalAwareSumIf = (expression: unknown, condition: unknown): Selection<string> | undefined => {
-  const params = resolveDecimalParams(expression);
-  if (!params) return undefined;
-  const target = widenForSum(params);
-  const sqlType = `Decimal(${target.precision}, ${target.scale})`;
-  const sqlTypeFragment = sql.raw(sqlType);
-  return createExpression<string>({
-    compile: (ctx) => {
-      const compiledExpr = compileValue(expression, ctx);
-      const compiledCond = compileValue(condition, ctx);
-      return sql`CAST(sumIf(${compiledExpr}, ${compiledCond}) AS ${sqlTypeFragment})`;
-    },
-    decoder: stringDecoder,
-    sqlType,
-  });
+  return buildDecimalAwareAggregate("sumIf", expression, [expression, condition], { widenForSum: true });
 };
 
 const createArrayExpression = <TData>(
@@ -559,6 +569,94 @@ const createInt64Expression = (name: string, args: readonly unknown[]): Selectio
     sqlType: "Int64",
   });
 };
+
+type NormalizedWindowSpec = {
+  readonly partitionBy: readonly Selection<unknown>[];
+  readonly orderBy: readonly Order[];
+};
+
+const normalizeWindowSpec = (spec: WindowSpec | undefined): NormalizedWindowSpec => {
+  if (spec === undefined) {
+    return { partitionBy: [], orderBy: [] };
+  }
+  if (typeof spec !== "object" || spec === null || Array.isArray(spec)) {
+    throw createClientValidationError("fn.over spec must be an object");
+  }
+
+  const partitionBy = spec.partitionBy ?? [];
+  if (!Array.isArray(partitionBy)) {
+    throw createClientValidationError("fn.over partitionBy must be an array of Selection values");
+  }
+  for (const expression of partitionBy) {
+    if (!isExpression(expression)) {
+      throw createClientValidationError("fn.over partitionBy must contain Selection values");
+    }
+  }
+
+  const orderBy = spec.orderBy ?? [];
+  if (!Array.isArray(orderBy)) {
+    throw createClientValidationError("fn.over orderBy must be an array of Order values");
+  }
+  for (const order of orderBy) {
+    if (
+      typeof order !== "object" ||
+      order === null ||
+      !isExpression(order.expression) ||
+      (order.direction !== "asc" && order.direction !== "desc")
+    ) {
+      throw createClientValidationError("fn.over orderBy direction must be asc or desc");
+    }
+  }
+
+  return { partitionBy, orderBy };
+};
+
+const compileWindowClause = (ctx: BuildContext, spec: NormalizedWindowSpec): SQLFragment => {
+  const parts: SQLFragment[] = [];
+  if (spec.partitionBy.length > 0) {
+    const partitionBy = spec.partitionBy.map((expression) => compileValue(expression, ctx));
+    parts.push(sql`PARTITION BY ${joinSqlParts(partitionBy, ", ")}`);
+  }
+  if (spec.orderBy.length > 0) {
+    const orderBy = spec.orderBy.map((order) => {
+      const expression = compileValue(order.expression, ctx);
+      return order.direction === "asc" ? sql`${expression} ASC` : sql`${expression} DESC`;
+    });
+    parts.push(sql`ORDER BY ${joinSqlParts(orderBy, ", ")}`);
+  }
+  return sql`OVER (${joinSqlParts(parts, " ")})`;
+};
+
+function over<TData>(expression: Selection<TData>, spec?: WindowSpec): Selection<TData> {
+  const normalizedSpec = normalizeWindowSpec(spec);
+  const wrapped = ensureExpression<TData>(expression);
+  if (!hasWindowExpressionCompiler(wrapped)) {
+    throw createClientValidationError("fn.over only accepts function expressions created by fn");
+  }
+
+  return createExpression<TData>({
+    compile: (ctx) => compileWindowExpression(wrapped, ctx, compileWindowClause(ctx, normalizedSpec)),
+    decoder: wrapped.decoder,
+    sqlType: wrapped.sqlType,
+  });
+}
+
+function divideDecimal(left: unknown, right: unknown, resultScale?: number): Selection<string> {
+  if (resultScale !== undefined) {
+    assertIntegerInRange("divideDecimal resultScale", resultScale, 0, 76);
+  }
+  const resultScaleFragment = resultScale === undefined ? undefined : sql.raw(String(resultScale));
+  const sqlType = resultScale === undefined ? undefined : `Decimal(76, ${resultScale})`;
+  return createExpression<string>({
+    compile: (ctx) => {
+      const args = [compileValue(left, ctx), compileValue(right, ctx)];
+      if (resultScaleFragment !== undefined) args.push(resultScaleFragment);
+      return sql`divideDecimal(${joinSqlParts(args, ", ")})`;
+    },
+    decoder: stringDecoder,
+    sqlType,
+  });
+}
 
 const createTypedConversionExpression = <TData>(
   name: string,
@@ -1610,6 +1708,8 @@ const scalarFns = {
   divide(left: unknown, right: unknown): Selection<number> {
     return createNumberExpression("divide", [left, right], "Float64");
   },
+  /** Exact Decimal division. `resultScale` is a required ClickHouse constant when supplied. */
+  divideDecimal,
   /** Integer division (truncates toward zero). Return type tracks `left`. */
   intDiv<TData = unknown>(left: unknown, right: unknown): Selection<TData> {
     return createFirstArgFunction<TData>("intDiv", [left, right]);
@@ -2074,39 +2174,43 @@ const scalarFns = {
 
 /* ── aggregate functions ───────────────────────────────────────── */
 
-export type CountSelection<TMode extends CountMode = "unsafe"> = Selection<CountModeResult<TMode>> & {
+type UInt64ModeSelection<TMode extends CountMode = "unsafe"> = Selection<CountModeResult<TMode>> & {
   readonly sqlType: CountSqlType;
-  toSafe(): CountSelection<"safe">;
-  toUnsafe(): CountSelection<"unsafe">;
-  toMixed(): CountSelection<"mixed">;
+  toSafe(): UInt64ModeSelection<"safe">;
+  toUnsafe(): UInt64ModeSelection<"unsafe">;
+  toMixed(): UInt64ModeSelection<"mixed">;
 };
 
-const createCountSelection = <TMode extends CountMode>(
+export type CountSelection<TMode extends CountMode = "unsafe"> = UInt64ModeSelection<TMode>;
+export type RowNumberSelection<TMode extends CountMode = "unsafe"> = UInt64ModeSelection<TMode>;
+
+const createUInt64ModeSelection = <TMode extends CountMode>(
   innerCall: (ctx: BuildContext) => SQLFragment,
   mode: TMode,
-): CountSelection<TMode> => {
+): UInt64ModeSelection<TMode> => {
   const expr = createExpression<CountModeResult<TMode>>({
     compile: (ctx) => wrapCountSql(innerCall(ctx), mode),
+    windowCompiler: (ctx, windowClause) => wrapCountSql(sql`${innerCall(ctx)} ${windowClause}`, mode),
     decoder: getCountDecoder(mode),
     sqlType: getCountSqlType(mode),
   });
   return Object.assign(expr, {
-    toSafe(): CountSelection<"safe"> {
-      return createCountSelection(innerCall, "safe");
+    toSafe(): UInt64ModeSelection<"safe"> {
+      return createUInt64ModeSelection(innerCall, "safe");
     },
-    toUnsafe(): CountSelection<"unsafe"> {
-      return createCountSelection(innerCall, "unsafe");
+    toUnsafe(): UInt64ModeSelection<"unsafe"> {
+      return createUInt64ModeSelection(innerCall, "unsafe");
     },
-    toMixed(): CountSelection<"mixed"> {
-      return createCountSelection(innerCall, "mixed");
+    toMixed(): UInt64ModeSelection<"mixed"> {
+      return createUInt64ModeSelection(innerCall, "mixed");
     },
-  }) as unknown as CountSelection<TMode>;
+  }) as unknown as UInt64ModeSelection<TMode>;
 };
 
 function sum<TExpression extends AnyColumn>(expression: TExpression): Selection<AggregateData<TExpression>>;
 function sum(expression: unknown): Selection<number | string>;
 function sum(expression: unknown): Selection<number | string> {
-  const decimalAware = buildDecimalAwareAggregate("sum", expression, { widenForSum: true });
+  const decimalAware = buildDecimalAwareAggregate("sum", expression, [expression], { widenForSum: true });
   if (decimalAware) return decimalAware;
   const sqlType = isFloatingSqlType(ensureExpression(expression).sqlType) ? "Float64" : undefined;
   return createFunctionExpression<number | string>("sum", [expression], {
@@ -2130,16 +2234,33 @@ function sumIf(expression: unknown, condition: unknown): Selection<number | stri
   });
 }
 
+function maxIf<TData>(expression: Selection<TData> | SQLFragment<TData>, condition: unknown): Selection<TData>;
+function maxIf<TData = unknown>(expression: unknown, condition: unknown): Selection<TData>;
+function maxIf<TData = unknown>(expression: unknown, condition: unknown): Selection<TData> {
+  const decimalAware = buildDecimalAwareAggregate("maxIf", expression, [expression, condition]);
+  if (decimalAware) return decimalAware as Selection<TData>;
+  const wrapped = ensureExpression<TData>(expression);
+  return createFunctionExpression<TData>("maxIf", [expression, condition], {
+    decoder: wrapped.decoder,
+    sqlType: wrapped.sqlType,
+  });
+}
+
 const aggregateFns = {
   count(expression?: unknown): CountSelection {
     const args = expression === undefined ? [] : [expression];
-    return createCountSelection((ctx) => compileFunctionCall(COUNT_FN_FRAGMENT, args, ctx), "unsafe");
+    return createUInt64ModeSelection((ctx) => compileFunctionCall(COUNT_FN_FRAGMENT, args, ctx), "unsafe");
   },
   countIf(condition: unknown): CountSelection {
-    return createCountSelection((ctx) => compileFunctionCall(COUNT_IF_FN_FRAGMENT, [condition], ctx), "unsafe");
+    return createUInt64ModeSelection((ctx) => compileFunctionCall(COUNT_IF_FN_FRAGMENT, [condition], ctx), "unsafe");
   },
   sum,
   sumIf,
+  maxIf,
+  over,
+  rowNumber(): RowNumberSelection {
+    return createUInt64ModeSelection((ctx) => compileFunctionCall(ROW_NUMBER_FN_FRAGMENT, [], ctx), "unsafe");
+  },
   avg(expression: unknown): Selection<number> {
     // ClickHouse `avg(Decimal)` runs internally on Float64 (sum-of-divides).
     // Don't auto-cast back to Decimal — the round-trip wouldn't recover lost
@@ -2150,7 +2271,7 @@ const aggregateFns = {
     });
   },
   min<TData = unknown>(expression: unknown): Selection<TData> {
-    const decimalAware = buildDecimalAwareAggregate("min", expression);
+    const decimalAware = buildDecimalAwareAggregate("min", expression, [expression]);
     if (decimalAware) return decimalAware as Selection<TData>;
     const wrapped = ensureExpression<TData>(expression);
     return createFunctionExpression<TData>("min", [expression], {
@@ -2159,7 +2280,7 @@ const aggregateFns = {
     });
   },
   max<TData = unknown>(expression: unknown): Selection<TData> {
-    const decimalAware = buildDecimalAwareAggregate("max", expression);
+    const decimalAware = buildDecimalAwareAggregate("max", expression, [expression]);
     if (decimalAware) return decimalAware as Selection<TData>;
     const wrapped = ensureExpression<TData>(expression);
     return createFunctionExpression<TData>("max", [expression], {
@@ -2182,7 +2303,7 @@ const aggregateFns = {
     });
   },
   uniqExact(expression: unknown): CountSelection {
-    return createCountSelection((ctx) => compileFunctionCall(UNIQ_EXACT_FN_FRAGMENT, [expression], ctx), "unsafe");
+    return createUInt64ModeSelection((ctx) => compileFunctionCall(UNIQ_EXACT_FN_FRAGMENT, [expression], ctx), "unsafe");
   },
 };
 

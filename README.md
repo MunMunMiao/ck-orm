@@ -44,6 +44,7 @@ The design goal is straightforward: make everyday ClickHouse access easier to st
 - [Join null semantics](#join-null-semantics)
 - [Writes](#writes)
 - [Raw SQL](#raw-sql)
+- [Window expressions](#window-expressions)
 - [Functions and table functions](#functions-and-table-functions)
 - [Sessions and temporary tables](#sessions-and-temporary-tables)
 - [Runtime methods](#runtime-methods)
@@ -1635,7 +1636,9 @@ measurementLog.value.cast(20, 2); // column shortcut
 ```
 
 - `sum` / `sumIf` widen P to ≥ 38; `min` / `max` keep the column's P. For schema Decimal columns, `fn.sum()` and `fn.sumIf()` are `Selection<string>`; Float columns are `Selection<number>`. Auto-cast also fires through `nullable(decimal(...))` and `lowCardinality(decimal(...))`.
+- `maxIf(value, condition)` follows the same Decimal rule as `max`: a Decimal result is `Selection<string>` with its declared `Decimal(P, S)` shape.
 - `avg` is **not** auto-cast — ClickHouse computes `avg(Decimal)` over Float64, so `fn.avg` returns `Selection<number>`. For exact Decimal averages, use `ckSql.decimal(ckSql\`sum(x) / count(x)\`, P, S)`.
+- `fn.divideDecimal(left, right, resultScale?)` maps directly to ClickHouse `divideDecimal`. It returns `Selection<string>` so precision is not lost. When provided, `resultScale` must be a literal integer from `0` to `76` and is emitted inline; the builder does not version-check or emulate the ClickHouse function.
 - `column.cast(P, S)` casts the column, not the aggregate — using it bare inside `GROUP BY` raises `NOT_AN_AGGREGATE`. Use `fn.sum(column)` or wrap the aggregate.
 - Inserts reject non-string/number objects (e.g. raw `decimal.js` instances) — pass `.toFixed(scale)`:
 
@@ -1643,6 +1646,43 @@ measurementLog.value.cast(20, 2); // column shortcut
 db.insert(measurementLog).values({ value: new Decimal("1.23").toFixed(5) }); // ✅
 db.insert(measurementLog).values({ value: new Decimal("1.23") as never }); // ❌ throws
 ```
+
+## Window expressions
+
+Wrap an `fn.*` function expression with `fn.over(...)`. The optional specification accepts only builder selections for `partitionBy` and normal `ck.asc(...)` / `ck.desc(...)` values for `orderBy`:
+
+```ts
+import { ck, ckTable, ckType, fn } from "ck-orm";
+
+const events = ckTable("events", {
+  id: ckType.int32(),
+  accountId: ckType.int32("account_id"),
+  amount: ckType.decimal({ precision: 18, scale: 2 }),
+});
+
+const rows = await db
+  .select({
+    id: events.id,
+    rankInAccount: fn
+      .over(fn.rowNumber(), {
+        partitionBy: [events.accountId],
+        orderBy: [ck.asc(events.id)],
+      })
+      .as("rank_in_account"),
+    exactRankInAccount: fn
+      .over(fn.rowNumber().toSafe(), {
+        partitionBy: [events.accountId],
+        orderBy: [ck.asc(events.id)],
+      })
+      .as("exact_rank_in_account"),
+    accountTotal: fn
+      .over(fn.sum(events.amount), { partitionBy: [events.accountId] })
+      .as("account_total"),
+  })
+  .from(events);
+```
+
+`fn.rowNumber()` defaults to unsafe `Selection<number>` through `toFloat64`. Call `.toSafe()` before `fn.over(...)` for an exact `Selection<string>`, or `.toMixed()` for the native `UInt64` transport shape (`Selection<number | string>`); `.toUnsafe()` is the explicit default. The builder deliberately does not add a JavaScript safe-integer check: ClickHouse's `toFloat64` conversion can round values above `Number.MAX_SAFE_INTEGER`; `.toSafe()` keeps an exact decimal string and `.toMixed()` preserves the driver's native result shape. Decimal aggregates retain their normal string decoder and are compiled as `CAST(sum(...) OVER (...) AS Decimal(...))`, so `OVER` stays inside the aggregate rather than outside the cast. `fn.over` intentionally does not accept a bare column or raw SQL fragment, and this first surface covers `PARTITION BY` and `ORDER BY` only; use `ckSql` for frames, named windows, or other ClickHouse-specific clauses.
 
 ## Functions and table functions
 
@@ -1659,7 +1699,9 @@ Generic, conversion, aggregate, JSON, tuple, and table-related helpers include:
 - `fn.toUnixTimestamp()` / `fn.toUnixTimestamp64Second()` / `fn.toUnixTimestamp64Milli()` / `fn.toUnixTimestamp64Micro()` / `fn.toUnixTimestamp64Nano()`
 - `fn.fromUnixTimestamp()` / `fn.fromUnixTimestamp64Second()` / `fn.fromUnixTimestamp64Milli()` / `fn.fromUnixTimestamp64Micro()` / `fn.fromUnixTimestamp64Nano()`
 - `fn.count()` / `fn.countIf()` — default `Selection<number>` wrapped as `toFloat64(count(...))`. Chain `.toSafe()` for `Selection<string>` (`toString(count(...))`), `.toMixed()` for `Selection<number | string>` (`toUInt64(count(...))`), or `.toUnsafe()` to revert to the default. Mirrors `db.count`. Decoders enforce non-negative integers and reject `NaN`, negatives, booleans, etc. — see [`fn.count` / `fn.uniqExact` modes](#fncount--fnuniqexact-modes) for examples.
-- `fn.sum()` / `fn.sumIf()` / `fn.min()` / `fn.max()` — auto-cast to `Decimal(P, S)` for Decimal columns; see [Decimal precision in expressions](#decimal-precision-in-expressions)
+- `fn.sum()` / `fn.sumIf()` / `fn.min()` / `fn.max()` / `fn.maxIf()` — auto-cast to `Decimal(P, S)` for Decimal columns; see [Decimal precision in expressions](#decimal-precision-in-expressions)
+- `fn.over()` / `fn.rowNumber()` — window-function composition with `PARTITION BY` and `ORDER BY`; see [Window expressions](#window-expressions)
+- `fn.divideDecimal()` — exact Decimal division with an optional inline result scale; see [Decimal precision in expressions](#decimal-precision-in-expressions)
 - `fn.argMax()` / `fn.argMin()` — return the `arg` value at the row that maximizes/minimizes `val`. Return type tracks the `arg` column (no Decimal CAST wrapping; ClickHouse preserves the column's declared type).
 - `fn.avg()` — `Selection<number>` (Float64), matching ClickHouse's native `avg(Decimal)` behavior
 - `fn.uniqExact()` — same three chainable modes as `fn.count()`: default `Selection<number>` wrapped as `toFloat64(uniqExact(...))`, `.toSafe()` for `Selection<string>` (`toString(uniqExact(...))`), `.toMixed()` for `Selection<number | string>` (`toUInt64(uniqExact(...))`), `.toUnsafe()` to revert. Decoders are the same non-negative integer guard. See [`fn.count` / `fn.uniqExact` modes](#fncount--fnuniqexact-modes).

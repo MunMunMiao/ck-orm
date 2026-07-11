@@ -84,8 +84,13 @@ const functionSmoke = {
   arrayExists: fn.arrayExists(ckSql`x -> x > 1`, [1, 2]),
   arrayMap: fn.arrayMap<number>(ckSql`x -> x + 1`, [1, 2]),
   count: fn.count(),
+  divideDecimal: fn.divideDecimal(activityLedger.delta_value, fn.toDecimal64("3.00", 2), 5),
   jsonExtract: fn.jsonExtract(activityMetricLog.payload, ckType.array(ckType.string()), "labels"),
   length: fn.length(["vip"]),
+  maxIf: fn.maxIf(activityLedger.delta_value, ck.eq(activityLedger.actor_id, 10001)),
+  over: fn.over(fn.rowNumber(), { orderBy: [ck.asc(activityLedger.actor_id)] }),
+  rowNumberSafe: fn.over(fn.rowNumber().toSafe(), { orderBy: [ck.asc(activityLedger.actor_id)] }),
+  rowNumberMixed: fn.over(fn.rowNumber().toMixed(), { orderBy: [ck.asc(activityLedger.actor_id)] }),
   range: fn.range(1, 5),
   sum: fn.sum(activityLedger.delta_value),
   toDateTime64: fn.toDateTime64(activityLedger.event_time, 3, "UTC"),
@@ -99,7 +104,12 @@ type _FunctionSmokeData = Expect<
       readonly arrayExists: SelectionData<(typeof functionSmoke)["arrayExists"]>;
       readonly arrayMap: SelectionData<(typeof functionSmoke)["arrayMap"]>;
       readonly count: SelectionData<(typeof functionSmoke)["count"]>;
+      readonly divideDecimal: SelectionData<(typeof functionSmoke)["divideDecimal"]>;
       readonly length: SelectionData<(typeof functionSmoke)["length"]>;
+      readonly maxIf: SelectionData<(typeof functionSmoke)["maxIf"]>;
+      readonly over: SelectionData<(typeof functionSmoke)["over"]>;
+      readonly rowNumberSafe: SelectionData<(typeof functionSmoke)["rowNumberSafe"]>;
+      readonly rowNumberMixed: SelectionData<(typeof functionSmoke)["rowNumberMixed"]>;
       readonly toDateTime64: SelectionData<(typeof functionSmoke)["toDateTime64"]>;
       readonly uniqExactSafe: SelectionData<(typeof functionSmoke)["uniqExactSafe"]>;
     },
@@ -107,7 +117,12 @@ type _FunctionSmokeData = Expect<
       readonly arrayExists: boolean;
       readonly arrayMap: unknown[];
       readonly count: number;
+      readonly divideDecimal: string;
       readonly length: string;
+      readonly maxIf: string;
+      readonly over: number;
+      readonly rowNumberSafe: string;
+      readonly rowNumberMixed: number | string;
       readonly toDateTime64: Date;
       readonly uniqExactSafe: string;
     }

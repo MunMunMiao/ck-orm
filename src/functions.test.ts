@@ -17,6 +17,7 @@ import {
   uint64,
 } from "./columns";
 import { fn, tableFn } from "./functions";
+import { asc, desc } from "./query";
 import { compileSql, sql } from "./sql";
 
 const officialArrayFunctionNames = [
@@ -1739,6 +1740,119 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     });
     expect(compileSql(sql`${fn.avg(lowCardAmount).compile(createContext())}`).query).toBe("avg(`ledger`.`fee`)");
     expect(fn.avg(lowCardAmount).sqlType).toBe("Float64");
+  });
+
+  it("compiles window expressions, conditional maxima and exact decimal division", function testHistoryQueryHelpers() {
+    const amount = decimal({ precision: 18, scale: 5 }).bind({ name: "amount", tableName: "ledger" });
+    const tier = string().bind({ name: "tier", tableName: "ledger" });
+    const id = int32().bind({ name: "id", tableName: "ledger" });
+
+    const rowNumberSpec = {
+      partitionBy: [tier],
+      orderBy: [desc(id), asc(tier)],
+    };
+    const rank = fn.over(fn.rowNumber(), rowNumberSpec);
+    expect(compileExpression(rank).query).toBe(
+      "toFloat64(row_number() OVER (PARTITION BY `ledger`.`tier` ORDER BY `ledger`.`id` DESC, `ledger`.`tier` ASC))",
+    );
+    expect(rank.sqlType).toBe("Float64");
+    expect(rank.decoder("2")).toBe(2);
+    expect(rank.decoder("9007199254740993")).toBe(9007199254740992);
+
+    const safeRank = fn.over(fn.rowNumber().toSafe(), rowNumberSpec);
+    expect(compileExpression(safeRank).query).toBe(
+      "toString(row_number() OVER (PARTITION BY `ledger`.`tier` ORDER BY `ledger`.`id` DESC, `ledger`.`tier` ASC))",
+    );
+    expect(safeRank.sqlType).toBe("String");
+    expect(safeRank.decoder("9007199254740993")).toBe("9007199254740993");
+
+    const mixedRank = fn.over(fn.rowNumber().toMixed(), rowNumberSpec);
+    expect(compileExpression(mixedRank).query).toBe(
+      "toUInt64(row_number() OVER (PARTITION BY `ledger`.`tier` ORDER BY `ledger`.`id` DESC, `ledger`.`tier` ASC))",
+    );
+    expect(mixedRank.sqlType).toBe("UInt64");
+    expect(mixedRank.decoder(2)).toBe(2);
+    expect(mixedRank.decoder("9007199254740993")).toBe("9007199254740993");
+
+    const explicitUnsafeRank = fn.over(fn.rowNumber().toSafe().toUnsafe(), rowNumberSpec);
+    expect(compileExpression(explicitUnsafeRank).query).toBe(
+      "toFloat64(row_number() OVER (PARTITION BY `ledger`.`tier` ORDER BY `ledger`.`id` DESC, `ledger`.`tier` ASC))",
+    );
+
+    const directUnsafeRank = fn.over(fn.rowNumber().toUnsafe(), rowNumberSpec);
+    expect(compileExpression(directUnsafeRank).query).toBe(
+      "toFloat64(row_number() OVER (PARTITION BY `ledger`.`tier` ORDER BY `ledger`.`id` DESC, `ledger`.`tier` ASC))",
+    );
+
+    const windowedDecimalSum = fn.over(fn.sum(amount));
+    expect(compileExpression(windowedDecimalSum).query).toBe("CAST(sum(`ledger`.`amount`) OVER () AS Decimal(38, 5))");
+    expect(windowedDecimalSum.sqlType).toBe("Decimal(38, 5)");
+    expect(windowedDecimalSum.decoder("12.34567")).toBe("12.34567");
+
+    const mappedWindowedDecimalSum = fn.over(fn.sum(amount).mapWith(Number));
+    expect(mappedWindowedDecimalSum.decoder("12.34567")).toBe(12.34567);
+    expect(compileExpression(fn.over(fn.sum(amount).as("ignored_alias"))).query).toBe(
+      "CAST(sum(`ledger`.`amount`) OVER () AS Decimal(38, 5))",
+    );
+
+    const conditionalWindowedSum = fn.over(fn.sumIf(amount, sql`1`));
+    expect(compileExpression(conditionalWindowedSum).query).toBe(
+      "CAST(sumIf(`ledger`.`amount`, 1) OVER () AS Decimal(38, 5))",
+    );
+
+    const safeWindowedCount = fn.over(fn.count().toSafe());
+    expect(compileExpression(safeWindowedCount).query).toBe("toString(count() OVER ())");
+    expect(safeWindowedCount.decoder("2")).toBe("2");
+
+    const parameterizedWindow = fn.over(fn.withParams<number>("quantile", [0.5], id));
+    expect(compileExpression(parameterizedWindow).query).toBe("quantile({orm_param1:Float64})(`ledger`.`id`) OVER ()");
+
+    const conditionalMaximum = fn.maxIf(amount, sql`1`);
+    expect(compileExpression(conditionalMaximum).query).toBe("CAST(maxIf(`ledger`.`amount`, 1) AS Decimal(18, 5))");
+    expect(conditionalMaximum.sqlType).toBe("Decimal(18, 5)");
+    expect(conditionalMaximum.decoder("99.00000")).toBe("99.00000");
+    expect(compileExpression(fn.over(conditionalMaximum)).query).toBe(
+      "CAST(maxIf(`ledger`.`amount`, 1) OVER () AS Decimal(18, 5))",
+    );
+
+    const integerConditionalMaximum = fn.maxIf(id, sql`1`);
+    expect(compileExpression(integerConditionalMaximum).query).toBe("maxIf(`ledger`.`id`, 1)");
+    expect(integerConditionalMaximum.sqlType).toBe("Int32");
+    expect(integerConditionalMaximum.decoder("7")).toBe(7);
+    expect(compileExpression(fn.over(integerConditionalMaximum)).query).toBe("maxIf(`ledger`.`id`, 1) OVER ()");
+
+    const decimalDivision = fn.divideDecimal(amount, sql`toDecimal64(3, 2)`, 4);
+    expect(compileExpression(decimalDivision).query).toBe("divideDecimal(`ledger`.`amount`, toDecimal64(3, 2), 4)");
+    expect(decimalDivision.sqlType).toBe("Decimal(76, 4)");
+    expect(decimalDivision.decoder("0.3333")).toBe("0.3333");
+
+    const derivedDecimalDivision = fn.divideDecimal(amount, sql`toDecimal64(3, 2)`);
+    expect(compileExpression(derivedDecimalDivision).query).toBe("divideDecimal(`ledger`.`amount`, toDecimal64(3, 2))");
+    expect(derivedDecimalDivision.sqlType).toBeUndefined();
+
+    expect(() => fn.divideDecimal(amount, amount, -1)).toThrow(
+      "divideDecimal resultScale must be an integer between 0 and 76",
+    );
+    expect(() => fn.divideDecimal(amount, amount, 77)).toThrow(
+      "divideDecimal resultScale must be an integer between 0 and 76",
+    );
+    expect(() => fn.divideDecimal(amount, amount, 1.5)).toThrow(
+      "divideDecimal resultScale must be an integer between 0 and 76",
+    );
+    expect(() => fn.over(amount)).toThrow("fn.over only accepts function expressions created by fn");
+    expect(() => fn.over(fn.rowNumber(), null as never)).toThrow("fn.over spec must be an object");
+    expect(() => fn.over(fn.rowNumber(), { partitionBy: "tier" as never })).toThrow(
+      "fn.over partitionBy must be an array of Selection values",
+    );
+    expect(() => fn.over(fn.rowNumber(), { partitionBy: [sql`1`] as never })).toThrow(
+      "fn.over partitionBy must contain Selection values",
+    );
+    expect(() => fn.over(fn.rowNumber(), { orderBy: "id" as never })).toThrow(
+      "fn.over orderBy must be an array of Order values",
+    );
+    expect(() => fn.over(fn.rowNumber(), { orderBy: [{ expression: id, direction: "sideways" } as never] })).toThrow(
+      "fn.over orderBy direction must be asc or desc",
+    );
   });
 
   it("fn.count and fn.countIf expose three chainable count modes", function testCountModes() {

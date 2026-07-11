@@ -48,6 +48,22 @@ const floatSum = fn.sumIf(historyOrder.ratio, historyOrder.active);
 const lowCardinalityFloatSum = fn.sumIf(historyOrder.lowCardinalityRatio, historyOrder.active);
 const nullableFloatSum = fn.sumIf(historyOrder.nullableRatio, historyOrder.active);
 const intSum = fn.sumIf(historyOrder.largeId, historyOrder.active);
+const rankInTier = fn.over(fn.rowNumber(), {
+  partitionBy: [historyOrder.active],
+  orderBy: [ck.desc(historyOrder.id)],
+});
+const safeRankInTier = fn.over(fn.rowNumber().toSafe(), {
+  partitionBy: [historyOrder.active],
+  orderBy: [ck.desc(historyOrder.id)],
+});
+const mixedRankInTier = fn.over(fn.rowNumber().toMixed(), {
+  partitionBy: [historyOrder.active],
+  orderBy: [ck.desc(historyOrder.id)],
+});
+const windowedDecimalAmountSum = fn.over(fn.sum(historyOrder.amount));
+const decimalAmountMaximum = fn.maxIf(historyOrder.amount, historyOrder.active);
+const computedAmountMaximum = fn.maxIf(fn.toString(historyOrder.id), historyOrder.active);
+const decimalAmountDivision = fn.divideDecimal(historyOrder.amount, fn.toDecimal64("3.00", 2), 5);
 
 type _BroadSumData = Expect<Equal<SelectionData<typeof broadSum>, number | string>>;
 type _BroadSumIfData = Expect<Equal<SelectionData<typeof broadSumIf>, number | string>>;
@@ -58,6 +74,13 @@ type _FloatSumData = Expect<Equal<SelectionData<typeof floatSum>, number>>;
 type _LowCardinalityFloatSumData = Expect<Equal<SelectionData<typeof lowCardinalityFloatSum>, number>>;
 type _NullableFloatSumData = Expect<Equal<SelectionData<typeof nullableFloatSum>, number>>;
 type _IntSumData = Expect<Equal<SelectionData<typeof intSum>, number | string>>;
+type _RankInTierData = Expect<Equal<SelectionData<typeof rankInTier>, number>>;
+type _SafeRankInTierData = Expect<Equal<SelectionData<typeof safeRankInTier>, string>>;
+type _MixedRankInTierData = Expect<Equal<SelectionData<typeof mixedRankInTier>, number | string>>;
+type _WindowedDecimalAmountSumData = Expect<Equal<SelectionData<typeof windowedDecimalAmountSum>, string>>;
+type _DecimalAmountMaximumData = Expect<Equal<SelectionData<typeof decimalAmountMaximum>, string>>;
+type _ComputedAmountMaximumData = Expect<Equal<SelectionData<typeof computedAmountMaximum>, string>>;
+type _DecimalAmountDivisionData = Expect<Equal<SelectionData<typeof decimalAmountDivision>, string>>;
 
 const untypedRaw = ck.expr(ckSql`1`);
 type _UntypedRawData = Expect<Equal<SelectionData<typeof untypedRaw>, unknown>>;
