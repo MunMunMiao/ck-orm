@@ -303,6 +303,7 @@ const expectedFnKeys = [
   "reinterpretAsUInt64",
   "reinterpretAsUInt8",
   "reinterpretAsUUID",
+  "replaceRegexpAll",
   "replicate",
   "reverse",
   "rowNumber",

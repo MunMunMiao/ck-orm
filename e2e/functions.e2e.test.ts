@@ -100,6 +100,81 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
     expect(presentQuantileRow.medianUserId).toBeLessThan(3000);
   });
 
+  it("supports replaceRegexpAll literals, dynamic arguments and nullable inputs", async function testReplaceRegexpAll() {
+    const db = createE2EDb();
+
+    const [literalRow] = await db.select({
+      whitespace: fn.replaceRegexpAll("a   b", "[[:space:]]+", "-").as("whitespace"),
+      captured: fn.replaceRegexpAll("abc123", "([a-z]+)([0-9]+)", String.raw`\2-\1`).as("captured"),
+      zeroWidth: fn.replaceRegexpAll("abc", "^|$", "_").as("zero_width"),
+      noMatch: fn.replaceRegexpAll("abc", "z+", "x").as("no_match"),
+    });
+
+    expect(expectPresent(literalRow, "replaceRegexpAll literal row")).toEqual({
+      whitespace: "a-b",
+      captured: "123-abc",
+      zeroWidth: "_abc_",
+      noMatch: "abc",
+    });
+
+    const tempTable = createTempTableName("replace_regexp_all");
+    const scope = ckTable(tempTable, {
+      id: ckType.int32(),
+      haystack: ckType.nullable(ckType.string()),
+      pattern: ckType.nullable(ckType.string()),
+      replacement: ckType.nullable(ckType.string()),
+    });
+
+    await db.runInSession(async (session) => {
+      await session.createTemporaryTable(scope);
+      await session.insert(scope).values([
+        { id: 1, haystack: "a   b", pattern: "[[:space:]]+", replacement: "-" },
+        { id: 2, haystack: "abc123", pattern: "([a-z]+)([0-9]+)", replacement: String.raw`\2-\1` },
+        { id: 3, haystack: "abc", pattern: "^|$", replacement: "_" },
+        { id: 4, haystack: null, pattern: "a", replacement: "b" },
+        { id: 5, haystack: "abc", pattern: null, replacement: "x" },
+        { id: 6, haystack: "abc", pattern: "a", replacement: null },
+        { id: 7, haystack: "abc", pattern: "z+", replacement: "x" },
+      ]);
+
+      const rows = await session
+        .select({
+          id: scope.id,
+          result: fn.replaceRegexpAll(scope.haystack, scope.pattern, scope.replacement).as("result"),
+        })
+        .from(scope)
+        .orderBy(scope.id);
+
+      expect(rows).toEqual([
+        { id: 1, result: "a-b" },
+        { id: 2, result: "123-abc" },
+        { id: 3, result: "_abc_" },
+        { id: 4, result: null },
+        { id: 5, result: null },
+        { id: 6, result: null },
+        { id: 7, result: "abc" },
+      ]);
+    });
+  });
+
+  it("keeps invalid replaceRegexpAll patterns as ClickHouse errors", async function testReplaceRegexpAllErrors() {
+    const db = createE2EDb();
+
+    await expectRejectsWithClickhouseError(
+      db
+        .select({
+          result: fn.replaceRegexpAll("abc", "(", "x").as("result"),
+        })
+        .execute(),
+      {
+        kind: "request_failed",
+        executionState: "rejected",
+        clickhouseCode: 36,
+        clickhouseName: "BAD_ARGUMENTS",
+      },
+    );
+  });
+
   it("supports parameterized AggregateFunction type literals in real DDL", async function testParameterizedAggregateFunctionType() {
     const db = createE2EDb();
     const tempTable = createTempTableName("agg_quantile_scope");

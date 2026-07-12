@@ -1692,6 +1692,7 @@ Generic, conversion, aggregate, JSON, tuple, and table-related helpers include:
 
 - `fn.call()`
 - `fn.withParams()`
+- `fn.replaceRegexpAll()` — typed ClickHouse RE2 replacement; see [Regex replacement](#regex-replacement)
 - Type conversion helpers mirror the ClickHouse Type conversion page: `fn.cast()`, `fn.date()`, `fn.accurateCast*()`, `fn.reinterpret*()`, `fn.parseDateTime*()`, `fn.formatDateTime()`, `fn.formatRow*()`, `fn.toString*()`, `fn.toBool()`, `fn.toInt*()`, `fn.toUInt*()`, `fn.toFloat*()`, `fn.toBFloat16*()`, `fn.toDecimal*()`, `fn.toDecimalString()`, `fn.toFixedString()`, `fn.toDate*()`, `fn.toDateTime*()`, `fn.toTime*()`, `fn.toTime64*()`, `fn.toInterval*()`, `fn.toLowCardinality()`, `fn.toNullable()`, and `fn.toUUID*()`.
 - 64-bit-and-wider integer conversions (`toInt64/128/256*`, `toUInt64/128/256*`, Unix timestamp 64 helpers) decode as `string`; narrower integer and floating conversions decode as `number`.
 - Literal-only ClickHouse arguments are validated and inlined where required: Decimal scale, DateTime64/Time64 precision, FixedString length, target type strings, and interval units.
@@ -1713,6 +1714,27 @@ Generic, conversion, aggregate, JSON, tuple, and table-related helpers include:
 - `fn.arrayJoin()`
 - `fn.tupleElement()`
 - `fn.not()`
+
+### Regex replacement
+
+`fn.replaceRegexpAll(haystack, pattern, replacement)` renders ClickHouse
+[`replaceRegexpAll`](https://clickhouse.com/docs/sql-reference/functions/string-replace-functions#replaceregexpall).
+It returns `Selection<string>`, or `Selection<string | null>` when a typed input
+can be null. Use `String.raw` for RE2 backslashes and capture substitutions:
+
+```ts
+const usDate = fn.replaceRegexpAll(
+  orders.dateText,
+  String.raw`^(\d{4})-(\d{2})-(\d{2})$`,
+  String.raw`\2/\3/\1`,
+);
+// Selection<string>
+```
+
+Arguments are bound as query parameters. Patterns use ClickHouse RE2 syntax,
+replacement supports `\0`–`\9`, and invalid patterns remain ClickHouse errors.
+An untyped `ckSql` input is conservatively nullable; write `ckSql<string>` when
+the fragment is known to be non-null.
 
 ### Typed tuple aggregation
 

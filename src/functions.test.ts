@@ -843,6 +843,27 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     expect(argMinSelection.decoder(5)).toBe(5);
   });
 
+  it("compiles and decodes replaceRegexpAll with nullable inputs", function testReplaceRegexpAll() {
+    const literal = fn.replaceRegexpAll("abc123", "([a-z]+)([0-9]+)", String.raw`\2-\1`);
+    const literalBuilt = compileExpression(literal);
+    expect(literalBuilt.query).toBe("replaceRegexpAll({orm_param1:String}, {orm_param2:String}, {orm_param3:String})");
+    expect(literalBuilt.params).toEqual({
+      orm_param1: "abc123",
+      orm_param2: "([a-z]+)([0-9]+)",
+      orm_param3: String.raw`\2-\1`,
+    });
+    expect(literal.decoder("123-abc")).toBe("123-abc");
+    expect(() => literal.decoder({})).toThrow("Cannot convert value to string");
+
+    for (const selection of [
+      fn.replaceRegexpAll(nullable(string()), "a", "b"),
+      fn.replaceRegexpAll("abc", nullable(string()), "b"),
+      fn.replaceRegexpAll("abc", "a", nullable(string())),
+    ]) {
+      expect(selection.decoder(null)).toBeNull();
+    }
+  });
+
   it("compiles fn.greatest / least / if / multiIf / nullIf with type propagation", function testConditionalAndComparisonFns() {
     const id = int32().bind({ name: "id", tableName: "orders" });
     const name = string().bind({ name: "name", tableName: "orders" });

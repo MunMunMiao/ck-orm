@@ -58,6 +58,15 @@ export type WindowSpec = {
 type FunctionArgumentData<TValue> =
   TValue extends SQLFragment<infer TData> ? TData : TValue extends Selection<infer TData> ? TData : unknown;
 
+type ReplaceRegexpArgumentData<TValue> =
+  TValue extends SQLFragment<infer TData> ? TData : TValue extends Selection<infer TData> ? TData : TValue;
+
+type ReplaceRegexpAllData<TArgs extends readonly unknown[]> = true extends {
+  [K in keyof TArgs]: null extends ReplaceRegexpArgumentData<TArgs[K]> ? true : false;
+}[number]
+  ? string | null
+  : string;
+
 type TupleData<TArgs extends readonly unknown[]> = {
   -readonly [K in keyof TArgs]: FunctionArgumentData<TArgs[K]>;
 };
@@ -1067,12 +1076,24 @@ function arrayReverseSort<TData = unknown>(first: unknown, ...rest: unknown[]): 
   });
 }
 
+function replaceRegexpAll<THaystack, TPattern, TReplacement>(
+  haystack: THaystack,
+  pattern: TPattern,
+  replacement: TReplacement,
+): Selection<ReplaceRegexpAllData<[THaystack, TPattern, TReplacement]>> {
+  const args = [haystack, pattern, replacement] as const;
+  return createFunctionExpression<ReplaceRegexpAllData<typeof args>>("replaceRegexpAll", args, {
+    decoder: nullableDecoder(stringDecoder) as Decoder<ReplaceRegexpAllData<typeof args>>,
+  });
+}
+
 /* ── scalar functions ──────────────────────────────────────────── */
 
 const scalarFns = {
   call<TData = unknown>(name: string, ...args: unknown[]): Selection<TData> {
     return createFunctionExpression<TData>(name, args);
   },
+  replaceRegexpAll,
   withParams,
   jsonExtract<TColumn extends AnyColumn>(
     json: unknown,

@@ -18,6 +18,9 @@ const users = ckTable("users", {
   id: ckType.int32(),
   name: ckType.string(),
 });
+const regexInputs = ckTable("regex_inputs", {
+  nullableValue: ckType.nullable(ckType.string()),
+});
 const tempUsers = ckTable("tmp_users", {
   id: ckType.int32(),
   name: ckType.string().default(ckSql`'anonymous'`),
@@ -40,6 +43,15 @@ db.runInSession(async (session: Session) => {
 });
 
 const nameSelection: Selection<string> = fn.toString(users.name);
+const regexSelection: Selection<string> = fn.replaceRegexpAll(users.name, "[a-z]+", "x");
+const namespaceRegexSelection: Selection<string> = ck.fn.replaceRegexpAll(users.name, "[a-z]+", "x");
+const nullableRegexHaystack: Selection<string | null> = fn.replaceRegexpAll(regexInputs.nullableValue, "a", "b");
+const nullableRegexPattern: Selection<string | null> = fn.replaceRegexpAll("abc", regexInputs.nullableValue, "b");
+const nullableRegexReplacement: Selection<string | null> = fn.replaceRegexpAll("abc", "a", regexInputs.nullableValue);
+const typedRegexFragment: Selection<string> = fn.replaceRegexpAll(ckSql<string>`'abc'`, "a", "b");
+const opaqueRegexFragment: Selection<string | null> = fn.replaceRegexpAll(ckSql`'abc'`, "a", "b");
+// @ts-expect-error nullable regex inputs must keep the nullable result type
+const regexMustRemainNullable: Selection<string> = fn.replaceRegexpAll(regexInputs.nullableValue, "a", "b");
 const unixTimestampSelection: Selection<number> = fn.toUnixTimestamp(ckSql`now()`, "UTC");
 const unixTimestamp64Selection: Selection<string> = fn.toUnixTimestamp64Milli(
   fn.toDateTime64("2026-01-01 00:00:00.123", 3, "UTC"),
@@ -59,6 +71,14 @@ const timeSelection: Selection<string> = fn.toTime64("12:34:56.123456", 6);
 const intervalSelection: Selection<unknown> = fn.toInterval(1, "day");
 const uuidSelection: Selection<string> = ck.fn.toUUIDOrZero("bad");
 void unixTimestampSelection;
+void regexSelection;
+void namespaceRegexSelection;
+void nullableRegexHaystack;
+void nullableRegexPattern;
+void nullableRegexReplacement;
+void typedRegexFragment;
+void opaqueRegexFragment;
+void regexMustRemainNullable;
 void unixTimestamp64Selection;
 void fromUnixTimestampSelection;
 void formattedUnixTimestampSelection;
