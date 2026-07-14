@@ -24,7 +24,7 @@ import {
   getCountSqlType,
   wrapCountSql,
 } from "./internal/count";
-import { type DecimalParams, type DecimalSqlType, formatDecimalSqlType, parseDecimalSqlType } from "./internal/decimal";
+import { type DecimalParams, type DecimalSqlType, parseDecimalSqlType } from "./internal/decimal";
 import { escapeSqlSingleQuoted } from "./internal/escape";
 import { assertValidSqlIdentifier } from "./internal/identifier";
 import { parseJsonPathSegments } from "./internal/json-path";
@@ -44,7 +44,7 @@ import {
   passThroughDecoder,
   type Selection,
 } from "./query-shared";
-import { isSqlFragment, type SQLFragment, sql } from "./sql";
+import { inferPrimitiveType, isSqlFragment, type SQLFragment, sql } from "./sql";
 
 /* ── shared helpers ────────────────────────────────────────────── */
 
@@ -127,6 +127,74 @@ const createFunctionExpression = <TData>(
   });
 };
 
+const CONDITIONAL_PROVEN_SQL_TYPES = new Set(["Bool", "Int64", "UInt64", "Float64", "String"]);
+
+const resolveConditionalLiteralSqlType = (anchorSqlType: string, value: unknown): string | undefined => {
+  if (!CONDITIONAL_PROVEN_SQL_TYPES.has(anchorSqlType)) return undefined;
+
+  try {
+    if (inferPrimitiveType(value) === anchorSqlType) return anchorSqlType;
+  } catch {
+    return undefined;
+  }
+
+  if (anchorSqlType === "Float64" && isSafeIntegerNumber(value)) return "Float64";
+  if (anchorSqlType === "UInt64" && isSafeIntegerNumber(value) && value >= 0) return "UInt64";
+  return undefined;
+};
+
+const createConditionalExpression = (
+  name: string,
+  args: readonly unknown[],
+  valueIndexes: readonly number[],
+): Selection<unknown> => {
+  let anchorSqlType: string | undefined;
+  let anchorDecoder: Decoder<unknown> | undefined;
+  for (const index of valueIndexes) {
+    const value = args[index];
+    if (isExpression(value) && value.sqlType !== undefined) {
+      anchorSqlType = value.sqlType;
+      anchorDecoder = value.decoder;
+      break;
+    }
+  }
+
+  const planSucceeded =
+    anchorSqlType !== undefined &&
+    anchorDecoder !== undefined &&
+    CONDITIONAL_PROVEN_SQL_TYPES.has(anchorSqlType) &&
+    valueIndexes.every((index) => {
+      const value = args[index];
+      if (isExpression(value)) return value.sqlType === anchorSqlType;
+      if (isSqlFragment(value) || value === null || value === undefined) return false;
+      return resolveConditionalLiteralSqlType(anchorSqlType, value) !== undefined;
+    });
+  const plannedSqlType = planSucceeded ? anchorSqlType : undefined;
+  const plannedDecoder = planSucceeded ? anchorDecoder : undefined;
+  const nameFragment = renderFunctionName(name);
+  const compile = (ctx: BuildContext): SQLFragment => {
+    const compiledArgs = args.map((argument, index) =>
+      compileValue(
+        argument,
+        ctx,
+        plannedSqlType !== undefined &&
+          valueIndexes.includes(index) &&
+          !isExpression(argument) &&
+          !isSqlFragment(argument)
+          ? plannedSqlType
+          : undefined,
+      ),
+    );
+    return sql`${nameFragment}(${joinSqlParts(compiledArgs, ", ")})`;
+  };
+
+  return createExpression({
+    compile,
+    decoder: plannedDecoder ?? passThroughDecoder,
+    sqlType: plannedSqlType,
+  });
+};
+
 const createParameterizedFunctionExpression = <TData>(
   name: string,
   parameters: readonly unknown[],
@@ -161,16 +229,6 @@ const isSafeIntegerNumber = (value: unknown): value is number => {
   return typeof value === "number" && Number.isSafeInteger(value);
 };
 
-const isNonNegativeIntegerLiteral = (value: unknown) => {
-  return (isSafeIntegerNumber(value) && value >= 0) || (typeof value === "bigint" && value >= 0n);
-};
-
-const isDecimalFallbackLiteral = (value: unknown) => {
-  return (
-    typeof value === "string" || typeof value === "bigint" || (typeof value === "number" && Number.isFinite(value))
-  );
-};
-
 const resolveCoalesceFallbackSqlType = (firstSqlType: string | undefined, fallbackValue: unknown) => {
   if (isExpression(fallbackValue) || isSqlFragment(fallbackValue)) {
     return undefined;
@@ -179,22 +237,7 @@ const resolveCoalesceFallbackSqlType = (firstSqlType: string | undefined, fallba
   if (!firstSqlType) {
     return undefined;
   }
-  const unwrapped = unwrapNullableLowCardinalityType(firstSqlType);
-
-  if ((unwrapped.startsWith("Float") || unwrapped.startsWith("BFloat")) && isSafeIntegerNumber(fallbackValue)) {
-    return unwrapped;
-  }
-
-  if (unwrapped === "UInt64" && isNonNegativeIntegerLiteral(fallbackValue)) {
-    return "UInt64";
-  }
-
-  const decimalParams = parseDecimalSqlType(unwrapped);
-  if (decimalParams && isDecimalFallbackLiteral(fallbackValue)) {
-    return formatDecimalSqlType(decimalParams);
-  }
-
-  return undefined;
+  return resolveConditionalLiteralSqlType(unwrapNullableLowCardinalityType(firstSqlType), fallbackValue);
 };
 
 const numberDecoder: Decoder<number> = toNumberCoercion;
@@ -640,7 +683,7 @@ function over<TData>(expression: Selection<TData>, spec?: WindowSpec): Selection
   const normalizedSpec = normalizeWindowSpec(spec);
   const wrapped = ensureExpression<TData>(expression);
   if (!hasWindowExpressionCompiler(wrapped)) {
-    throw createClientValidationError("fn.over only accepts function expressions created by fn");
+    throw createClientValidationError("fn.over only accepts window-capable function expressions created by fn");
   }
 
   return createExpression<TData>({
@@ -1680,24 +1723,19 @@ const scalarFns = {
   least<TData = unknown>(first: unknown, ...rest: unknown[]): Selection<TData> {
     return createFirstArgFunction<TData>("least", [first, ...rest]);
   },
-  /** Return type tracks `thenValue`. ClickHouse: `if(cond, then, else)`. */
-  if<TData = unknown>(condition: unknown, thenValue: unknown, elseValue: unknown): Selection<TData> {
-    const wrapped = ensureExpression<TData>(thenValue);
-    return createFunctionExpression<TData>("if", [condition, thenValue, elseValue], {
-      decoder: wrapped.decoder,
-      sqlType: wrapped.sqlType,
-    });
+  /** ClickHouse: `if(cond, then, else)`. */
+  if(condition: unknown, thenValue: unknown, elseValue: unknown): Selection<unknown> {
+    return createConditionalExpression("if", [condition, thenValue, elseValue], [1, 2]);
   },
   /**
    * Variadic conditional. Arguments are `(cond1, val1, cond2, val2, ..., elseValue)` — odd count.
-   * Return type tracks the first value branch.
+   * The static result remains unknown.
    */
-  multiIf<TData = unknown>(...args: unknown[]): Selection<TData> {
-    const firstValue = args.length >= 2 ? ensureExpression<TData>(args[1]) : undefined;
-    return createFunctionExpression<TData>("multiIf", args, {
-      decoder: firstValue?.decoder,
-      sqlType: firstValue?.sqlType,
-    });
+  multiIf(...args: unknown[]): Selection<unknown> {
+    const valueIndexes: number[] = [];
+    for (let index = 1; index < args.length - 1; index += 2) valueIndexes.push(index);
+    if (args.length > 0) valueIndexes.push(args.length - 1);
+    return createConditionalExpression("multiIf", args, valueIndexes);
   },
   /** Returns NULL when `value` equals `other`, otherwise `value`. sqlType wraps as `Nullable(...)` automatically. */
   nullIf<TData = unknown>(value: unknown, other: unknown): Selection<TData | null> {

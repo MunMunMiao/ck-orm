@@ -864,7 +864,7 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     }
   });
 
-  it("compiles fn.greatest / least / if / multiIf / nullIf with type propagation", function testConditionalAndComparisonFns() {
+  it("compiles fn.greatest / least / nullIf with type propagation", function testComparisonFns() {
     const id = int32().bind({ name: "id", tableName: "orders" });
     const name = string().bind({ name: "name", tableName: "orders" });
 
@@ -877,19 +877,6 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     expect(compileExpression(leastSelection).query).toContain("least(`orders`.`name`, {orm_param1:String})");
     expect(leastSelection.sqlType).toBe("String");
 
-    const ifSelection = fn.if(sql.raw("1"), id, 0);
-    expect(compileExpression(ifSelection).query).toContain("if(1, `orders`.`id`, {orm_param1:Int64})");
-    expect(ifSelection.sqlType).toBe("Int32");
-
-    const multiIfSelection = fn.multiIf(sql.raw("a"), id, sql.raw("b"), id, 0);
-    expect(compileExpression(multiIfSelection).query).toContain(
-      "multiIf(a, `orders`.`id`, b, `orders`.`id`, {orm_param1:Int64})",
-    );
-    expect(multiIfSelection.sqlType).toBe("Int32");
-
-    expect(compileExpression(fn.multiIf()).query).toContain("multiIf()");
-    expect(fn.multiIf().decoder({ raw: true })).toEqual({ raw: true });
-
     const nullIfSelection = fn.nullIf(id, 0);
     expect(compileExpression(nullIfSelection).query).toContain("nullIf(`orders`.`id`, {orm_param1:Int64})");
     expect(nullIfSelection.sqlType).toBe("Nullable(Int32)");
@@ -899,6 +886,95 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     const nullableInput = nullable(int32()).bind({ name: "maybe_id", tableName: "orders" });
     const nullIfFromNullable = fn.nullIf(nullableInput, 0);
     expect(nullIfFromNullable.sqlType).toBe("Nullable(Int32)");
+  });
+
+  it("plans conditional literal types only when every value branch matches one anchor", function testConditionalPlans() {
+    const ratio = float64().bind({ name: "ratio", tableName: "orders" });
+    const rank = uint64().bind({ name: "rank", tableName: "orders" });
+    const id = int32().bind({ name: "id", tableName: "orders" });
+
+    const floatResult = fn.if(sql.raw("1"), ratio, 0);
+    expect(compileExpression(floatResult).query).toBe("if(1, `orders`.`ratio`, {orm_param1:Float64})");
+    expect(floatResult.sqlType).toBe("Float64");
+    expect(floatResult.decoder("1.5")).toBe(1.5);
+
+    const lateAnchor = fn.if(sql.raw("1"), 0, ratio);
+    expect(compileExpression(lateAnchor).query).toBe("if(1, {orm_param1:Float64}, `orders`.`ratio`)");
+    expect(() => fn.over(lateAnchor)).toThrow("fn.over only accepts window-capable function expressions created by fn");
+    expect(lateAnchor.sqlType).toBe("Float64");
+    expect(lateAnchor.decoder("1.5")).toBe(1.5);
+
+    const uintResult = fn.if(sql.raw("1"), rank, 6);
+    expect(compileExpression(uintResult).query).toBe("if(1, `orders`.`rank`, {orm_param1:UInt64})");
+    expect(uintResult.sqlType).toBe("UInt64");
+    expect(uintResult.decoder("6")).toBe("6");
+
+    const negativeUIntFallback = fn.if(sql.raw("1"), rank, -1);
+    expect(compileExpression(negativeUIntFallback)).toEqual({
+      query: "if(1, `orders`.`rank`, {orm_param1:Int64})",
+      params: { orm_param1: -1 },
+      paramTypes: { orm_param1: "Int64" },
+    });
+    expect(negativeUIntFallback.sqlType).toBeUndefined();
+    const undecodedNegativeUInt = { raw: "1" };
+    expect(negativeUIntFallback.decoder(undecodedNegativeUInt)).toBe(undecodedNegativeUInt);
+
+    const multiResult = fn.multiIf(sql.raw("a"), rank, sql.raw("b"), 5, 6);
+    expect(compileExpression(multiResult).query).toBe(
+      "multiIf(a, `orders`.`rank`, b, {orm_param1:UInt64}, {orm_param2:UInt64})",
+    );
+    expect(multiResult.sqlType).toBe("UInt64");
+
+    const promoted = fn.if(sql.raw("1"), id, 3_000_000_000);
+    expect(compileExpression(promoted).query).toBe("if(1, `orders`.`id`, {orm_param1:Int64})");
+    expect(promoted.sqlType).toBeUndefined();
+    expect(promoted.decoder("3000000000")).toBe("3000000000");
+  });
+
+  it("does not partially type conditionals containing heterogeneous or raw branches", function testUnknownConditionals() {
+    const rank = uint64().bind({ name: "rank", tableName: "orders" });
+    const signed = int64().bind({ name: "signed", tableName: "orders" });
+
+    const heterogeneous = fn.multiIf(sql.raw("a"), rank, sql.raw("b"), 5, sql.raw("c"), signed, 6);
+    expect(compileExpression(heterogeneous).query).toBe(
+      "multiIf(a, `orders`.`rank`, b, {orm_param1:Int64}, c, `orders`.`signed`, {orm_param2:Int64})",
+    );
+    expect(heterogeneous.sqlType).toBeUndefined();
+    expect(heterogeneous.decoder("6")).toBe("6");
+
+    const raw = fn.if(sql.raw("1"), rank, sql.raw("toUInt64(6)"));
+    expect(compileExpression(raw).query).toBe("if(1, `orders`.`rank`, toUInt64(6))");
+    expect(raw.sqlType).toBeUndefined();
+    expect(raw.decoder({ raw: true })).toEqual({ raw: true });
+
+    const unsupported = fn.if(sql.raw("1"), rank, Symbol("unsupported"));
+    expect(unsupported).toBeDefined();
+    expect(unsupported.sqlType).toBeUndefined();
+    const undecoded = { raw: true };
+    expect(unsupported.decoder(undecoded)).toBe(undecoded);
+    expect(() => compileExpression(unsupported)).toThrow("Unsupported SQL parameter value");
+
+    const emptyMulti = fn.multiIf();
+    expect(compileExpression(emptyMulti).query).toBe("multiIf()");
+    expect(emptyMulti.sqlType).toBeUndefined();
+    expect(emptyMulti.decoder({ raw: true })).toEqual({ raw: true });
+  });
+
+  it("keeps unsupported same-type expression branches conservative", function testTypedConditionalExpressions() {
+    const openedAt = dateTime64({ precision: 3 }).bind({ name: "opened_at", tableName: "orders" });
+    const closedAt = dateTime64({ precision: 3 }).bind({ name: "closed_at", tableName: "orders" });
+    const dateResult = fn.if(sql.raw("1"), openedAt, closedAt);
+
+    expect(compileExpression(dateResult).query).toBe("if(1, `orders`.`opened_at`, `orders`.`closed_at`)");
+    expect(dateResult.sqlType).toBeUndefined();
+    expect(dateResult.decoder("2026-07-14T00:00:00.123Z")).toBe("2026-07-14T00:00:00.123Z");
+
+    const currentState = lowCardinality(string()).bind({ name: "current_state", tableName: "orders" });
+    const previousState = lowCardinality(string()).bind({ name: "previous_state", tableName: "orders" });
+    const lowCardinalityResult = fn.if(sql.raw("1"), currentState, previousState);
+
+    expect(lowCardinalityResult.sqlType).toBeUndefined();
+    expect(lowCardinalityResult.decoder({ raw: true })).toEqual({ raw: true });
   });
 
   it("compiles fn arithmetic operators with first-arg type propagation", function testArithmeticFns() {
@@ -1506,23 +1582,26 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
 
     const float32Price = float32().bind({ name: "price_32", tableName: "orders" });
     expect(compileExpression(fn.coalesce(float32Price, 0)).query).toContain(
-      "coalesce(`orders`.`price_32`, {orm_param1:Float32})",
+      "coalesce(`orders`.`price_32`, {orm_param1:Int64})",
     );
     const bfloatPrice = bfloat16().bind({ name: "price_bfloat", tableName: "orders" });
     expect(compileExpression(fn.coalesce(bfloatPrice, 0)).query).toContain(
-      "coalesce(`orders`.`price_bfloat`, {orm_param1:BFloat16})",
+      "coalesce(`orders`.`price_bfloat`, {orm_param1:Int64})",
     );
     const volume = uint64().bind({ name: "volume", tableName: "orders" });
     expect(compileExpression(fn.coalesce(volume, 0)).query).toContain(
       "coalesce(`orders`.`volume`, {orm_param1:UInt64})",
     );
+    expect(compileExpression(fn.coalesce(volume, 0n)).query).toContain(
+      "coalesce(`orders`.`volume`, {orm_param1:Int64})",
+    );
 
     const amount = decimal({ precision: 18, scale: 2 }).bind({ name: "amount", tableName: "orders" });
     expect(compileExpression(fn.coalesce(amount, "0.00")).query).toContain(
-      "coalesce(`orders`.`amount`, {orm_param1:Decimal(18, 2)})",
+      "coalesce(`orders`.`amount`, {orm_param1:String})",
     );
     expect(compileExpression(fn.coalesce(amount, 0.5)).query).toContain(
-      "coalesce(`orders`.`amount`, {orm_param1:Decimal(18, 2)})",
+      "coalesce(`orders`.`amount`, {orm_param1:Float64})",
     );
 
     const score = int32().bind({ name: "score", tableName: "orders" });
@@ -1860,7 +1939,7 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     expect(() => fn.divideDecimal(amount, amount, 1.5)).toThrow(
       "divideDecimal resultScale must be an integer between 0 and 76",
     );
-    expect(() => fn.over(amount)).toThrow("fn.over only accepts function expressions created by fn");
+    expect(() => fn.over(amount)).toThrow("fn.over only accepts window-capable function expressions created by fn");
     expect(() => fn.over(fn.rowNumber(), null as never)).toThrow("fn.over spec must be an object");
     expect(() => fn.over(fn.rowNumber(), { partitionBy: "tier" as never })).toThrow(
       "fn.over partitionBy must be an array of Selection values",

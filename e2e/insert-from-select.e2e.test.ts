@@ -87,7 +87,9 @@ describeE2E("ck-orm e2e insert.fromSelect", function describeInsertFromSelect() 
         session
           .select({
             id: users.id,
-            bucket: fn.multiIf<number>(ck.lt(users.id, 3), 1, ck.lt(users.id, 7), 2, 3),
+            bucket: fn
+              .multiIf(ck.lt(users.id, 3), fn.toInt32(1), ck.lt(users.id, 7), fn.toInt32(2), fn.toInt32(3))
+              .mapWith(Number),
             label: fn.toString(users.id),
           })
           .from(users)

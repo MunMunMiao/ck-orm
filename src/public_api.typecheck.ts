@@ -109,6 +109,14 @@ const namespaceFlag: Selection<boolean> = ck.expr<boolean>(ckSql`1`, {
   sqlType: "UInt8",
 });
 const namespacePredicate: Predicate = ck.eq(users.id, 1);
+const conditionalUnknown: Selection<unknown> = fn.if(namespacePredicate, users.id, 0);
+const multiConditionalUnknown: Selection<unknown> = fn.multiIf(namespacePredicate, users.id, 0);
+// @ts-expect-error conditional result generics were removed because they did not install a decoder
+fn.if<number>(namespacePredicate, users.id, 0);
+// @ts-expect-error conditional result generics were removed because they did not install a decoder
+fn.multiIf<number>(namespacePredicate, users.id, 0);
+void conditionalUnknown;
+void multiConditionalUnknown;
 const namespacePredicateGroup: Predicate = ck.and(namespacePredicate, ck.eq(users.id, 2));
 const namespaceSortOrder: Order = ck.desc(namespaceFlag);
 const namespaceCount: Selection<number> = ck.fn.count();

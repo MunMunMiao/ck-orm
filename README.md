@@ -1707,13 +1707,58 @@ Generic, conversion, aggregate, JSON, tuple, and table-related helpers include:
 - `fn.avg()` — `Selection<number>` (Float64), matching ClickHouse's native `avg(Decimal)` behavior
 - `fn.uniqExact()` — same three chainable modes as `fn.count()`: default `Selection<number>` wrapped as `toFloat64(uniqExact(...))`, `.toSafe()` for `Selection<string>` (`toString(uniqExact(...))`), `.toMixed()` for `Selection<number | string>` (`toUInt64(uniqExact(...))`), `.toUnsafe()` to revert. Decoders are the same non-negative integer guard. See [`fn.count` / `fn.uniqExact` modes](#fncount--fnuniqexact-modes).
 - `fn.coalesce()`
-- `fn.if()` / `fn.multiIf()` / `fn.greatest()` / `fn.least()` / `fn.nullIf()` — conditionals and comparisons. Return type follows the `then` branch (or first arg); `nullIf` automatically wraps the sqlType as `Nullable(...)` without double-wrapping an already-nullable input.
+- `fn.if()` / `fn.multiIf()` — conditionals. Both return `Selection<unknown>` because ClickHouse determines the server result type from all value branches.
+- `fn.greatest()` / `fn.least()` / `fn.nullIf()` — comparisons; `nullIf` automatically wraps the sqlType as `Nullable(...)` without double-wrapping an already-nullable input.
 - `fn.positionCaseInsensitive()` / `fn.positionCaseInsensitiveUTF8()` — case-insensitive / UTF-8 substring search. Return `Selection<string>` (ClickHouse `UInt64`, decoded as string to preserve 64-bit precision, matching `fn.indexOf()`). Optional `startPos` must be a `UInt*` type — pass a UInt column or `fn.toUInt64(n)` for literals; a bare number literal becomes `Int64` and will be rejected by ClickHouse.
 - `fn.jsonExtract()`
 - `fn.tuple()`
 - `fn.arrayJoin()`
 - `fn.tupleElement()`
 - `fn.not()`
+
+### Conditional branch types
+
+The conditional result generic has been removed: `fn.if<TData>(...)` and
+`fn.multiIf<TData>(...)` no longer compile. A known `Float64` or `UInt64` anchor
+contextually types compatible safe-integer literal branches; `UInt64` literals
+must also be non-negative. Heterogeneous expressions and raw SQL are never
+automatically cast, so convert every value branch explicitly. `.mapWith(...)`
+only defines the JavaScript decoder; it does not change the SQL type. In
+particular, a non-negative safe-integer fallback next to
+`fn.over(fn.rowNumber().toMixed())` compiles as `UInt64`.
+`fn.if(...)` and `fn.multiIf(...)` are scalar and cannot be passed directly to
+`fn.over(...)`; a value branch may still be a window selection.
+
+When one SQL type cannot be proven across every value branch, result metadata
+stays unknown and decoding becomes pass-through. Existing results may therefore
+change from a `number` to a transport `string`. Migrate by explicitly converting
+every value branch to one SQL type, then applying `.mapWith(...)` as needed.
+Automatic result metadata is deliberately limited to exact `Bool`, `Int64`,
+`UInt64`, `Float64`, and `String` anchors. Other types remain pass-through even
+when branch metadata matches, because ClickHouse can normalize identical storage
+types (for example, `LowCardinality(String)` becomes `String`).
+
+```ts
+// Before: the generic asserted a JS type but did not change SQL types.
+fn.if<number>(condition, valueA, valueB);
+
+// After: unify every value branch's SQL type, then define the decoder.
+fn
+  .if(condition, fn.toUInt64(valueA), fn.toUInt64(valueB))
+  .mapWith((value) => String(value));
+
+// Known anchors contextually type compatible safe-integer literals.
+fn.if(condition, fn.toFloat64(valueA), 0);
+fn.if(condition, fn.over(fn.rowNumber().toMixed()), 6); // fallback compiles as UInt64
+```
+
+`fn.coalesce(...)` no longer context-types fallbacks as `Float32`, `BFloat16`,
+`Decimal`, or a `bigint` whose target range cannot be proven safe. Convert those
+fallbacks explicitly:
+
+```ts
+fn.coalesce(amount, fn.toDecimal64("0.00", 2));
+```
 
 ### Regex replacement
 

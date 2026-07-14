@@ -396,6 +396,9 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
       partitionBy: [webEvents.country],
       orderBy: [ck.asc(webEvents.event_id)],
     };
+    const mixedRankInCountry = fn.over(fn.rowNumber().toMixed(), rankInCountrySpec);
+    const visibleRankInCountry = fn.if(ck.eq(webEvents.country, "US"), mixedRankInCountry, 6);
+    expect(visibleRankInCountry.sqlType).toBe("UInt64");
 
     const rows = await db
       .select({
@@ -403,7 +406,9 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
         eventId: webEvents.event_id,
         rankInCountry: fn.over(fn.rowNumber(), rankInCountrySpec).as("rank_in_country"),
         safeRankInCountry: fn.over(fn.rowNumber().toSafe(), rankInCountrySpec).as("safe_rank_in_country"),
-        mixedRankInCountry: fn.over(fn.rowNumber().toMixed(), rankInCountrySpec).as("mixed_rank_in_country"),
+        mixedRankInCountry: mixedRankInCountry.as("mixed_rank_in_country"),
+        visibleRankInCountry: visibleRankInCountry.as("visible_rank_in_country"),
+        visibleRankType: fn.call<string>("toTypeName", visibleRankInCountry).mapWith(String).as("visible_rank_type"),
         totalRevenueInCountry: fn
           .over(fn.sum(webEvents.revenue), {
             partitionBy: [webEvents.country],
@@ -421,6 +426,8 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
       expect(row.rankInCountry).toBe(nextRank);
       expect(row.safeRankInCountry).toBe(String(nextRank));
       expect(row.mixedRankInCountry).toBe(String(nextRank));
+      expect(row.visibleRankType).toBe("UInt64");
+      expect(row.visibleRankInCountry).toBe(row.country === "US" ? String(nextRank) : "6");
       ranksByCountry.set(row.country, nextRank);
       expect(row.totalRevenueInCountry).toMatch(/^\d+(?:\.\d+)?$/);
       expect(revenueByCountry.get(row.country) ?? row.totalRevenueInCountry).toBe(row.totalRevenueInCountry);
@@ -604,17 +611,79 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
     expect(item[4]).toBe(9007199254740993n);
   });
 
-  it("reproduces ClickHouse NO_COMMON_TYPE for old numeric coalesce shapes", async function testRawNumericCoalesceCommonTypeFailures() {
-    const db = createE2EDb({
+  it("keeps unsafe coalesce fallbacks under ClickHouse control", async function testUnsafeCoalesceFallbacks() {
+    const strictDb = createE2EDb({
+      clickhouse_settings: {
+        use_variant_as_common_type: 0,
+      },
+    });
+    const noCommonType = {
+      kind: "request_failed",
+      executionState: "rejected",
+      clickhouseCode: 386,
+      clickhouseName: "NO_COMMON_TYPE",
+    };
+
+    await expectRejectsWithClickhouseError(
+      strictDb
+        .select({
+          value: fn.coalesce(fn.nullIf(schemaPrimitives.float32_value, schemaPrimitives.float32_value), 0).as("value"),
+        })
+        .from(schemaPrimitives)
+        .where(ck.eq(schemaPrimitives.id, 1))
+        .execute(),
+      noCommonType,
+    );
+
+    await expectRejectsWithClickhouseError(
+      strictDb
+        .select({
+          value: fn
+            .coalesce(fn.nullIf(schemaPrimitives.bfloat16_value, schemaPrimitives.bfloat16_value), 0)
+            .as("value"),
+        })
+        .from(schemaPrimitives)
+        .where(ck.eq(schemaPrimitives.id, 1))
+        .execute(),
+      noCommonType,
+    );
+
+    await expectRejectsWithClickhouseError(
+      strictDb
+        .select({
+          value: fn
+            .coalesce(fn.nullIf(schemaPrimitives.decimal_value, schemaPrimitives.decimal_value), 0.5)
+            .as("value"),
+        })
+        .from(schemaPrimitives)
+        .where(ck.eq(schemaPrimitives.id, 1))
+        .execute(),
+      noCommonType,
+    );
+
+    await expectRejectsWithClickhouseError(
+      strictDb
+        .select({
+          value: fn.coalesce(fn.nullIf(schemaPrimitives.uint64_value, schemaPrimitives.uint64_value), 0n).as("value"),
+        })
+        .from(schemaPrimitives)
+        .where(ck.eq(schemaPrimitives.id, 1))
+        .execute(),
+      noCommonType,
+    );
+  });
+
+  it("validates conditional branch types against real ClickHouse", async function testConditionalBranchTypes() {
+    const strictDb = createE2EDb({
       clickhouse_settings: {
         use_variant_as_common_type: 0,
       },
     });
 
     await expectRejectsWithClickhouseError(
-      db.execute(ckSql`select coalesce(CAST(NULL AS Nullable(Float64)), {fallback:Int64}) as value`, {
+      strictDb.execute(ckSql`select if(true, toUInt64(1), {fallback:Int64}) as value`, {
         query_params: {
-          fallback: 0,
+          fallback: 6,
         },
       }),
       {
@@ -625,33 +694,258 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
       },
     );
 
-    await expectRejectsWithClickhouseError(
-      db.execute(ckSql`select coalesce(CAST(NULL AS Nullable(UInt64)), {fallback:Int64}) as value`, {
-        query_params: {
-          fallback: 0,
-        },
-      }),
+    const [promotedRow] = await strictDb.execute(
+      ckSql`
+        select
+          toTypeName(if(false, toInt32(1), {fallback:Int64})) as type,
+          if(false, toInt32(1), {fallback:Int64}) as value
+      `,
       {
-        kind: "request_failed",
-        executionState: "rejected",
-        clickhouseCode: 386,
-        clickhouseName: "NO_COMMON_TYPE",
+        query_params: {
+          fallback: 3_000_000_000,
+        },
       },
     );
+    expect(expectPresent(promotedRow, "promoted conditional row")).toEqual({
+      type: "Int64",
+      value: "3000000000",
+    });
 
-    await expectRejectsWithClickhouseError(
-      db.execute(ckSql`select coalesce(CAST(NULL AS Nullable(Decimal(18, 2))), {fallback:Float64}) as value`, {
-        query_params: {
-          fallback: 0.5,
-        },
-      }),
-      {
-        kind: "request_failed",
-        executionState: "rejected",
-        clickhouseCode: 386,
-        clickhouseName: "NO_COMMON_TYPE",
+    const tempTable = createTempTableName("conditional_branch_types");
+    const scope = ckTable(tempTable, {
+      rank: ckType.uint64(),
+      ratio: ckType.float64(),
+    });
+
+    await strictDb.runInSession(async (session) => {
+      await session.createTemporaryTable(scope);
+      await session.insert(scope).values([{ rank: "1", ratio: 1.5 }]);
+
+      const [typeRow] = await session
+        .select({
+          rankType: fn
+            .call<string>("toTypeName", fn.if(true, scope.rank, 6))
+            .mapWith(String)
+            .as("rank_type"),
+          ratioType: fn
+            .call<string>("toTypeName", fn.if(true, scope.ratio, 0))
+            .mapWith(String)
+            .as("ratio_type"),
+          multiRankType: fn
+            .call<string>("toTypeName", fn.multiIf(true, scope.rank, false, 5, 6))
+            .mapWith(String)
+            .as("multi_rank_type"),
+        })
+        .from(scope);
+
+      expect(expectPresent(typeRow, "conditional type row")).toEqual({
+        rankType: "UInt64",
+        ratioType: "Float64",
+        multiRankType: "UInt64",
+      });
+
+      const conditionalValues = session.$with("conditional_values").as(
+        session
+          .select({
+            rankOrFallback: fn.if(false, scope.rank, 6).as("rank_or_fallback"),
+          })
+          .from(scope),
+      );
+
+      const rows = await session
+        .with(conditionalValues)
+        .select({ rankOrFallback: conditionalValues.rankOrFallback })
+        .from(conditionalValues)
+        .where(ck.eq(conditionalValues.rankOrFallback, 6));
+
+      expect(rows).toEqual([{ rankOrFallback: "6" }]);
+    });
+
+    const lowCardinalityA = ck.expr<string>(ckSql`toLowCardinality('a')`, {
+      decoder: String,
+      sqlType: "LowCardinality(String)",
+    });
+    const lowCardinalityB = ck.expr<string>(ckSql`toLowCardinality('b')`, {
+      decoder: String,
+      sqlType: "LowCardinality(String)",
+    });
+    const lowCardinalityConditional = fn.if(true, lowCardinalityA, lowCardinalityB);
+    expect(lowCardinalityConditional.sqlType).toBeUndefined();
+
+    const [sameTypeRow] = await strictDb.select({
+      type: fn.call<string>("toTypeName", lowCardinalityConditional).mapWith(String).as("type"),
+      value: lowCardinalityConditional.as("value"),
+    });
+    expect(expectPresent(sameTypeRow, "same-type conditional row")).toEqual({ type: "String", value: "a" });
+  });
+
+  it("delegates heterogeneous conditional types to ClickHouse settings", async function testConditionalServerSettings() {
+    const conditional = fn.if(true, fn.toUInt64(1), fn.toInt64(-1));
+    const negativeUIntFallback = fn.if(true, fn.toUInt64(1), -1);
+    expect(conditional.sqlType).toBeUndefined();
+    expect(negativeUIntFallback.sqlType).toBeUndefined();
+
+    const strictDb = createE2EDb({
+      clickhouse_settings: {
+        use_variant_as_common_type: 0,
       },
+    });
+    const noCommonType = {
+      kind: "request_failed",
+      executionState: "rejected",
+      clickhouseCode: 386,
+      clickhouseName: "NO_COMMON_TYPE",
+    };
+    await expectRejectsWithClickhouseError(
+      strictDb.select({ value: negativeUIntFallback.as("value") }).execute(),
+      noCommonType,
     );
+    await expectRejectsWithClickhouseError(strictDb.select({ value: conditional.as("value") }).execute(), noCommonType);
+
+    const variantDb = createE2EDb({
+      clickhouse_settings: {
+        use_variant_as_common_type: 1,
+      },
+    });
+    const [variantRow] = await variantDb
+      .select({
+        type: fn.call<string>("toTypeName", conditional).mapWith(String).as("type"),
+        value: conditional.as("value"),
+      })
+      .execute();
+
+    expect(expectPresent(variantRow, "variant conditional row")).toEqual({
+      type: "Variant(Int64, UInt64)",
+      value: "1",
+    });
+  });
+
+  it("propagates nested conditional metadata through a subquery", async function testNestedConditionalSubquery() {
+    const db = createE2EDb({
+      clickhouse_settings: {
+        use_variant_as_common_type: 0,
+      },
+    });
+    const inner = fn.if(false, 0, schemaPrimitives.float64_value);
+    const outer = fn.multiIf(false, 0, true, inner, 2);
+    expect(inner.sqlType).toBe("Float64");
+    expect(outer.sqlType).toBe("Float64");
+
+    const conditionalScores = db
+      .select({
+        score: outer.as("score"),
+      })
+      .from(schemaPrimitives)
+      .where(ck.eq(schemaPrimitives.id, 1))
+      .as("conditional_scores");
+    expect(conditionalScores.score.sqlType).toBe("Float64");
+
+    const rows = await db
+      .select({
+        score: conditionalScores.score,
+      })
+      .from(conditionalScores)
+      .where(ck.eq(conditionalScores.score, 6.5))
+      .groupBy(conditionalScores.score)
+      .orderBy(conditionalScores.score);
+
+    expect(rows).toEqual([{ score: 6.5 }]);
+  });
+
+  it("keeps unproven conditional results on the transport decoder", async function testConditionalTransportFallbacks() {
+    const strictDb = createE2EDb({
+      clickhouse_settings: {
+        use_variant_as_common_type: 0,
+      },
+    });
+    const literalValue = fn.if(true, 1, 0);
+    const promotedValue = fn.if(false, schemaPrimitives.int32_value, 3_000_000_000);
+    const rawValue = fn.if(true, fn.toUInt64(1), ckSql`toUInt64(6)`);
+    const dateValue = fn.if(
+      false,
+      schemaPrimitives.date_time64_value,
+      fn.toDateTime64(schemaPrimitives.date_time_value, 3),
+    );
+    const decimalValue = fn.if(false, schemaPrimitives.decimal_value, fn.toDecimal64("0.00", 2));
+
+    for (const selection of [literalValue, promotedValue, rawValue, dateValue, decimalValue]) {
+      expect(selection.sqlType).toBeUndefined();
+    }
+
+    const [row] = await strictDb
+      .select({
+        literalType: fn.call<string>("toTypeName", literalValue).mapWith(String).as("literal_type"),
+        literalRaw: literalValue.as("literal_raw"),
+        literalMapped: literalValue.mapWith(Number).as("literal_mapped"),
+        promotedType: fn.call<string>("toTypeName", promotedValue).mapWith(String).as("promoted_type"),
+        promotedValue: promotedValue.as("promoted_value"),
+        rawType: fn.call<string>("toTypeName", rawValue).mapWith(String).as("raw_type"),
+        rawValue: rawValue.as("raw_value"),
+        dateType: fn.call<string>("toTypeName", dateValue).mapWith(String).as("date_type"),
+        dateRaw: dateValue.as("date_raw"),
+        dateMapped: dateValue.mapWith((value) => new Date(String(value))).as("date_mapped"),
+        decimalType: fn.call<string>("toTypeName", decimalValue).mapWith(String).as("decimal_type"),
+        decimalValue: decimalValue.as("decimal_value"),
+      })
+      .from(schemaPrimitives)
+      .where(ck.eq(schemaPrimitives.id, 1));
+
+    const presentRow = expectPresent(row, "conditional transport fallback row");
+    expect(presentRow).toEqual({
+      literalType: "Int64",
+      literalRaw: "1",
+      literalMapped: 1,
+      promotedType: "Int64",
+      promotedValue: "3000000000",
+      rawType: "UInt64",
+      rawValue: "1",
+      dateType: "DateTime64(3)",
+      dateRaw: "2026-01-12T01:02:03.000Z",
+      dateMapped: new Date("2026-01-12 01:02:03.000"),
+      decimalType: "Decimal(18, 2)",
+      decimalValue: "0",
+    });
+    expect(typeof presentRow.dateRaw).toBe("string");
+    expectDate(presentRow.dateMapped);
+  });
+
+  it("covers every supported conditional anchor through the builder", async function testConditionalAnchorMatrix() {
+    const db = createE2EDb({
+      clickhouse_settings: {
+        use_variant_as_common_type: 0,
+      },
+    });
+    const boolValue = fn.if(true, fn.toBool(true), false);
+    const intValue = fn.if(true, fn.toInt64(1), 0);
+    const stringValue = fn.if(true, fn.toString("a"), "b");
+    const lateMultiValue = fn.multiIf(false, 5, true, fn.toUInt64(7), 6);
+
+    expect(boolValue.sqlType).toBe("Bool");
+    expect(intValue.sqlType).toBe("Int64");
+    expect(stringValue.sqlType).toBe("String");
+    expect(lateMultiValue.sqlType).toBe("UInt64");
+
+    const [row] = await db.select({
+      boolType: fn.call<string>("toTypeName", boolValue).mapWith(String).as("bool_type"),
+      boolValue: boolValue.as("bool_value"),
+      intType: fn.call<string>("toTypeName", intValue).mapWith(String).as("int_type"),
+      intValue: intValue.as("int_value"),
+      stringType: fn.call<string>("toTypeName", stringValue).mapWith(String).as("string_type"),
+      stringValue: stringValue.as("string_value"),
+      lateMultiType: fn.call<string>("toTypeName", lateMultiValue).mapWith(String).as("late_multi_type"),
+      lateMultiValue: lateMultiValue.as("late_multi_value"),
+    });
+
+    expect(expectPresent(row, "conditional anchor matrix row")).toEqual({
+      boolType: "Bool",
+      boolValue: true,
+      intType: "Int64",
+      intValue: "1",
+      stringType: "String",
+      stringValue: "a",
+      lateMultiType: "UInt64",
+      lateMultiValue: "7",
+    });
   });
 
   it("keeps Float64 defaults typed through fn.coalesce and floating aggregates", async function testFloatCoalesceDefaults() {
@@ -660,18 +954,28 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
         use_variant_as_common_type: 0,
       },
     });
+    const float32Default = fn.coalesce(fn.toNullable(schemaPrimitives.float32_value), fn.toFloat32(0));
+    const bfloatDefault = fn.coalesce(fn.toNullable(schemaPrimitives.bfloat16_value), fn.toBFloat16(0));
 
     const [directRow] = await db
       .select({
         floatDefault: fn.coalesce(schemaPrimitives.float64_value, 0).as("float_default"),
+        float32Default: float32Default.as("float32_default"),
+        float32Type: fn.call<string>("toTypeName", float32Default).mapWith(String).as("float32_type"),
+        bfloatDefault: bfloatDefault.as("bfloat_default"),
+        bfloatType: fn.call<string>("toTypeName", bfloatDefault).mapWith(String).as("bfloat_type"),
         uint64Default: fn.coalesce(schemaPrimitives.uint64_value, 0).as("uint64_default"),
-        decimalDefault: fn.coalesce(schemaPrimitives.decimal_value, "0.00").as("decimal_default"),
+        decimalDefault: fn.coalesce(schemaPrimitives.decimal_value, fn.toDecimal64("0.00", 2)).as("decimal_default"),
       })
       .from(schemaPrimitives)
       .where(ck.eq(schemaPrimitives.id, 1));
 
     expect(expectPresent(directRow, "direct float coalesce row")).toEqual({
       floatDefault: 6.5,
+      float32Default: 3.25,
+      float32Type: "Float32",
+      bfloatDefault: 1.75,
+      bfloatType: "BFloat16",
       uint64Default: "64",
       decimalDefault: "1234.56",
     });
@@ -707,7 +1011,7 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
       .select({
         openPrice: fn.coalesce(numericRollup.price, 0).as("open_price"),
         volume: fn.coalesce(numericRollup.volume, 0).as("volume"),
-        amount: fn.coalesce(numericRollup.amount, "0.00").as("amount"),
+        amount: fn.coalesce(numericRollup.amount, fn.toDecimal64("0.00", 2)).as("amount"),
         profit: fn.coalesce(numericRollup.profit, 0).as("profit"),
       })
       .from(schemaPrimitives)
@@ -1115,10 +1419,11 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
         tier: users.tier,
         greatest: fn.greatest<number>(users.id, 2).as("greatest"),
         least: fn.least<number>(users.id, 2).as("least"),
-        tierIsVipFlag: fn.if<number>(ck.eq(users.tier, "vip"), 1, 0).as("tier_is_vip_flag"),
-        tierLabel: fn
-          .multiIf<string>(ck.eq(users.tier, "vip"), "V", ck.eq(users.tier, "standard"), "S", "T")
-          .as("tier_label"),
+        tierIsVipFlag: fn
+          .if(ck.eq(users.tier, "vip"), fn.toUInt8(1), fn.toUInt8(0))
+          .mapWith(Number)
+          .as("tier_is_vip_flag"),
+        tierLabel: fn.multiIf(ck.eq(users.tier, "vip"), "V", ck.eq(users.tier, "standard"), "S", "T").as("tier_label"),
         nullIfVip: fn.nullIf<string>(users.tier, "vip").as("null_if_vip"),
         posAlice: fn.positionCaseInsensitive(users.name, "AL").as("pos_alice"),
         posAliceUtf8: fn.positionCaseInsensitiveUTF8(users.name, "AL").as("pos_alice_utf8"),
@@ -1131,15 +1436,15 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
     // Notes:
     //   - tier seed: `multiIf(number % 7 = 0, 'vip', number % 3 = 0, 'standard', 'trial')`
     //     where number = id - 1. So id=1 → vip; id=2,3 → trial; id=4 → standard.
-    //   - `fn.if(cond, 1, 0)` propagates Int64 from the literal `then`, decoded as string
-    //     to preserve 64-bit precision — that's the documented Int64 path.
+    //   - `fn.if(cond, toUInt8(1), toUInt8(0)).mapWith(Number)` explicitly opts into
+    //     a JS number decoder instead of asserting a result type with a generic.
     expect(rows).toEqual([
       {
         id: 1,
         tier: "vip",
         greatest: 2,
         least: 1,
-        tierIsVipFlag: "1",
+        tierIsVipFlag: 1,
         tierLabel: "V",
         nullIfVip: null,
         posAlice: "1",
@@ -1151,7 +1456,7 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
         tier: "trial",
         greatest: 2,
         least: 2,
-        tierIsVipFlag: "0",
+        tierIsVipFlag: 0,
         tierLabel: "T",
         nullIfVip: "trial",
         posAlice: "0",
@@ -1163,7 +1468,7 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
         tier: "trial",
         greatest: 3,
         least: 2,
-        tierIsVipFlag: "0",
+        tierIsVipFlag: 0,
         tierLabel: "T",
         nullIfVip: "trial",
         posAlice: "0",
