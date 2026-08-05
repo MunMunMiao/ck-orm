@@ -142,6 +142,32 @@ describeE2E("ck-orm e2e write paths", function describeWritePaths() {
     ]);
   });
 
+  it("uploads a production-sized async user scope without stalling the ClickHouse request body", async function testProductionSizedAsyncUserScope() {
+    const rowCount = 4_177;
+    const db = createE2EDb({ request_timeout: 15_000 });
+    const scope = ckTable(createTempTableName("tmp_async_user_scope"), {
+      userId: ckType.string("user_id"),
+    });
+
+    await db.runInSession(async (session) => {
+      await session.createTemporaryTable(scope);
+      await session.insertJsonEachRow(
+        scope,
+        (async function* rows() {
+          for (let index = 0; index < rowCount; index += 1) {
+            yield { userId: `TA${String(index).padStart(7, "0")}` };
+          }
+        })(),
+        {
+          // Fail the red test promptly when Bun leaves the chunked request body unfinished.
+          clickhouse_settings: { receive_timeout: 2 },
+        },
+      );
+
+      expect(await session.count(scope)).toBe(rowCount);
+    });
+  }, 30_000);
+
   it("treats empty JSONEachRow array inserts as no-ops", async function testInsertJsonEachRowEmptyArray() {
     const db = createE2EDb();
     await db.insertJsonEachRow(auditEvents, []);

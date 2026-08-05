@@ -5,3 +5,4 @@ coverage/
 *.tgz
 .idea/
 .vscode/
+e2e/certs/

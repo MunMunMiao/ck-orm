@@ -1,4 +1,5 @@
-FROM oven/bun:1.3.13
+ARG BUN_VERSION=1.3.13
+FROM oven/bun:${BUN_VERSION}
 
 WORKDIR /workspace
 

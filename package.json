@@ -18,6 +18,7 @@
     "test:orm": "bun test ./src",
     "test:coverage": "rm -rf coverage && bun test ./src --coverage --coverage-reporter lcov",
     "test:e2e": "bash ./e2e/run.sh",
+    "test:e2e:proxy": "bash ./e2e/run-proxy.sh",
     "type-check": "tsc --noEmit",
     "type-check:watch": "tsc --noEmit --watch"
   },

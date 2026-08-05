@@ -1395,6 +1395,41 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
     expect(duplexValues).toContain("half");
   });
 
+  it("keeps async iterable HTTPS inserts as stream bodies", async function testHttpsAsyncInsertBody() {
+    let capturedBody: BodyInit | null | undefined;
+    const fetchSpy = mock(async (_input: string | URL | Request, init?: RequestInit) => {
+      capturedBody = init?.body;
+      return new Response("", { status: 200 });
+    });
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    const db = clickhouseClient({
+      databaseUrl: "https://localhost:8443/demo_store",
+    });
+
+    await db.insertJsonEachRow(
+      users,
+      (async function* rows() {
+        yield { id: 1, name: "alice" };
+        yield { id: 2, name: "bob" };
+      })(),
+      { query_id: "async_https_insert" },
+    );
+
+    // ck-orm stays runtime-neutral: the Bun 1.3.14 CONNECT-proxy failure is covered by the proxy E2E.
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(capturedBody).toBeInstanceOf(ReadableStream);
+    expect(
+      (await readBodyText(capturedBody))
+        ?.trim()
+        .split("\n")
+        .map((line) => JSON.parse(line)),
+    ).toEqual([
+      { id: 1, name: "alice" },
+      { id: 2, name: "bob" },
+    ]);
+  });
+
   it("allows createTemporaryTableRaw definitions with semicolons inside string literals", async function testCreateTemporaryTableLiteralSemicolon() {
     const bodies: string[] = [];
 

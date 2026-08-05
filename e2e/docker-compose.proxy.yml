@@ -1,0 +1,36 @@
+services:
+  clickhouse:
+    volumes:
+      - ./clickhouse-config/e2e-https.xml:/etc/clickhouse-server/config.d/e2e-https.xml:ro
+      - ./certs/server.crt:/etc/clickhouse-server/certs/server.crt:ro
+      - ./certs/server.key:/etc/clickhouse-server/certs/server.key:ro
+
+  proxy-topology:
+    build:
+      context: ..
+      dockerfile: e2e/Dockerfile
+      args:
+        BUN_VERSION: 1.3.14
+    restart: "no"
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    command: ["bun", "run", "e2e/proxy-topology.ts"]
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/ck-orm-proxy-ready"]
+      interval: 1s
+      timeout: 2s
+      retries: 20
+
+  e2e:
+    build:
+      args:
+        BUN_VERSION: 1.3.14
+    depends_on:
+      proxy-topology:
+        condition: service_healthy
+    environment:
+      CLICKHOUSE_E2E_URL: https://clickhouse:8443
+      HTTPS_PROXY: http://proxy-topology:3128
+      NO_PROXY: ""
+      NODE_TLS_REJECT_UNAUTHORIZED: "0"
