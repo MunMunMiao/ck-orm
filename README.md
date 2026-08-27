@@ -882,6 +882,7 @@ Use these fields for advanced runtime behavior:
 
 | Field | Purpose |
 | --- | --- |
+| `fetch` | Fetch-compatible implementation used for every HTTP request; defaults to `globalThis.fetch` |
 | `http_headers` | Additional default headers |
 | `role` | Default ClickHouse role or roles |
 | `session_id` | Default session id |

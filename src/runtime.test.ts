@@ -240,6 +240,27 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
     expect((form as FormData).get("param_orm_param1")).toBe("u_1");
   });
 
+  it("uses the client fetch for query and endpoint requests", async function testCustomFetch() {
+    globalThis.fetch = mock(async () => {
+      throw new Error("global fetch must not be called");
+    }) as unknown as typeof fetch;
+    const urls: URL[] = [];
+    const customFetch = mock(async (input: string | URL | Request) => {
+      const url = new URL(typeof input === "string" || input instanceof URL ? String(input) : input.url);
+      urls.push(url);
+      return new Response(url.pathname.endsWith("/ping") ? "Ok.\n" : '{"data":[]}');
+    }) as unknown as typeof fetch;
+    const db = clickhouseClient({
+      databaseUrl: "http://localhost:8123/demo_store",
+      fetch: customFetch,
+    });
+
+    await db.execute(sql`select 1`);
+    await db.ping();
+
+    expect(urls.map((url) => url.pathname)).toEqual(["/", "/ping"]);
+  });
+
   it("uses one generated query_id for instrumentation and transport", async function testGeneratedQueryIdConsistency() {
     const { calls } = setFetchMock(() => {
       return new Response(JSON.stringify({ data: [] }), { status: 200 });

@@ -158,7 +158,7 @@ export const createFetchClickHouseTransport = (config: NormalizedClientConfig): 
         init.duplex = "half";
       }
 
-      const response = await fetch(buildRequestUrl(config.url, searchParams), init);
+      const response = await (config.fetch ?? globalThis.fetch)(buildRequestUrl(config.url, searchParams), init);
       const ignoreErrorResponse = mergedOptions.ignore_error_response ?? false;
       return {
         response,
@@ -308,7 +308,7 @@ export const createFetchClickHouseTransport = (config: NormalizedClientConfig): 
       const { signal, cleanup } = createAbortController(config.request_timeout, mergedOptions.abort_signal);
 
       try {
-        const response = await fetch(buildEndpointUrl(config.url, path), {
+        const response = await (config.fetch ?? globalThis.fetch)(buildEndpointUrl(config.url, path), {
           method,
           headers,
           signal,

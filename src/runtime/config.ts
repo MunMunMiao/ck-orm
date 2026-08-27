@@ -155,6 +155,8 @@ type StructuredConnectionConfig = {
 };
 
 type SharedClientConfigOptions = {
+  /** Fetch implementation used for every HTTP request made by this client. */
+  readonly fetch?: typeof globalThis.fetch;
   /**
    * Optional per-request timeout in milliseconds. When set, the
    * request is aborted after this many milliseconds regardless of
@@ -220,6 +222,7 @@ export type RawQueryInput = SQLFragment;
 
 export type NormalizedClientConfig = {
   readonly url: URL;
+  readonly fetch?: typeof globalThis.fetch;
   readonly request_timeout: number | undefined;
   readonly compression: {
     readonly response: boolean;
@@ -701,6 +704,7 @@ export const normalizeClientConfig = (config: ClickHouseFetchConfigOptions): Nor
 
   return {
     url: resolvedConnection.url,
+    fetch: config.fetch,
     request_timeout: requestTimeout,
     compression: {
       response: config.compression?.response ?? false,
