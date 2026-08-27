@@ -169,6 +169,7 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
       http_headers: {
         ...(defaultOptions.http_headers ?? {}),
         ...(options?.http_headers ?? {}),
+        ...(sessionController ? { "X-ClickHouse-Replica-Tag": sessionController.sessionId } : {}),
       },
       query_params: queryParams,
       query_id: options?.query_id ?? defaultOptions.query_id ?? createUuid(),

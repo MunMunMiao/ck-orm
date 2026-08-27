@@ -318,7 +318,7 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
     expect(serverPorts).toEqual([80, 443]);
   });
 
-  it("reuses one session id and cleans temp tables after runInSession failure", async function testRunInSessionCleanup() {
+  it("routes one session id and cleans temp tables after runInSession failure", async function testRunInSessionCleanup() {
     const bodies: string[] = [];
     const tmpScope = ckTable("tmp_scope", {
       user_id: string(),
@@ -340,7 +340,11 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
         async (session) => {
           await session.createTemporaryTable(tmpScope);
           session.registerTempTable("tmp_manual");
-          await session.command(sql`select 1`);
+          await session.command(sql`select 1`, {
+            http_headers: {
+              "X-ClickHouse-Replica-Tag": "caller_override",
+            },
+          });
           throw new Error("boom");
         },
         { session_id: "session_under_test" },
@@ -355,6 +359,7 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
     ]);
     for (const call of calls) {
       expect(call.url.searchParams.get("session_id")).toBe("session_under_test");
+      expect(new Headers(call.init.headers).get("X-ClickHouse-Replica-Tag")).toBe("session_under_test");
       expect(call.init.method).toBe("POST");
     }
   });

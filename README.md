@@ -2201,6 +2201,8 @@ The `definition` argument starts after the table name. Do not include `CREATE TE
 - `createTemporaryTable()` automatically registers the table for cleanup
 - `createTemporaryTable()` consumes schema objects; temporary-table lifecycle stays on `Session`, not on the schema itself
 - `createTemporaryTableRaw()` is the trusted-only raw SQL API for temporary-table definitions and rejects multi-statement definitions
+- `runInSession()` automatically sends its resolved `session_id` as `X-ClickHouse-Replica-Tag` on every request, including cleanup; this runtime-owned header cannot be overridden through `http_headers`
+- ClickHouse Cloud [replica-aware routing](https://clickhouse.com/docs/products/cloud/features/infrastructure/replica-aware-routing) must be enabled separately and is best-effort; scaling can remap a tag, and cross-origin browser deployments must allow `X-ClickHouse-Replica-Tag` in CORS
 - `runInSession()` drops registered temporary tables when the callback finishes
 - nested `runInSession()` calls always create a new child session
 - nested calls may not reuse any active ancestor `session_id`
