@@ -1,10 +1,9 @@
 name: Docs
 
-# Publish the docs after a successful release, so the site always matches the version on npm.
+# Called by releases.yml after a successful publish, so the site matches the version on npm.
+# Run it by hand (Actions > Docs > Run workflow) to publish docs-only changes without a release.
 on:
-  workflow_run:
-    workflows: ["Releases lib"]
-    types: [completed]
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -18,15 +17,11 @@ concurrency:
 
 jobs:
   build:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-        with:
-          # The commit that was released, not whatever main points to now.
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2

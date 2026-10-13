@@ -18,3 +18,12 @@ jobs:
       - run: |
           cd dist
           npm publish --access public
+
+  # Publish the docs for the commit that was just released.
+  docs:
+    needs: releases-core
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/docs.yml
