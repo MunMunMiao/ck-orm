@@ -1,0 +1,2576 @@
+# ck-orm
+
+> A typed ClickHouse query layer for modern JavaScript runtimes.
+
+Before version 0.1.0, there will be significant API adjustments. If needed, please pin the version number.
+
+It gives you:
+
+- a schema DSL for ClickHouse tables and columns
+- a typed query builder for the common path
+- raw SQL when ClickHouse-specific syntax is the better tool
+- session helpers for temporary-table workflows
+- observability hooks for logging, tracing, and custom instrumentation
+
+The design goal is straightforward: make everyday ClickHouse access easier to structure without hiding the parts that make ClickHouse different.
+
+## Installation
+
+```bash [bun]
+bun add ck-orm
+```
+
+```bash [npm]
+npm install ck-orm
+```
+
+```bash [pnpm]
+pnpm add ck-orm
+```
+
+```bash [yarn]
+yarn add ck-orm @opentelemetry/api
+```
+
+ck-orm has one peer dependency, `@opentelemetry/api`. Bun, npm and pnpm install it automatically; Yarn does not, so the Yarn command adds it explicitly.
+
+## Quick start
+
+The examples below use a single table so the main flow stays easy to follow.
+
+### 1. Define a schema
+
+```ts
+import { ckTable, ckType } from "ck-orm";
+
+export const probeTelemetry = ckTable(
+  "probe_telemetry",
+  {
+    id: ckType.int32(),
+    probeId: ckType.string("probe_id"),
+    missionId: ckType.int32("mission_id"),
+    sampleId: ckType.int64("sample_id"),
+    signalStrength: ckType.decimal("signal_strength", { precision: 20, scale: 5 }),
+    status: ckType.int16(),
+    createdAt: ckType.int32("created_at"),
+    deletedAt: ckType.nullable(
+      "deleted_at",
+      ckType.dateTime64({ precision: 3, timezone: "UTC" }),
+    ),
+    ingestedAt: ckType.dateTime64("_ingested_at", { precision: 9 }),
+    isDeleted: ckType.uint8("_is_deleted"),
+    ingestVersion: ckType.uint64("_ingest_version"),
+  },
+  (table) => ({
+    engine: "ReplacingMergeTree",
+    orderBy: [table.probeId, table.createdAt, table.id],
+    versionColumn: table.ingestVersion,
+  }),
+);
+```
+
+### 2. Create a client
+
+```ts
+import { clickhouseClient } from "ck-orm";
+
+export const db = clickhouseClient({
+  host: "http://127.0.0.1:8123",
+  database: "telemetry_lab",
+  username: "default",
+  password: "<password>",
+  clickhouse_settings: {
+    allow_experimental_correlated_subqueries: 1,
+    max_execution_time: 10,
+  },
+});
+```
+
+### 3. Query data
+
+```ts
+import { ck, fn } from "ck-orm";
+import { db } from "./db";
+import { probeTelemetry } from "./schema";
+
+const query = db
+  .select({
+    probeId: probeTelemetry.probeId,
+    totalSignalStrength: fn.sum(probeTelemetry.signalStrength).as(
+      "total_signal_strength",
+    ),
+  })
+  .from(probeTelemetry)
+  .where(ck.eq(probeTelemetry.status, 1))
+  .groupBy(probeTelemetry.probeId)
+  .orderBy(ck.desc(fn.sum(probeTelemetry.signalStrength)))
+  .limit(20);
+
+const rows = await query;
+```
+
+Builder queries are thenable, so `await query` executes the query directly.
+
+`fn.sum` over a `Decimal` column auto-casts to `Decimal(P, S)` and returns `string` to keep precision intact — see [Decimal precision in expressions](#decimal-precision-in-expressions).
+
+## Examples
+
+The [examples page](https://ck-orm.lyz.cloud/examples/) shows runnable queries with the exact SQL each one sends to ClickHouse. Each one is a project in [`examples/`](../examples) with its own test. Runnable ClickHouse coverage lives in [`e2e/`](../e2e), including production-shaped scenario schemas in [`e2e/scenarios.ts`](../e2e/scenarios.ts).
+
+## Mental model
+
+Use `ck-orm` with these boundaries in mind:
+
+- `ckType.*` defines schema column types
+- `ckTable(...)` defines table schemas
+- `ck.*` is the query-helper namespace
+- `fn.*` is the SQL function-helper namespace
+- schema describes tables and columns, not the database name
+- the database connection lives on `clickhouseClient(...)`
+- builder queries are the default path, with raw SQL available for ClickHouse-specific expressions
+- `runInSession()` is a ClickHouse session helper, not a transaction
+- `leftJoin()` uses SQL-style null semantics by default
+- large or high-risk numeric results are decoded conservatively rather than silently coerced
+
+`ck-orm` focuses on typed ClickHouse access: table definitions, query composition, write helpers, session helpers, and observability. Production DDL and schema migration workflows remain in the migration tooling used by the application.
+
+## Schema DSL
+
+### `ckTable()`
+
+Use `ckTable(name, columns, options?)` to define a table.
+
+Examples in this section assume:
+
+```ts
+import { ckTable, ckType, ckSql } from "ck-orm";
+```
+
+```ts
+const probeTelemetry = ckTable("probe_telemetry", {
+  id: ckType.int32(),
+  probeId: ckType.string("probe_id"),
+  sampleId: ckType.int64("sample_id"),
+  signalStrength: ckType.decimal("signal_strength", { precision: 20, scale: 5 }),
+  createdAt: ckType.int32("created_at"),
+  deletedAt: ckType.nullable(
+    "deleted_at",
+    ckType.dateTime64({ precision: 3, timezone: "UTC" }),
+  ),
+  ingestVersion: ckType.uint64("_ingest_version"),
+});
+```
+
+The third argument can be a plain object or a factory function:
+
+```ts
+const probeTelemetry = ckTable(
+  "probe_telemetry",
+  {
+    id: ckType.int32(),
+    probeId: ckType.string("probe_id"),
+    sampleId: ckType.int64("sample_id"),
+    signalStrength: ckType.decimal("signal_strength", { precision: 20, scale: 5 }),
+    createdAt: ckType.int32("created_at"),
+    deletedAt: ckType.nullable(
+      "deleted_at",
+      ckType.dateTime64({ precision: 3, timezone: "UTC" }),
+    ),
+    ingestVersion: ckType.uint64("_ingest_version"),
+  },
+  (table) => ({
+    engine: "ReplacingMergeTree",
+    orderBy: [table.probeId, table.createdAt, table.id],
+    versionColumn: table.ingestVersion,
+  }),
+);
+```
+
+Public table options:
+
+- `engine`
+- `partitionBy`
+- `primaryKey`
+- `orderBy`
+- `sampleBy`
+- `ttl`
+- `settings`
+- `comment`
+- `versionColumn`
+
+Column definitions can also carry DDL metadata directly:
+
+- `.default(expr)`
+- `.materialized(expr)`
+- `.aliasExpr(expr)`
+- `.comment(text)`
+- `.codec(expr)`
+- `.ttl(expr)`
+
+Schema metadata has two jobs in `ck-orm`:
+
+- it drives typed queries, insert validation, and result decoding
+- it can render structured DDL for session temporary tables
+
+It does not automatically migrate or synchronize production ClickHouse tables. Keep production DDL in your migration tool, and keep `ckTable(...)` aligned with the schema your application reads and writes.
+
+Example:
+
+```ts
+const probeTelemetry = ckTable(
+  "probe_telemetry",
+  {
+    id: ckType.int32(),
+    createdAt: ckType.dateTime("created_at"),
+    shardDay: ckType.date("shard_day").materialized(ckSql`toDate(created_at)`),
+    note: ckType.string().default(ckSql`'pending'`),
+  },
+  (table) => ({
+    engine: "ReplacingMergeTree",
+    partitionBy: ckSql`toYYYYMM(created_at)`,
+    orderBy: [table.id],
+    versionColumn: table.createdAt,
+  }),
+);
+```
+
+### Type inference
+
+Every table exposes:
+
+- `table.$inferSelect`
+- `table.$inferInsert`
+
+```ts
+type TelemetryRow = typeof probeTelemetry.$inferSelect;
+type TelemetryInsert = typeof probeTelemetry.$inferInsert;
+
+const sampleId: TelemetryRow["sampleId"] = "900001";
+const ingestVersion: TelemetryInsert["ingestVersion"] = "1";
+```
+
+For generic helpers, use:
+
+- `InferSelectModel<TTable>`
+- `InferInsertModel<TTable>`
+- `InferSelectSchema<TSchema>`
+- `InferInsertSchema<TSchema>`
+
+```ts
+import type { InferInsertModel, InferSelectModel, InferSelectSchema } from "ck-orm";
+
+type TelemetryRow = InferSelectModel<typeof probeTelemetry>;
+type TelemetryInsert = InferInsertModel<typeof probeTelemetry>;
+
+const telemetryTables = {
+  probeTelemetry,
+};
+
+type TelemetryRows = InferSelectSchema<typeof telemetryTables>;
+```
+
+Schema objects used with `InferSelectSchema` and `InferInsertSchema` are plain TypeScript groupings. They are useful for shared model types and remain separate from client configuration.
+
+### Refining column types with `$type<T>()`
+
+Every column builder exposes a chainable `$type<T>()` method that overrides the column's TypeScript type without changing any runtime behavior. Use it when the default inferred type is too wide for your domain:
+
+```ts
+import { ckTable, ckType } from "ck-orm";
+
+type UserId = number & { readonly __brand: "UserId" };
+
+const users = ckTable("users", {
+  id: ckType.int32().$type<UserId>(),
+  role: ckType.string().$type<"guest" | "user" | "admin">(),
+  preferences: ckType.json().$type<{ theme: "light" | "dark"; betaFeatures: readonly string[] }>(),
+});
+
+type UserRow = typeof users.$inferSelect;
+// {
+//   id: UserId;
+//   role: "guest" | "user" | "admin";
+//   preferences: { theme: "light" | "dark"; betaFeatures: readonly string[] };
+// }
+```
+
+`$type<T>()` chains with every other column modifier in any order: `ckType.string().$type<Role>().default(ckSql`'guest'`).comment("…")`. The runtime decoder, encoder, SQL type, and DDL output are unaffected — `$type` is a compile-time assertion only.
+
+`enum8` and `enum16` already infer the literal union from the values object, so you only need `$type` to rebrand the union or align it with an external enum type:
+
+```ts
+// Inferred automatically — no `as const`, no explicit type arguments
+const status = ckType.enum8({ active: 1, paused: 2, banned: 3 });
+//    ↑ Enum8<"active" | "paused" | "banned">
+
+// Re-brand on top of the inferred keys
+type UserStatus = "active" | "paused" | "banned";
+const userStatus = ckType.enum8({ active: 1, paused: 2, banned: 3 }).$type<UserStatus>();
+```
+
+> **Caveat:** `$type<T>()` does not validate runtime values. If the database row contains a value outside the declared type (e.g. stale data from before a schema migration), TypeScript will still narrow as if it matches — exhaustive `switch` statements will silently miss the case. Use `mapWith` in a projection if you need to enforce the value at read time, or `$validator()` below to enforce on every decode and encode.
+
+### Diverging insert and select types with `$type<{ select, insert }>()`
+
+ClickHouse columns sometimes accept a wider type on insert than the value returned on select — for example a `DateTime` column accepts both `string` and `Date` on insert but always returns `Date` after decoding. Pass an object to `$type` to diverge the two:
+
+```ts
+const events = ckTable("events", {
+  id: ckType.int32(),
+  occurredAt: ckType.dateTime().$type<{ select: Date; insert: string | Date }>(),
+});
+
+type EventSelect = typeof events.$inferSelect;
+// { id: number; occurredAt: Date }
+
+type EventInsert = typeof events.$inferInsert;
+// { id: number; occurredAt: string | Date }
+```
+
+`$type<{ select: T }>()` (without `insert`) is equivalent to the single-generic `$type<T>()` form.
+
+### Insert model rules: DEFAULT, MATERIALIZED, ALIAS
+
+`$inferInsert` is derived from the schema's column shape, not just copied from `$inferSelect`:
+
+| DDL modifier | Effect on insert model |
+| --- | --- |
+| `.default(expr)` | Column becomes optional — omitting it lets ClickHouse fill the value |
+| `.materialized(expr)` | Column is removed from the insert model entirely |
+| `.aliasExpr(expr)` | Column is removed from the insert model entirely |
+
+```ts
+const users = ckTable("users", {
+  id: ckType.int32(),
+  name: ckType.string().default(ckSql`'anonymous'`),
+  computedAt: ckType.dateTime().materialized(ckSql`now()`),
+  derivedTag: ckType.string().aliasExpr(ckSql`upper(name)`),
+});
+
+// id is required; name is optional (has default); computedAt/derivedTag are
+// not part of $inferInsert at all.
+db.insert(users).values({ id: 1 });
+db.insert(users).values({ id: 2, name: "alice" });
+```
+
+### Runtime validation with `$validator(schema)`
+
+For cases where `$type` is not enough — the database might contain stale data, you accept JSON shapes from untrusted upstreams, or you want the insert API to coerce a string into a `Date` — chain `$validator(schema)` instead. Any object that satisfies the [Standard Schema v1 spec](https://github.com/standard-schema/standard-schema) works: Zod 3.23+, Valibot 1+, ArkType, Effect Schema, TypeBox. ck-orm does not depend on any of these libraries.
+
+```ts
+import { z } from "zod";
+
+const ProfileSchema = z.object({
+  avatarUrl: z.string().url(),
+  bio: z.string().optional(),
+});
+
+const users = ckTable("users", {
+  id: ckType.int32(),
+  profile: ckType.json().$validator(ProfileSchema),
+});
+
+// On select, the decoded JSON is run through the schema; on failure ck-orm
+// throws a DecodeError with the schema's issue messages.
+const rows = await db.select().from(users).execute();
+//    rows[0].profile is typed as z.infer<typeof ProfileSchema>
+
+// On insert, the value is validated before being encoded; on failure ck-orm
+// throws a client_validation error.
+await db.insert(users).values({ id: 1, profile: { avatarUrl: "https://…" } });
+```
+
+Schema transforms (e.g. `z.string().transform((v) => new Date(v))`) are respected — the column accepts the schema's *input* type on insert and surfaces the *output* type on select. `$validator` is sync-only: async schemas throw at decode/encode time.
+
+`$type` vs `$validator`:
+
+| | `$type<T>()` | `$validator(schema)` |
+| --- | --- | --- |
+| Runtime cost | Zero | One sync schema validate per row per column |
+| Type safety | Compile-time assertion | Inferred from the schema |
+| Runtime validation | No | Yes — throws on mismatch |
+| Input ≠ output types | Via `$type<{ select, insert }>()` | Via schema transforms |
+| External dependency | None | None (schema lib is your choice) |
+
+### JSON column type
+
+ck-orm targets the ClickHouse 24.x+ **new-version JSON data type**
+([docs](https://clickhouse.com/docs/sql-reference/data-types/newjson)) — the
+one that physically splits a JSON object into typed sub-columns rather than
+storing the value as an opaque string. Two ground rules to keep in mind
+upfront:
+
+- ClickHouse's `JSON` data type accepts **only top-level objects**. Top-level
+  arrays, strings, and numbers are rejected. ck-orm enforces the same at
+  compile time via `T extends Record<string, unknown>` and at runtime via a
+  cheap O(1) check on every insert/select.
+- Typed paths (`a.b UInt32`) become real sub-columns inside ClickHouse; ck-orm
+  routes those paths through the corresponding ck-orm column factory's
+  `mapFromDriverValue` / `mapToDriverValue` so a path declared as
+  `ckType.uint64()` decodes to a lossless `string` exactly like the
+  top-level `uint64` column does.
+
+The simplest form mirrors every other ck-orm column factory:
+
+```ts
+import { ckTable, ckType } from "ck-orm";
+
+const auditLogs = ckTable("audit_logs", {
+  id: ckType.uint64(),
+  payload: ckType.json("payload"),
+});
+// DDL:  `payload` JSON
+// $inferSelect.payload: { [key: string]: unknown }
+```
+
+Pass a generic to surface the actual shape in `$inferSelect` /
+`$inferInsert`:
+
+```ts
+type EventPayload = { user_id: number; event: string; meta?: { ip: string } };
+
+const userEvents = ckTable("user_events", {
+  id: ckType.uint64(),
+  payload: ckType.json<EventPayload>("payload"),
+});
+```
+
+`ckType.json<T>().$type<T2>()` is the chainable equivalent if you prefer
+keeping the generic next to other column-builder calls.
+
+#### Parameterized DDL
+
+The second factory argument accepts the four NewJSON DDL knobs:
+
+```ts
+const userEvents = ckTable("user_events", {
+  id: ckType.uint64(),
+  payload: ckType.json<{
+    user_id: string;
+    created_at: Date;
+    user: { name: string; tier: number };
+  }>("payload", {
+    maxDynamicPaths: 256,
+    maxDynamicTypes: 8,
+    typeHints: {
+      user_id: ckType.uint64(),
+      created_at: ckType.dateTime64({ precision: 3, timezone: "UTC" }),
+      "user.tier": ckType.uint32(),
+    },
+    skip: ["debug", "internal"],
+    skipRegexp: ["^_tmp"],
+  }),
+});
+
+// DDL:
+//   `payload` JSON(
+//     max_dynamic_paths=256,
+//     max_dynamic_types=8,
+//     created_at DateTime64(3, 'UTC'),
+//     user.tier UInt32,
+//     user_id UInt64,
+//     SKIP debug,
+//     SKIP internal,
+//     SKIP REGEXP '^_tmp'
+//   )
+```
+
+`typeHints` keys are type-checked against `Paths<T>` — typos like
+`{ "user.idd": ... }` fail at compile time. The rendered DDL is always
+emitted in a stable lexicographic order so external schema-diff tooling
+sees byte-identical output regardless of how the user wrote the config.
+
+#### typeHints affect the runtime decoder
+
+ClickHouse's lossless 64-bit policy makes `UInt64` decode to a string in
+ck-orm. If you declare `user_id` both in the TS shape *and* as a
+`typeHints` entry, keep the two in sync — for `uint64` that means writing
+`user_id: string` in the generic. Use `$type<{ select, insert }>()` when
+the accepted insert input differs from the decoded select type:
+
+```ts
+ckType.json("payload", { typeHints: { user_id: ckType.uint64() } })
+  .$type<{
+    select: { user_id: string };
+    insert: { user_id: string | number | bigint };
+  }>();
+```
+
+#### Path access
+
+Every JSON column carries five chainable path methods that render the
+ClickHouse path-access syntax verbatim:
+
+| Method | SQL | Meaning |
+| --- | --- | --- |
+| `col.path("a.b")` | `col.a.b` | Read a path; static type is `PathValue<T, "a.b">` (see note on `typeHints` below) |
+| `col.castPath("a.b", ckType.uint64())` | `col.a.b.:UInt64` | Force-decode a path through a different ck-orm column factory; static type comes from the cast column's `TData` |
+| `col.subobject("a")` | `col.^a` | Read a nested object as a `JSON` value |
+| `col.merged("a")` | `col.@a` | Read the merged shared-data view |
+| `col.arrayPath("a")` | `col.a[]` | Expand an array-typed path |
+
+> `col.path(P)` always types as `PathValue<T, P>` — it derives from the
+> generic `T`, not from `typeHints`. `typeHints` only changes the runtime
+> decoder; the static type and the typeHint must be kept in sync manually
+> (the section above explains the `uint64 → string` lossless policy). When
+> the two disagree, use `castPath(P, ckType.X())` instead — its return type
+> is sourced from the cast column.
+
+```ts
+import { gt } from "ck-orm";
+
+const recentVip = await db
+  .select({
+    id: userEvents.id,
+    uid: userEvents.payload.path("user_id"),     // SQL: payload.user_id   type: string
+    when: userEvents.payload.path("created_at"), // SQL: payload.created_at type: Date
+    tier: userEvents.payload.path("user.tier"),  // SQL: payload.user.tier  type: number
+  })
+  .from(userEvents)
+  .where(gt(userEvents.payload.path("user.tier"), 5))
+  .execute();
+```
+
+`Paths<T>` validates the path literal at compile time — `payload.path("a.zzz")`
+fails to typecheck when `"a.zzz"` is not part of `T`.
+
+Path methods are re-attached at runtime by every chain modifier
+(`$type`, `$validator`, `.default()`, `.materialized()`, `.bind()`, …) so
+the underlying call always works. **The static type tracks them through
+every chain link except `$validator`**: `$validator`'s contract is generic
+over `StandardSchemaV1<unknown, unknown>`, which cannot be safely narrowed
+to `JsonShape` without violating the LSP-style subtype rules TypeScript
+enforces, so the static type erases back to `Column<T>` after that one
+link. The method itself is still callable — just reach for a type
+assertion if you need to chain it further:
+
+```ts
+const events = ckTable("events", {
+  payload: ckType.json<{ a: number }>("payload")
+    .$type<{ a: number; b: string }>()
+    .default(ckSql`'{}'`),
+});
+
+// Type and runtime both happy — JsonColumn shape preserved through
+// `$type` + `.default()`.
+await db.select({ b: events.payload.path("b") }).from(events).execute();
+```
+
+```ts
+const validated = ckTable("validated", {
+  payload: ckType.json<{ a: number }>("payload").$validator(someSchema),
+});
+// Runtime works, but the static type lost `.path` after $validator —
+// cast to JsonColumn (or call through the validator's TData) to use it:
+const col = validated.payload as unknown as JsonColumn<{ a: number }, "validated">;
+await db.select({ a: col.path("a") }).from(validated).execute();
+```
+
+#### `fn.json*` — dynamic-path call sites
+
+When the path string is built at runtime (or you want to read a path that
+isn't declared in `T`), reach for the `fn.*` namespace:
+
+```ts
+import { fn } from "ck-orm";
+
+const userPath = userInput as string;
+await db.select({
+  raw:    fn.jsonPath<string>(userEvents.payload, userPath),
+  casted: fn.jsonCast(userEvents.payload, userPath, ckType.string()),
+  shape:  fn.dynamicType(fn.jsonPath(userEvents.payload, userPath)),
+});
+```
+
+`fn.jsonCast` is the dynamic equivalent of `castPath`; `fn.jsonSubobject`,
+`fn.jsonMerged`, and `fn.jsonArray` mirror their column-method
+counterparts; `fn.dynamicType` exposes the ClickHouse `dynamicType()`
+function for inspecting the runtime kind of a Dynamic-typed path.
+
+#### Runtime validation
+
+Two layers run on every row, **in this order**:
+
+1. **ck-orm's built-in JSON guard** — `null` / `undefined` pass through
+   unchanged so `nullable()` JSON columns work naturally; every other
+   non-object input (array, string, number, boolean) is rejected with a
+   column-scoped `client_validation` / `decode` error like
+   `JSON column expects a plain object, got array`. Typed paths from
+   `typeHints` are routed through their column-factory encoder/decoder on
+   the way in/out. Always on.
+2. **Optional `$validator(schema)`** — when present, runs *before* the
+   built-in encoder on insert and *after* the built-in decoder on select.
+   Use this for shape-level validation:
+
+   ```ts
+   import { z } from "zod";
+
+   const PayloadSchema = z.object({
+     user_id: z.string().min(1),
+     event: z.enum(["login", "logout", "click"]),
+   });
+
+   const events = ckTable("events", {
+     payload: ckType
+       .json("payload", { typeHints: { user_id: ckType.uint64() } })
+       .$validator(PayloadSchema),
+   });
+   ```
+
+ck-orm intentionally **does not** recurse into the JSON value to check
+whether `T["a"]` is actually a `number` etc. Use `$validator` if you need
+that — the JSON guard's job is only to catch the cases where ClickHouse's
+own error message would be hard to map back to a column. Top-level scalar
+arguments fail loudly with the column name in scope:
+
+```ts
+await db.insert(events).values({ payload: ["wrong"] as never });
+// throws: JSON column expects a plain object, got array
+```
+
+#### Insert defaults
+
+JSON columns participate in the same `$inferInsert` rules as every other
+column. `.default()` makes the field optional; `.materialized()` /
+`.aliasExpr()` remove it from the insert model entirely:
+
+```ts
+const auditLogs = ckTable("audit_logs", {
+  id: ckType.uint64(),
+  payload: ckType.json<{ note: string }>("payload").default(ckSql`'{}'`),
+});
+
+await db.insert(auditLogs).values({ id: "1" }); // payload filled by CH DEFAULT
+```
+
+### `ckAlias()`
+
+Use `ckAlias()` when the same table needs to appear more than once in a query.
+
+```ts
+import { fn, ck, ckAlias } from "ck-orm";
+
+const telemetry = ckAlias(probeTelemetry, "telemetry");
+```
+
+Columns returned by `ckAlias()` are rebound automatically to the alias.
+
+### Column names
+
+The schema object key is the logical key used by TypeScript rows, decoded query results, and insert values. By default, that same key is also the ClickHouse column name:
+
+```ts
+const telemetry = ckTable("telemetry", {
+  signalStrength: ckType.decimal({ precision: 20, scale: 5 }),
+});
+```
+
+When the database column uses a different name, pass that physical column name as the first argument:
+
+```ts
+const telemetry = ckTable("telemetry", {
+  probeId: ckType.string("probe_id"),
+  signalStrength: ckType.decimal("signal_strength", { precision: 20, scale: 5 }),
+  createdAt: ckType.dateTime64("created_at", { precision: 9 }),
+});
+
+await db.insert(telemetry).values({
+  probeId: "probe_alpha",
+  signalStrength: "12.50000",
+  createdAt: new Date(),
+});
+```
+
+SQL, DDL, filters, ordering, grouping, and write column lists use the physical names (`probe_id`, `signal_strength`, `created_at`). Inferred models, default select results, explicit projection keys, and insert values use the schema object keys (`probeId`, `signalStrength`, `createdAt`).
+
+Every public `ckType` builder supports an outer physical column name. Builders without extra configuration accept `name?`; builders with type configuration keep the optional physical column name first and put the type configuration in an object:
+
+```ts
+const typedColumns = ckTable("typed_columns", {
+  id: ckType.int32("id"),
+  code: ckType.fixedString("code", { length: 8 }),
+  amount: ckType.decimal("amount", { precision: 20, scale: 5 }),
+  tags: ckType.array("tags", ckType.string()),
+  attrs: ckType.map("attrs", ckType.string(), ckType.string()),
+  embedding: ckType.qbit("embedding", ckType.float32(), { dimensions: 8 }),
+});
+```
+
+`aggregateFunction` and `simpleAggregateFunction` have a ClickHouse-specific call shape: the first string is the aggregate function name, not the column name:
+
+```ts
+ckType.aggregateFunction("sum", ckType.uint64());
+ckType.aggregateFunction("quantile(0.5)", ckType.float64());
+ckType.simpleAggregateFunction("sum", ckType.uint64());
+```
+
+`AggregateFunction` accepts ClickHouse aggregate names with literal parameters, such as `quantile(0.5)` or `topK(10)`. `simpleAggregateFunction` stays stricter and uses a plain aggregate function name.
+
+Use object config when you also need a physical column name:
+
+```ts
+const aggregateStateColumns = ckTable("aggregate_state_columns", {
+  signalSumState: ckType.aggregateFunction("signal_sum_state", {
+    name: "sum",
+    args: [ckType.decimal({ precision: 20, scale: 5 })],
+  }),
+  signalSum: ckType.simpleAggregateFunction("signal_sum", {
+    name: "sum",
+    value: ckType.decimal({ precision: 20, scale: 5 }),
+  }),
+});
+```
+
+`nested("items", shape)` names the outer `Nested(...)` column. Nested field names are the keys of `shape`; inner column `configuredName` values are not used for the nested field names:
+
+```ts
+const sensorPackets = ckTable("sensor_packets", {
+  items: ckType.nested("items", {
+    componentId: ckType.string(),
+    quantity: ckType.float64(),
+  }),
+});
+```
+
+### Column builders
+
+Use `ckType.*` for schema column builders. The schema DSL covers the common ClickHouse type families:
+
+- integers: `int8`, `int16`, `int32`, `int64`, `uint8`, `uint16`, `uint32`, `uint64`
+- floating point and decimal: `float32`, `float64`, `bfloat16`, `decimal`
+- scalar types: `bool`, `string`, `fixedString`, `uuid`, `ipv4`, `ipv6`
+- time types: `date`, `date32`, `dateTime`, `dateTime64`, `time`, `time64`
+- enums and special types: `enum8`, `enum16`, `json`, `dynamic`, `qbit`
+- containers: `nullable`, `array`, `tuple`, `map`, `nested`, `variant`, `lowCardinality`
+- aggregate types: `aggregateFunction`, `simpleAggregateFunction`
+- geometry types: `point`, `ring`, `lineString`, `multiLineString`, `polygon`, `multiPolygon`
+
+`int64` and `uint64` default to TypeScript `string` in schema-driven reads, writes, and inferred models so 64-bit values stay exact across the ClickHouse JSON wire format and JavaScript runtimes. When you explicitly want `bigint`, opt in with your own decoder such as `mapWith((value) => BigInt(String(value)))`.
+
+ClickHouse does not support `Nullable(Array(...))`, `Nullable(Map(...))`, or `Nullable(Tuple(...))`. `ck-orm` rejects those shapes at schema-definition time. Put `nullable(...)` inside the composite type instead, for example `ckType.array(ckType.nullable(ckType.string()))`.
+
+Builders with type configuration use object config, with the optional physical column name first:
+
+```ts
+ckType.decimal({ precision: 20, scale: 5 });
+ckType.decimal("signal_strength", { precision: 20, scale: 5 });
+ckType.fixedString({ length: 8 });
+ckType.dateTime64("created_at", { precision: 9, timezone: "UTC" });
+ckType.qbit("embedding", ckType.float32(), { dimensions: 8 });
+```
+
+`Date` / `Date32` writes and schema-driven predicate values send a JavaScript `Date` as its UTC calendar day (`2026-06-15T23:00:00Z` becomes `2026-06-15`). To store a different day, pass a `YYYY-MM-DD` string; strings and numbers are sent unchanged.
+
+`DateTime` / `DateTime64` predicate values bind a JavaScript `Date` as a UTC instant, so the column, session, or server timezone cannot shift it. A string is read by ClickHouse in the column timezone, as written. At a 32-bit `DateTime` position, a parameter whose Dates are all whole seconds binds as `DateTime('UTC')`; if any Date in that parameter has milliseconds, it binds as `DateTime64(3, 'UTC')`. `DateTime64` positions always bind `DateTime64(3, 'UTC')`. Scalar predicates such as `gte` still compare the exact instant. `inArray` / `notInArray` on a `DateTime` column need whole-second Dates; a Date with milliseconds there is rejected by ClickHouse (`TYPE_MISMATCH`), which is native behaviour, and such a value could never be equal anyway. `insert().values()` sends each `Date` as integer ticks at the column precision. See Writes.
+
+### Column Type Cookbook
+
+Common schema shapes and their TypeScript values:
+
+| ClickHouse shape | Schema | TypeScript value shape |
+| --- | --- | --- |
+| enum | `ckType.enum8({ idle: 1, active: 2 })` | `"idle" | "active"` (inferred from keys) |
+| low-cardinality string | `ckType.lowCardinality(ckType.string())` | `string` |
+| nullable decimal | `ckType.nullable(ckType.decimal({ precision: 18, scale: 5 }))` | `string | null` |
+| array | `ckType.array(ckType.string())` | `string[]` |
+| nullable array item | `ckType.array(ckType.nullable(ckType.string()))` | `(string | null)[]` |
+| tuple | `ckType.tuple(ckType.string(), ckType.int32())` | `[string, number]` |
+| map | `ckType.map(ckType.string(), ckType.string())` | `Record<string, string>` |
+| nested object array | `ckType.nested({ component: ckType.string(), quantity: ckType.float64() })` | `{ component: string; quantity: number }[]` |
+| variant | `ckType.variant(ckType.string(), ckType.int32())` | `string | number` |
+| JSON | `ckType.json<{ risk?: { score?: number } }>()` | `{ risk?: { score?: number } }` |
+
+`ckType.map(...)` currently supports `String` keys only and maps them to a JavaScript record, so it does not model ClickHouse's duplicate-key `Map(K, V)` edge case.
+
+Insert rows use the same inferred shape as `typeof table.$inferInsert`, except columns with ClickHouse defaults or generated expressions can be omitted when you call `insert(table).values(...)`. `MATERIALIZED` and `ALIAS` columns are never written in the generated `INSERT` column list; passing them explicitly is rejected.
+
+## Client configuration
+
+Create a client with `clickhouseClient()`:
+
+```ts
+const db = clickhouseClient({
+  databaseUrl: "http://default:<password>@127.0.0.1:8123/telemetry_lab",
+});
+```
+
+### Connection modes
+
+`clickhouseClient()` supports two mutually exclusive connection styles.
+
+#### `databaseUrl`
+
+Use `databaseUrl` when you want a single connection string:
+
+```ts
+const db = clickhouseClient({
+  databaseUrl: "http://default:secret@127.0.0.1:8123/telemetry_lab",
+});
+```
+
+When `databaseUrl` is present, do not also pass:
+
+- `host`
+- `database`
+- `username`
+- `password`
+- `pathname`
+
+#### Structured connection fields
+
+Use explicit fields when you want each part configured separately:
+
+```ts
+const db = clickhouseClient({
+  host: "http://127.0.0.1:8123",
+  database: "telemetry_lab",
+  username: "default",
+  password: "<password>",
+});
+```
+
+Structured mode defaults:
+
+- `host`: `http://localhost:8123`
+- `database`: `default`
+- `username`: `default`
+- `password`: `""`
+
+### Common fields
+
+Most projects only need a small subset of client fields:
+
+| Field | Purpose |
+| --- | --- |
+| `request_timeout` | Optional per-request wall-clock timeout in milliseconds. When omitted, ck-orm does not enforce any client-side timeout — request lifetime is controlled by the underlying fetch / platform / server / `abort_signal`. For long-running streaming queries, leave this unset and apply a wall-clock budget through `abort_signal` (e.g. `AbortSignal.timeout(30_000)`) instead. |
+| `clickhouse_settings` | Default ClickHouse session/query settings |
+| `application` | Set the ClickHouse application name |
+
+Table definitions are independent of connection configuration. Define tables with `ckTable(...)`, import those table objects where queries are composed, and pass them directly to `.from(...)`, `.insert(...)`, and temporary-table helpers.
+
+### Advanced fields
+
+Use these fields for advanced runtime behavior:
+
+| Field | Purpose |
+| --- | --- |
+| `fetch` | `(request: Request) => Response \| Promise<Response>` called for every HTTP request: any fetch implementation, a server handler, or a test fake like the one in [`examples/decimal-sum/main.test.ts`](../examples/decimal-sum/main.test.ts). Defaults to the platform `fetch` |
+| `http_headers` | Additional default headers |
+| `role` | Default ClickHouse role or roles |
+| `session_id` | Default session id |
+| `session_max_concurrent_requests` | Maximum in-flight requests allowed per `session_id` within this client (default `1`) |
+| `compression.response` | With the default `false`, streaming requests send `enable_http_compression = 0` so rows arrive as ClickHouse produces them. Eager requests keep the server default (ClickHouse 26.3+ compresses a response when the client accepts it). `true` compresses every response, which can hold a sparse stream until a compression block fills |
+| `logger` / `logLevel` | Logger integration |
+| `tracing` | OpenTelemetry integration |
+| `instrumentation` | Custom query lifecycle hooks |
+
+Session lifetime controls are intentionally request-scoped. Pass `session_timeout` to a single query or to `runInSession(...)`. Use `session_check` when you are continuing an existing `session_id`, not when bootstrapping a brand-new session.
+`session_max_concurrent_requests` is different: it is a client-level guard that throttles overlapping requests that target the same `session_id`.
+Real ClickHouse sessions are still server-locked, so increasing `session_max_concurrent_requests` above `1` can surface `SESSION_IS_LOCKED` instead of giving you true same-session parallelism.
+Keep the default `1` unless you intentionally want to remove local serialization and are prepared to handle server-side session-lock failures.
+
+### ClickHouse settings
+
+`clickhouse_settings` is only for ClickHouse session/query settings, the same kind of keys documented in ClickHouse's [Session Settings](https://clickhouse.com/docs/operations/settings/settings) and accepted by the HTTP API as query parameters. It is separate from ck-orm client configuration such as `host`, `database`, `request_timeout`, `http_headers`, and `session_max_concurrent_requests`.
+
+Keep HTTP transport fields such as `query`, `database`, `session_id`, `role`, and `param_*` outside `clickhouse_settings`; ck-orm validates these keys separately because they belong to the request envelope and named-parameter channel.
+
+Official setting keys have TypeScript completion, and arbitrary keys remain valid for newer ClickHouse versions or deployment-specific settings:
+
+```ts
+import { clickhouseClient, type ClickHouseSettings } from "ck-orm";
+
+const labSettings: ClickHouseSettings = {
+  allow_experimental_correlated_subqueries: 1,
+  max_threads: 4,
+  setting_added_by_future_clickhouse: "enabled",
+};
+
+const db = clickhouseClient({
+  host: "http://127.0.0.1:8123",
+  database: "telemetry_lab",
+  username: "default",
+  password: "<password>",
+  request_timeout: 30_000,
+  clickhouse_settings: labSettings,
+});
+```
+
+JSON parse/stringify behavior is managed by the fetch transport. The public client configuration keeps that behavior consistent across runtimes rather than exposing a `json` override.
+
+ck-orm forces a small wire-contract settings set on every request: `http_write_exception_in_output_format = 0`, `output_format_json_quote_64bit_integers = 1`, `output_format_json_quote_decimals = 1`, and `date_time_output_format = "iso"`. If caller settings conflict with those values, ck-orm logs a warning once and sends the forced value; workload/performance settings such as `max_threads` remain caller-controlled.
+
+### Authentication
+
+`ck-orm` uses basic authentication for database connections.
+
+- in `databaseUrl` mode, credentials may be embedded in the URL
+- in structured mode, use `username` and `password`
+- if no credentials are provided, the default is `default` with an empty password
+
+## Query builder
+
+The snippets below assume `db`, `probeTelemetry`, and the referenced helpers imported from `ck-orm`.
+
+### `select()`
+
+Explicit selection gives you an explicitly shaped result:
+
+```ts
+const rows = await db
+  .select({
+    probeId: probeTelemetry.probeId,
+    signalStrength: probeTelemetry.signalStrength,
+  })
+  .from(probeTelemetry)
+  .limit(10);
+```
+
+Projection objects are built from public `Selection` values or columns. In practice that means table columns, `fn.*(...)`, and `ck.expr(...)` outputs all compose the same way inside `select({ ... })`.
+
+Implicit selection returns the full table model when there are no joins:
+
+```ts
+const rows = await db.select().from(probeTelemetry).limit(10);
+```
+
+With joins, implicit selection groups fields by source and returns nested objects. An unmatched left-joined group becomes `null`. ClickHouse returns `[]` / `{}` instead of NULL for `Array` / `Map` columns, so empty containers count as missing for this check. A matched row whose scalar fields are all NULL and whose arrays and maps are empty is indistinguishable and also becomes `null`.
+
+### `from()`, `innerJoin()`, `leftJoin()`
+
+```ts
+import { ckAlias, ck } from "ck-orm";
+
+const telemetry = ckAlias(probeTelemetry, "telemetry");
+const matchedTelemetry = ckAlias(probeTelemetry, "matched_telemetry");
+
+const rows = await db
+  .select({
+    probeId: telemetry.probeId,
+    telemetrySampleId: telemetry.id,
+    matchedTelemetrySampleId: matchedTelemetry.id,
+  })
+  .from(telemetry)
+  .leftJoin(
+    matchedTelemetry,
+    ck.eq(telemetry.probeId, matchedTelemetry.probeId),
+  );
+```
+
+### `where()` and condition helpers
+
+Public condition helpers:
+
+- `ck.and`
+- `ck.or`
+- `ck.not`
+- `ck.eq`
+- `ck.ne`
+- `ck.gt`
+- `ck.gte`
+- `ck.lt`
+- `ck.lte`
+- `ck.between`
+- `ck.isNull`
+- `ck.isNotNull`
+- `ck.has`
+- `ck.hasAll`
+- `ck.hasAny`
+- `ck.contains`
+- `ck.startsWith`
+- `ck.endsWith`
+- `ck.containsIgnoreCase`
+- `ck.startsWithIgnoreCase`
+- `ck.endsWithIgnoreCase`
+- `ck.like`
+- `ck.notLike`
+- `ck.ilike`
+- `ck.notIlike`
+- `ck.inArray`
+- `ck.notInArray`
+- `ck.exists`
+- `ck.notExists`
+
+`.where(...predicates)` is a variadic `AND` entrypoint. It ignores `undefined` predicate objects, so you can either pass multiple predicates directly or build grouped predicates with `ck.and(...)` and `ck.or(...)`.
+
+```ts
+import { ck } from "ck-orm";
+
+const query = db
+  .select({
+    probeId: probeTelemetry.probeId,
+    signalStrength: probeTelemetry.signalStrength,
+  })
+  .from(probeTelemetry)
+  .where(
+    ck.eq(probeTelemetry.status, 1),
+    ck.inArray(probeTelemetry.missionId, [10, 20, 30]),
+    ck.between(probeTelemetry.createdAt, 1710000000, 1719999999),
+  );
+```
+
+A value list is sent as one `Array(T)` query parameter (`col in {p:Array(T)}`). Lists whose text exceeds about 40,000 characters are split into several parameters joined with `arrayConcat(...)`. Primary-key and skip-index pruning are unaffected. ClickHouse 26.3+ accepts at most 1,000 query parameters per HTTP request, and 25.8's analyzer rejects a combined list above roughly 1 MB; for larger sets use a temporary table or external data. A list that contains SQL expressions, or untyped values of mixed types, still uses one parameter per element.
+
+`ck.and(...)` skips `undefined`, which makes inline dynamic filters easy to assemble:
+
+```ts
+import { ck } from "ck-orm";
+
+const query = db
+  .select({
+    id: probeTelemetry.id,
+    status: probeTelemetry.status,
+  })
+  .from(probeTelemetry)
+  .where(
+    ck.and(
+      minId !== undefined ? ck.gt(probeTelemetry.id, minId) : undefined,
+      status !== undefined
+        ? ck.or(ck.eq(probeTelemetry.status, status), ck.eq(probeTelemetry.status, 9))
+        : undefined,
+    ),
+  );
+```
+
+`undefined` is only skipped at the predicate level. Predicate values are strict: `ck.eq(column, undefined)` throws instead of silently widening the query. Bare `null`, `false`, `true`, `0`, and `""` are not predicates; use a SQL expression instead. `null` remains a valid data value for Nullable columns and writes, but NULL filtering must be explicit:
+
+```ts
+db.select()
+  .from(probeTelemetry)
+  .where(ck.isNull(probeTelemetry.deletedAt));
+```
+
+Boolean columns are still normal values and SQL expressions:
+
+```ts
+const healthChecks = ckTable("health_checks", {
+  id: ckType.int32(),
+  isPassing: ckType.bool("is_passing"),
+});
+
+db.select().from(healthChecks).where(ck.eq(healthChecks.isPassing, false));
+db.select().from(healthChecks).where(healthChecks.isPassing);
+```
+
+Do not put bare `null` inside normal comparisons or `IN` lists. Compose NULL logic explicitly:
+
+```ts
+ck.or(
+  ck.inArray(probeTelemetry.deletedAt, [new Date("2026-04-21T00:00:00.000Z")]),
+  ck.isNull(probeTelemetry.deletedAt),
+);
+```
+
+For larger runtime-built filters, prefer `Predicate[]` plus variadic `.where(...predicates)`:
+
+```ts
+import { ck, type Predicate } from "ck-orm";
+
+const predicates: Predicate[] = [];
+
+if (minId !== undefined) {
+  predicates.push(ck.gt(probeTelemetry.id, minId));
+}
+
+if (status !== undefined) {
+  predicates.push(ck.or(ck.eq(probeTelemetry.status, status), ck.eq(probeTelemetry.status, 9)));
+}
+
+const query = db
+  .select({
+    id: probeTelemetry.id,
+    status: probeTelemetry.status,
+  })
+  .from(probeTelemetry)
+  .where(...predicates);
+```
+
+`Predicate` is the public name for reusable boolean SQL clauses. You can use the same predicate objects in `where`, `having`, join `on` clauses, and boolean-aware helpers such as `ck.exists(...)`.
+
+`Selection` is the public name for reusable computed builder values such as `fn.sum(...)`, `fn.toString(...)`, and `ck.expr(ckSql...)`. Use `.as(...)` to alias them and `.mapWith(...)` to override decoding. `Order` is the clause object returned by `ck.asc(...)` and `ck.desc(...)`.
+
+`ck.has(...)`, `ck.hasAll(...)`, and `ck.hasAny(...)` map directly to the native ClickHouse functions and keep ClickHouse's array, map, and JSON semantics. When the left side is an array column, plain JavaScript values are encoded through that column first, so `Array(Date)` filters use the column's Date encoding before they become query parameters.
+
+`where(...)` is variadic, while `having(...)` takes a single predicate. For multi-clause `having`, compose the predicate first with `ck.and(...)` or `ck.or(...)`.
+
+`ck.contains(...)`, `ck.startsWith(...)`, `ck.endsWith(...)` and their `*IgnoreCase` variants treat the input as literal text. They parameterize the value and escape LIKE wildcard characters (`%`, `_`, `\`) internally.
+
+Use `ck.like(...)` / `ck.ilike(...)` only when you intentionally want full pattern semantics. Those APIs still parameterize values for SQL safety, but `%` and `_` keep their wildcard meaning because LIKE is a pattern language.
+
+Literal-text search example:
+
+```ts
+import { ck } from "ck-orm";
+
+const rows = await db
+  .select({
+    probeId: probeTelemetry.probeId,
+  })
+  .from(probeTelemetry)
+  .where(ck.contains(probeTelemetry.probeId, "probe_alpha%"));
+```
+
+Advanced pattern example:
+
+```ts
+import { ck } from "ck-orm";
+
+const rows = await db
+  .select({
+    probeId: probeTelemetry.probeId,
+  })
+  .from(probeTelemetry)
+  .where(ck.like(probeTelemetry.probeId, "probe_%"));
+```
+
+### `groupBy()`, `having()`, `orderBy()`, `limit()`, `offset()`
+
+```ts
+import { ck, fn } from "ck-orm";
+
+const totalSignalStrength = fn.sum(probeTelemetry.signalStrength).as(
+  "total_signal_strength",
+);
+
+const query = db
+  .select({
+    probeId: probeTelemetry.probeId,
+    totalSignalStrength,
+  })
+  .from(probeTelemetry)
+  .groupBy(probeTelemetry.probeId)
+  .having(ck.gt(fn.sum(probeTelemetry.signalStrength), "100.00000"))
+  .orderBy(ck.desc(probeTelemetry.createdAt))
+  .limit(20)
+  .offset(0);
+```
+
+`groupBy()` and `limitBy([...])` accept columns and computed `Selection` values from helpers like `fn.*(...)` or `ck.expr(...)`.
+
+Primitive `limit()`, `offset()`, and `limitBy(..., limit)` values must be non-negative safe integers. Use `ckSql` only when you intentionally need a ClickHouse constant expression.
+
+`orderBy()` accepts:
+
+- `ck.desc(selection)`
+- `ck.asc(selection)`
+- a column directly
+
+### `final()`
+
+Append table-level `FINAL` to a table query:
+
+```ts
+const query = db.select().from(probeTelemetry).final();
+```
+
+For simple unaliased table reads, `ck-orm` emits `FROM table FINAL`. When the root table is aliased or the query joins additional sources, `ck-orm` wraps the finalized table in a subquery and keeps the alias on the outer source. This avoids ClickHouse analyzer edge cases around `FINAL`, table aliases, joins, and lambda expressions while preserving the same builder API.
+
+`final()` only applies to a table root source. If you need `FINAL` inside a CTE, subquery, or table-function flow, place `.final()` on the table-backed query before calling `.as(...)`.
+
+### `limitBy()`
+
+Use ClickHouse `LIMIT ... BY ...`:
+
+```ts
+import { ck } from "ck-orm";
+
+const query = db
+  .select({
+    probeId: probeTelemetry.probeId,
+    createdAt: probeTelemetry.createdAt,
+  })
+  .from(probeTelemetry)
+  .orderBy(ck.desc(probeTelemetry.createdAt))
+  .limitBy([probeTelemetry.probeId], 1);
+```
+
+### Execution modes
+
+Builder queries can be executed in three ways:
+
+```ts
+const query = db.select().from(probeTelemetry).limit(10);
+
+const rows = await query;
+const sameRows = await query.execute();
+
+for await (const row of query.iterator()) {
+  console.log(row);
+}
+```
+
+Use `.execute()` in application examples when you want the execution point to be visually obvious. Direct `await query` is supported for Drizzle-style ergonomics and is useful once the team is familiar with builder queries being thenable.
+
+`query.iterator()` uses the same session-aware concurrency rules as `db.stream()`: if the query targets a `session_id`, the slot stays occupied until iteration finishes or the iterator is closed early.
+
+### Subqueries and CTEs
+
+Use `.as("alias")` to turn a builder into an explicitly named subquery:
+
+```ts
+const latestTelemetrySample = db
+  .select({
+    probeId: probeTelemetry.probeId,
+    createdAt: probeTelemetry.createdAt,
+  })
+  .from(probeTelemetry)
+  .orderBy(ck.desc(probeTelemetry.createdAt))
+  .limit(10)
+  .as("latest_telemetry_sample");
+```
+
+`.as("…")` is **optional** for subqueries — if you don't call it, the
+framework assigns an auto alias (`__sub_1`, `__sub_2`, …) at compile time.
+A bare builder works directly in `from()`, `innerJoin()`, `leftJoin()`,
+`inArray()`, `notInArray()`, `exists()`, and `notExists()`.
+
+```ts
+// Bare builder, variable-bound — column refs are accessible.
+const signalTotals = db
+  .select({
+    probeId: probeTelemetry.probeId,
+    totalSignalStrength: fn.sum(probeTelemetry.signalStrength).as("total"),
+  })
+  .from(probeTelemetry)
+  .groupBy(probeTelemetry.probeId);
+
+await db
+  .select({
+    probeId: signalTotals.probeId,
+    totalSignalStrength: signalTotals.totalSignalStrength,
+  })
+  .from(signalTotals);
+
+// Bare builder inline — use the callback form of innerJoin/leftJoin so the
+// `on` condition can reference its columns via the `joined` parameter.
+await db
+  .select({ probeId: probeTelemetry.probeId })
+  .from(probeTelemetry)
+  .innerJoin(
+    db
+      .select({
+        peerProbeId: probeTelemetry.probeId,
+        peerCount: fn.count().as("peer_count"),
+      })
+      .from(probeTelemetry)
+      .groupBy(probeTelemetry.probeId),
+    (joined) => ck.eq(probeTelemetry.probeId, joined.peerProbeId),
+  );
+
+// inArray accepts a bare builder directly.
+await db
+  .select({ probeId: probeTelemetry.probeId })
+  .from(probeTelemetry)
+  .where(
+    ck.inArray(
+      probeTelemetry.probeId,
+      db.select({ activeProbeId: probeTelemetry.probeId }).from(probeTelemetry),
+    ),
+  );
+```
+
+#### Style guide — when to use `.as(name)` vs bare
+
+| Situation | Recommended form |
+|---|---|
+| One-off inline subquery, no need to reuse | bare builder + callback `innerJoin/leftJoin`, or bare in `inArray/exists` |
+| Subquery's column refs used in multiple places (SELECT / WHERE / one JOIN) | bind to a `const` and pass it bare — refs flow through chain methods |
+| Self-join (same logical subquery, two SQL aliases) | call `.as("a")` and `.as("b")` explicitly — reusing the same instance as a source twice throws when the query is compiled to SQL |
+| Need a stable, readable, or typed alias (production `query_log` search, `EXPLAIN`, slow logs, cross-module helpers, literal `TAlias` source key) | call `.as("descriptive_name")` |
+
+The auto alias is **not** stable across compiles of structurally different
+queries, but is stable within one compile and between repeated compiles of
+the same builder tree — `snapshot` style tests don't need normalization.
+
+#### Selection key conflicts
+
+Selection keys that collide with SelectBuilder method names (`from`,
+`where`, `select`, `as`, `innerJoin`, `leftJoin`, `groupBy`, `having`,
+`orderBy`, `limit`, `offset`, `final`, `limitBy`, `execute`, `iterator`,
+`then`, `catch`, `finally`, `buildSelectionItems`) keep their method type
+on the bare builder. `sub.from` always returns the builder method, never a
+column ref — even if `from` is in the selection. Rename such keys (e.g.
+`from` → `fromAddress`) or wrap the subquery with `.as("name")` so column
+access goes through the dedicated `Subquery` object.
+
+Use `$with()` and `with()` for CTEs:
+
+```ts
+import { ck, fn } from "ck-orm";
+
+const rankedProbes = db.$with("ranked_probes").as(
+  db
+    .select({
+      probeId: probeTelemetry.probeId,
+      totalSignalStrength: fn.sum(probeTelemetry.signalStrength).as(
+        "total_signal_strength",
+      ),
+    })
+    .from(probeTelemetry)
+    .groupBy(probeTelemetry.probeId),
+);
+
+const rows = await db
+  .with(rankedProbes)
+  .select({
+    probeId: rankedProbes.probeId,
+    totalSignalStrength: rankedProbes.totalSignalStrength,
+  })
+  .from(rankedProbes);
+```
+
+`$with()` with no name builds an anonymous CTE. An anonymous CTE can be used as a source once per query; to join the same result twice, define two CTEs, one per join (two `db.$with().as(...)` calls, or two named CTEs with different names).
+
+### `db.count()`
+
+Use `db.count(source, ...predicates)` for a Drizzle-style count helper. It follows the same predicate semantics as `.where(...predicates)`: multiple predicates are combined with `AND`, and `undefined` predicate objects are skipped. Value-level `undefined` inside helpers such as `ck.eq(...)` still throws.
+
+```ts
+import { ck } from "ck-orm";
+
+const total = await db.count(
+  probeTelemetry,
+  ck.eq(probeTelemetry.status, 1),
+  ck.gt(probeTelemetry.id, 1000),
+);
+```
+
+For more complex result sets, count a subquery or CTE:
+
+```ts
+const activeProbes = db
+  .select({
+    probeId: probeTelemetry.probeId,
+  })
+  .from(probeTelemetry)
+  .where(ck.eq(probeTelemetry.status, 1))
+  .as("active_probes");
+
+const total = await db.count(activeProbes);
+```
+
+`db.count(...)` defaults to the numeric count mode: it renders `toFloat64(count())` and decodes to `number`. Very large counts can exceed JavaScript integer precision, so use the chainable modes when exactness or wire-shape fidelity matters:
+
+```ts
+const approximateTotal = await db.count(activeProbes); // number
+const exactTotal = await db.count(activeProbes).toSafe(); // string
+const wireTotal = await db.count(activeProbes).toMixed(); // number | string
+```
+
+`.toSafe()` renders `toString(count())` and is intended for exact reads. If you use a safe count as a SQL expression, it has `String` semantics; use the default/`.toUnsafe()` or `.toMixed()` for numeric SQL comparisons. `.toMixed()` renders `toUInt64(count())` and preserves the driver/wire shape; with ck-orm's default lossless 64-bit JSON settings, real ClickHouse responses usually arrive as `string`.
+
+## Join null semantics
+
+`leftJoin()` defaults to SQL-style null semantics by automatically applying `join_use_nulls = 1`.
+
+That means:
+
+- the right side of a default left join is inferred as nullable
+- if you explicitly disable `join_use_nulls`, the inferred types change as well
+
+To align with ClickHouse default join behavior, pass the literal `0`. The literal is inferred, so `as const` is unnecessary. A value typed as a plain `number`, for example from a variable, still yields `| null`.
+
+```ts
+const rawDefaultDb = db.withSettings({
+  join_use_nulls: 0,
+});
+```
+
+A left join of a bare builder (a subquery without `.as()`) or an anonymous CTE types every column ref from those sources as `| null`, including refs from the `FROM` side or an inner-joined bare builder. Those refs share one wide `string` source key, so the types cannot tell which source was left-joined. Runtime still returns NULL only for the left-joined side.
+
+```ts
+const rows = await db
+  .select({ uid: allUsers.uid, spent: totals.spent })
+  .from(allUsers)
+  .leftJoin(totals, ck.eq(allUsers.uid, totals.uid));
+// uid and spent are both number | null
+```
+
+Name the `FROM`-side or inner-joined subquery with `.as("name")`. Its refs then keep their own source key and stay non-null, while the left-joined side stays `| null`.
+
+The forced `join_use_nulls = 1` setting is preserved when a joined query is reused as a subquery, CTE, `ck.exists(...)`, or `ck.inArray(...)` source, so builder types stay aligned with runtime behavior.
+
+Computed expressions follow ClickHouse NULL propagation at runtime: when ClickHouse returns NULL (a NULL input, or an unmatched left-joined row), the value is `null`. Their TypeScript type is the `TData` you declare (or the helper's fixed type) and is not widened automatically, so declare `| null` (for example `fn.plus<number | null>(...)`) or wrap the input with `fn.coalesce(...)` when an input can be NULL.
+
+## Writes
+
+### `insert(table).values(...)`
+
+Use the builder when you want typed inserts that follow the table schema:
+
+```ts
+await db.insert(probeTelemetry).values({
+  id: 1,
+  probeId: "probe_alpha",
+  missionId: 10,
+  sampleId: "900001",
+  signalStrength: "42.50000",
+  status: 1,
+  createdAt: 1710000000,
+  deletedAt: null,
+  ingestedAt: new Date("2026-04-21T00:00:00.000Z"),
+  isDeleted: 0,
+  ingestVersion: "1",
+});
+```
+
+Rows are sent as one `INSERT INTO t (cols) FORMAT Values` request. The statement has no query parameters; the rows are literal Values text in the request body, so the 1,000-parameter and 128 KiB-per-value HTTP limits do not apply. An omitted column uses its `DEFAULT` on that row only. Expression evaluation is disabled for this insert (`input_format_values_interpret_expressions = 0` and `input_format_values_deduce_templates_of_expressions = 0`), so each cell is data. Use `insert().fromSelect()` for computed values. A JavaScript `Date` is sent as that exact instant, truncated to the column precision; `DateTime` columns keep whole seconds. A number at a `DateTime` or `DateTime64` column is Unix seconds. A string is read in the column timezone.
+
+Insert rows must use keys from the table schema. Unknown keys are rejected early.
+
+### `insert(table).fromSelect(select)`
+
+Use `.fromSelect(...)` to compile a single `INSERT INTO target (cols) SELECT ...` statement and let ClickHouse materialise the SELECT server-side. No rows travel through the Node process — ideal for scoping a large source table once and reusing the materialised slice across multiple downstream queries inside `runInSession`.
+
+```ts
+await db.runInSession(async (session) => {
+  const tmpScopedDeals = ckTable("tmp_scoped_deals", {
+    dealTicket: ckType.int64("deal_ticket"),
+    login: ckType.int64(),
+    volume: ckType.float64(),
+  });
+
+  await session.createTemporaryTable(tmpScopedDeals);
+
+  await session.insert(tmpScopedDeals).fromSelect(
+    session
+      .select({
+        dealTicket: mtDeal.dealTicket,
+        login: mtDeal.login,
+        volume: mtDeal.volume,
+      })
+      .from(mtDeal)
+      .where(ck.inArray(mtDeal.entry, [1, 2, 3])),
+  );
+
+  // Subsequent count / aggregation queries scan the temp table, not mt_deal:
+  const totalRows = await session.count(tmpScopedDeals);
+  const byLogin = await session
+    .select({ login: tmpScopedDeals.login, volume: fn.sum(tmpScopedDeals.volume) })
+    .from(tmpScopedDeals)
+    .groupBy(tmpScopedDeals.login);
+});
+```
+
+Rules:
+
+- The SELECT must project every required column of the target table; columns declared with `.default(...)` may be omitted. Missing required columns are rejected at compile time (TypeScript) and again at runtime.
+- The INSERT column list is generated in the SELECT projection key order, so callers see `name-aligned` semantics even though ClickHouse aligns columns by position. Projection key order is irrelevant to which target column receives which value — the keys themselves are matched.
+- Unknown projection keys (not on the target table) and per-column type mismatches surface as TypeScript errors before the query is sent.
+- `.values()` and `.fromSelect()` are mutually exclusive on a single insert chain — the builder type narrows so the unused method disappears from autocomplete, and the runtime rejects the call too.
+- The compiled wire request is a plain ClickHouse command — `mode: "insert"` in the query event, `tableName` set to the target table.
+- `.fromSelect()` accepts a `SelectBuilder` (`session.select({...}).from(...)`), not a subquery wrapper. Use `.as("name")` only when you need the result as a CTE/subquery inside another SELECT, not when handing it to `.fromSelect()`.
+
+#### Nested columns
+
+`ckType.nested(...)` columns interact with `.fromSelect()` in three modes:
+
+1. **Omit the nested key from the projection.** This is the default mode and reflects ck-orm's runtime contract: a missing nested value is encoded as SQL `DEFAULT`, and ClickHouse fills empty parallel arrays for every field. The TS layer treats nested columns as `optional` in `$inferInsert` to mirror this.
+2. **Project a direct nested column reference**, e.g. `select({ events: src.events })`. ck-orm wraps the inner SELECT in a subquery and rewrites the outer projection into per-field dot-path access (`__ck_inner.events.name`, `__ck_inner.events.score`, …). The source nested shape must contain every field the target nested expects.
+3. **Project a computed expression into a nested column** is rejected at compile time — a single SQL expression cannot fan out into the parallel array fields. Use `.values(...)` or `.insertJsonEachRow(...)` for row values.
+
+If you want the TS layer to enforce that nested data is always supplied (`Pattern D` — business contract that disallows empty nested arrays), opt in with `ckType.nested({...}).requiredOnInsert()`. The chain returns a column whose `$inferInsert` shape lists `events` as required, and `.fromSelect()` requires either the projection-of-nested-column-ref mode or the row-wise alternative.
+
+> **JSON wire-format note**: `.values()` sends a JSON column as quoted `JSON.stringify(...)` text in the Values body. ClickHouse parses that literal into the JSON column. `.fromSelect()` runs entirely server-side, so JSON values never round-trip through the JS process. Both paths produce identical stored data.
+
+### `insertJsonEachRow()`
+
+Use `insertJsonEachRow()` when you already have object rows or an async row stream:
+
+```ts
+await db.insertJsonEachRow("tmp_scope", [
+  { probe_id: "probe_alpha" },
+  { probe_id: "probe_beta" },
+]);
+```
+
+It accepts:
+
+- a string table name
+- a table object created by `ckTable()`
+- a regular array
+- an `AsyncIterable`
+
+An empty regular array is treated as a client-side no-op and still reports a successful insert lifecycle with `rowCount: 0` to instrumentation hooks. ClickHouse controls unknown-field behavior; pass settings such as `input_format_skip_unknown_fields: 1` when you want the server to ignore extra JSON fields. Nested columns are sent as their flattened `column.field` arrays (ClickHouse `flatten_nested = 1`, the default), so `{ lines: [{ sku: "a" }] }` works with both `insert().values()` and `insertJsonEachRow()`.
+
+With a table schema, `insertJsonEachRow()` sends a JavaScript `Date` in a `DateTime`/`DateTime64` column as the same exact integer ticks as `insert().values()`, and leaves ClickHouse's default `date_time_input_format = basic` parser in charge of strings, so datetime strings are read the same way by both. A JSON number you pass yourself at a `DateTime64` column is still read as ticks by `JSONEachRow` and as Unix seconds by `.values()`.
+
+`insertJsonEachRow("table_name", rows)` with a bare table name has no column types, so a `Date` is sent as ISO 8601 with `Z` and ck-orm sets `date_time_input_format = best_effort` for that request. The same applies to keys of a schema-table row that are not in the schema: ck-orm passes them through untouched, so a `Date` there needs `clickhouse_settings: { date_time_input_format: "best_effort" }` on the call. On ClickHouse 25.8 the `best_effort` parser misreads pre-1970 instants with sub-second digits and rejects `Time` strings such as `12:34:56`; schema-typed columns avoid both.
+
+## Raw SQL
+
+`ck-orm` includes its own SQL template API. Use it when builder syntax would be less direct than the SQL you already want to write.
+
+### `` ckSql`...` ``
+
+```ts
+import { ckSql, fn } from "ck-orm";
+
+const rows = await db.execute(ckSql`
+  select
+    ${probeTelemetry.probeId},
+    ${fn.sum(probeTelemetry.signalStrength)} as total_signal_strength
+  from ${probeTelemetry}
+  where ${probeTelemetry.id} > ${10}
+  group by ${probeTelemetry.probeId}
+`);
+```
+
+### `ckSql.join()` and `ckSql.identifier()`
+
+```ts
+import { ckSql } from "ck-orm";
+
+const fields = ckSql.join(
+  [ckSql.identifier("probe_id"), ckSql.identifier("signal_strength")],
+  ", ",
+);
+
+const rows = await db.execute(
+  ckSql`select ${fields} from ${ckSql.identifier("probe_telemetry")}`,
+);
+```
+
+### Raw SQL with `query_params`
+
+```ts
+import { ckSql } from "ck-orm";
+
+const rows = await db.execute(
+  ckSql`select probe_id, signal_strength from probe_telemetry where probe_id = {probe_id:String} limit {limit:Int64}`,
+  {
+    query_params: {
+      probe_id: "probe_alpha",
+      limit: 10,
+    },
+  },
+);
+```
+
+Parameter transport is chosen automatically. You do not need to configure multipart handling for `query_params`.
+
+`query_params` keys that start with `orm_param` are rejected. That prefix is reserved for parameters generated internally by `` ckSql`...` ``.
+
+The value formatter supports primitive values, `Date`, `NaN`, `Infinity`, arrays, objects, and `Map` values for ClickHouse typed placeholders such as `{ids:Array(UInt64)}` or `{attrs:Map(String, String)}`. Values passed through `query_params` carry no column type of their own, so an array is always sent as Array text. `Tuple(...)` placeholders are not supported there. A 64-bit integer inside an array must be a `bigint`; a string is quoted and rejected for a numeric element type. A `Date` is sent as UTC wall-clock text, which ClickHouse reads in the placeholder type's timezone, so declare it as `{at:DateTime64(3, 'UTC')}` to keep the session or server timezone from shifting it; `` ckSql`...${date}` `` interpolation does this for you. Use ClickHouse's `Identifier` placeholder type when the parameter is a table or column name:
+
+```ts
+const rows = await db.execute(
+  ckSql`
+    select {selected_column:Identifier}
+    from {target_table:Identifier}
+    where id = {id:Int32}
+  `,
+  {
+    query_params: {
+      selected_column: "probe_id",
+      target_table: "probe_telemetry",
+      id: 1,
+    },
+  },
+);
+```
+
+### `ck.expr()`
+
+Use `ck.expr()` to wrap a SQL fragment as a reusable `Selection`:
+
+```ts
+import { ck, ckSql } from "ck-orm";
+
+const query = db.select({
+  constantOne: ck.expr(ckSql`1`).as("constant_one"),
+});
+```
+
+When the fragment is typed, `ck.expr()` keeps that type. An untyped fragment
+intentionally remains `unknown`; pass a generic or decoder when its result is
+known outside the schema:
+
+```ts
+const status = ck.expr(ckSql<string>`'closed'`); // Selection<string>
+const enabled = ck.expr<boolean>(ckSql`1`, {
+  decoder: (value) => Number(value) === 1,
+});
+```
+
+### Raw query formats
+
+Raw eager queries only support `JSON` output:
+
+```ts
+const rows = await db.execute(ckSql`select 1`, {
+  format: "JSON",
+});
+```
+
+Raw streaming queries only support `JSONEachRow` output. With the default `compression.response: false`, a stream is sent uncompressed so each row can arrive as ClickHouse produces it:
+
+```ts
+for await (const row of db.stream(ckSql`select 1`, {
+  format: "JSONEachRow",
+})) {
+  console.log(row);
+}
+```
+
+### Decimal precision in expressions
+
+```ts
+import { ckSql, ckTable, ckType, fn } from "ck-orm";
+
+const measurementLog = ckTable("measurement_log", {
+  value: ckType.decimal({ precision: 18, scale: 5 }),
+});
+
+// fn.sum / sumIf / min / max auto-cast to Decimal(P, S) and decode as string.
+db.select({ total: fn.sum(measurementLog.value) }).from(measurementLog);
+// → CAST(sum(`measurement_log`.`value`) AS Decimal(38, 5))   row.total: string
+
+// Explicit casts.
+fn.toDecimal128(measurementLog.value, 5); // toDecimal32 / 64 / 128 / 256
+ckSql.decimal(ckSql`sum(a) - sum(b)`, 20, 5);
+measurementLog.value.cast(20, 2); // column shortcut
+```
+
+- `sum` / `sumIf` widen P to ≥ 38; `min` / `max` keep the column's P. For schema Decimal columns, `fn.sum()` and `fn.sumIf()` are `Selection<string>`; Float columns are `Selection<number>`. Auto-cast also fires through `nullable(decimal(...))` and `lowCardinality(decimal(...))`.
+- `maxIf(value, condition)` follows the same Decimal rule as `max`: a Decimal result is `Selection<string>` with its declared `Decimal(P, S)` shape.
+- `avg` is **not** auto-cast — ClickHouse computes `avg(Decimal)` over Float64, so `fn.avg` returns `Selection<number>`. For exact Decimal averages, use `ckSql.decimal(ckSql\`sum(x) / count(x)\`, P, S)`.
+- `fn.divideDecimal(left, right, resultScale?)` maps directly to ClickHouse `divideDecimal`. It returns `Selection<string>` so precision is not lost. When provided, `resultScale` must be a literal integer from `0` to `76` and is emitted inline; the builder does not version-check or emulate the ClickHouse function.
+- `column.cast(P, S)` casts the column, not the aggregate — using it bare inside `GROUP BY` raises `NOT_AN_AGGREGATE`. Use `fn.sum(column)` or wrap the aggregate.
+- Inserts reject non-string/number objects (e.g. raw `decimal.js` instances) — pass `.toFixed(scale)`:
+
+```ts
+db.insert(measurementLog).values({ value: new Decimal("1.23").toFixed(5) }); // ✅
+db.insert(measurementLog).values({ value: new Decimal("1.23") as never }); // ❌ throws
+```
+
+## Window expressions
+
+Wrap an `fn.*` function expression with `fn.over(...)`. The optional specification accepts only builder selections for `partitionBy` and normal `ck.asc(...)` / `ck.desc(...)` values for `orderBy`:
+
+```ts
+import { ck, ckTable, ckType, fn } from "ck-orm";
+
+const events = ckTable("events", {
+  id: ckType.int32(),
+  accountId: ckType.int32("account_id"),
+  amount: ckType.decimal({ precision: 18, scale: 2 }),
+});
+
+const rows = await db
+  .select({
+    id: events.id,
+    rankInAccount: fn
+      .over(fn.rowNumber(), {
+        partitionBy: [events.accountId],
+        orderBy: [ck.asc(events.id)],
+      })
+      .as("rank_in_account"),
+    exactRankInAccount: fn
+      .over(fn.rowNumber().toSafe(), {
+        partitionBy: [events.accountId],
+        orderBy: [ck.asc(events.id)],
+      })
+      .as("exact_rank_in_account"),
+    accountTotal: fn
+      .over(fn.sum(events.amount), { partitionBy: [events.accountId] })
+      .as("account_total"),
+  })
+  .from(events);
+```
+
+`fn.rowNumber()` defaults to unsafe `Selection<number>` through `toFloat64`. Call `.toSafe()` before `fn.over(...)` for an exact `Selection<string>`, or `.toMixed()` for the native `UInt64` transport shape (`Selection<number | string>`); `.toUnsafe()` is the explicit default. The builder deliberately does not add a JavaScript safe-integer check: ClickHouse's `toFloat64` conversion can round values above `Number.MAX_SAFE_INTEGER`; `.toSafe()` keeps an exact decimal string and `.toMixed()` preserves the driver's native result shape. Decimal aggregates retain their normal string decoder and are compiled as `CAST(sum(...) OVER (...) AS Decimal(...))`, so `OVER` stays inside the aggregate rather than outside the cast. `fn.over` intentionally does not accept a bare column or raw SQL fragment, and this first surface covers `PARTITION BY` and `ORDER BY` only; use `ckSql` for frames, named windows, or other ClickHouse-specific clauses.
+
+## Functions and table functions
+
+### `fn`
+
+Generic, conversion, aggregate, JSON, tuple, and table-related helpers include:
+
+- `fn.call()`
+- `fn.withParams()`
+- `fn.replaceRegexpAll()` — typed ClickHouse RE2 replacement; see [Regex replacement](#regex-replacement)
+- Type conversion helpers mirror the ClickHouse Type conversion page: `fn.cast()`, `fn.date()`, `fn.accurateCast*()`, `fn.reinterpret*()`, `fn.parseDateTime*()`, `fn.formatDateTime()`, `fn.formatRow*()`, `fn.toString*()`, `fn.toBool()`, `fn.toInt*()`, `fn.toUInt*()`, `fn.toFloat*()`, `fn.toBFloat16*()`, `fn.toDecimal*()`, `fn.toDecimalString()`, `fn.toFixedString()`, `fn.toDate*()`, `fn.toDateTime*()`, `fn.toTime*()`, `fn.toTime64*()`, `fn.toInterval*()`, `fn.toLowCardinality()`, `fn.toNullable()`, and `fn.toUUID*()`.
+- 64-bit-and-wider integer conversions (`toInt64/128/256*`, `toUInt64/128/256*`, Unix timestamp 64 helpers) decode as `string`; narrower integer and floating conversions decode as `number`.
+- Literal-only ClickHouse arguments are validated and inlined where required: Decimal scale, DateTime64/Time64 precision, FixedString length, target type strings, and interval units.
+- `fn.toStartOfMonth()`
+- `fn.toUnixTimestamp()` / `fn.toUnixTimestamp64Second()` / `fn.toUnixTimestamp64Milli()` / `fn.toUnixTimestamp64Micro()` / `fn.toUnixTimestamp64Nano()`
+- `fn.fromUnixTimestamp()` / `fn.fromUnixTimestamp64Second()` / `fn.fromUnixTimestamp64Milli()` / `fn.fromUnixTimestamp64Micro()` / `fn.fromUnixTimestamp64Nano()`
+- `fn.count()` / `fn.countIf()` — default `Selection<number>` wrapped as `toFloat64(count(...))`. Chain `.toSafe()` for `Selection<string>` (`toString(count(...))`), `.toMixed()` for `Selection<number | string>` (`toUInt64(count(...))`), or `.toUnsafe()` to revert to the default. Mirrors `db.count`. Decoders enforce non-negative integers and reject `NaN`, negatives, booleans, etc. — see [`fn.count` / `fn.uniqExact` modes](#fncount--fnuniqexact-modes) for examples.
+- `fn.sum()` / `fn.sumIf()` / `fn.min()` / `fn.max()` / `fn.maxIf()` — auto-cast to `Decimal(P, S)` for Decimal columns; see [Decimal precision in expressions](#decimal-precision-in-expressions)
+- `fn.over()` / `fn.rowNumber()` — window-function composition with `PARTITION BY` and `ORDER BY`; see [Window expressions](#window-expressions)
+- `fn.divideDecimal()` — exact Decimal division with an optional inline result scale; see [Decimal precision in expressions](#decimal-precision-in-expressions)
+- `fn.argMax()` / `fn.argMin()` — return the `arg` value at the row that maximizes/minimizes `val`. Return type tracks the `arg` column (no Decimal CAST wrapping; ClickHouse preserves the column's declared type).
+- `fn.avg()` — `Selection<number>` (Float64), matching ClickHouse's native `avg(Decimal)` behavior
+- `fn.uniqExact()` — same three chainable modes as `fn.count()`: default `Selection<number>` wrapped as `toFloat64(uniqExact(...))`, `.toSafe()` for `Selection<string>` (`toString(uniqExact(...))`), `.toMixed()` for `Selection<number | string>` (`toUInt64(uniqExact(...))`), `.toUnsafe()` to revert. Decoders are the same non-negative integer guard. See [`fn.count` / `fn.uniqExact` modes](#fncount--fnuniqexact-modes).
+- `fn.coalesce()`
+- `fn.if()` / `fn.multiIf()` — conditionals. Both return `Selection<unknown>` because ClickHouse determines the server result type from all value branches.
+- `fn.greatest()` / `fn.least()` / `fn.nullIf()` — comparisons; `nullIf` automatically wraps the sqlType as `Nullable(...)` without double-wrapping an already-nullable input.
+- `fn.positionCaseInsensitive()` / `fn.positionCaseInsensitiveUTF8()` — case-insensitive / UTF-8 substring search. Return `Selection<string>` (ClickHouse `UInt64`, decoded as string to preserve 64-bit precision, matching `fn.indexOf()`). Optional `startPos` must be a `UInt*` type — pass a UInt column or `fn.toUInt64(n)` for literals; a bare number literal becomes `Int64` and will be rejected by ClickHouse.
+- `fn.jsonExtract()`
+- `fn.tuple()`
+- `fn.arrayJoin()`
+- `fn.tupleElement()`
+- `fn.not()`
+
+### Conditional branch types
+
+The conditional result generic has been removed: `fn.if<TData>(...)` and
+`fn.multiIf<TData>(...)` no longer compile. A known `Float64` or `UInt64` anchor
+contextually types compatible safe-integer literal branches; `UInt64` literals
+must also be non-negative. Heterogeneous expressions and raw SQL are never
+automatically cast, so convert every value branch explicitly. `.mapWith(...)`
+only defines the JavaScript decoder; it does not change the SQL type. In
+particular, a non-negative safe-integer fallback next to
+`fn.over(fn.rowNumber().toMixed())` compiles as `UInt64`.
+`fn.if(...)` and `fn.multiIf(...)` are scalar and cannot be passed directly to
+`fn.over(...)`; a value branch may still be a window selection.
+
+When one SQL type cannot be proven across every value branch, result metadata
+stays unknown and decoding becomes pass-through. Existing results may therefore
+change from a `number` to a transport `string`. Migrate by explicitly converting
+every value branch to one SQL type, then applying `.mapWith(...)` as needed.
+Automatic result metadata is deliberately limited to exact `Bool`, `Int64`,
+`UInt64`, `Float64`, and `String` anchors. Other types remain pass-through even
+when branch metadata matches, because ClickHouse can normalize identical storage
+types (for example, `LowCardinality(String)` becomes `String`).
+
+```ts
+// Before: the generic asserted a JS type but did not change SQL types.
+fn.if<number>(condition, valueA, valueB);
+
+// After: unify every value branch's SQL type, then define the decoder.
+fn
+  .if(condition, fn.toUInt64(valueA), fn.toUInt64(valueB))
+  .mapWith((value) => String(value));
+
+// Known anchors contextually type compatible safe-integer literals.
+fn.if(condition, fn.toFloat64(valueA), 0);
+fn.if(condition, fn.over(fn.rowNumber().toMixed()), 6); // fallback compiles as UInt64
+```
+
+`fn.coalesce(...)` no longer context-types fallbacks as `Float32`, `BFloat16`,
+`Decimal`, or a `bigint` whose target range cannot be proven safe. Convert those
+fallbacks explicitly:
+
+```ts
+fn.coalesce(amount, fn.toDecimal64("0.00", 2));
+```
+
+### Regex replacement
+
+`fn.replaceRegexpAll(haystack, pattern, replacement)` renders ClickHouse
+[`replaceRegexpAll`](https://clickhouse.com/docs/sql-reference/functions/string-replace-functions#replaceregexpall).
+It returns `Selection<string>`, or `Selection<string | null>` when a typed input
+can be null. Use `String.raw` for RE2 backslashes and capture substitutions:
+
+```ts
+const usDate = fn.replaceRegexpAll(
+  orders.dateText,
+  String.raw`^(\d{4})-(\d{2})-(\d{2})$`,
+  String.raw`\2/\3/\1`,
+);
+// Selection<string>
+```
+
+Arguments are bound as query parameters. Patterns use ClickHouse RE2 syntax,
+replacement supports `\0`–`\9`, and invalid patterns remain ClickHouse errors.
+An untyped `ckSql` input is conservatively nullable; write `ckSql<string>` when
+the fragment is known to be non-null.
+
+### Typed tuple aggregation
+
+`fn.tuple()` preserves each item type. The one-value `groupArray` form keeps
+that tuple type and decoder, and unary `fn.arrayReverseSort()` keeps the same
+array item type:
+
+```ts
+import { ckTable, ckType, fn } from "ck-orm";
+
+const historyOrder = ckTable("history_order", {
+  closedAt: ckType.dateTime64({ precision: 3 }),
+  active: ckType.bool(),
+  id: ckType.int32(),
+});
+const pageRow = fn.tuple(historyOrder.closedAt, historyOrder.active, historyOrder.id);
+const items = fn.arrayReverseSort(fn.withParams("groupArray", [21], pageRow));
+// Selection<[Date, boolean, number][]>
+```
+
+The existing explicit-generic form remains available for raw or dynamic cases.
+
+Array helper names mirror the canonical headings in the ClickHouse [Array functions](https://clickhouse.com/docs/sql-reference/functions/array-functions) reference. Alias-only names stay available through `fn.call(...)` instead of expanding the public API twice.
+
+- `fn.array()`
+- `fn.arrayAUCPR()`
+- `fn.arrayAll()`
+- `fn.arrayAutocorrelation()`
+- `fn.arrayAvg()`
+- `fn.arrayCompact()`
+- `fn.arrayConcat()`
+- `fn.arrayCount()`
+- `fn.arrayCumSum()`
+- `fn.arrayCumSumNonNegative()`
+- `fn.arrayDifference()`
+- `fn.arrayDistinct()`
+- `fn.arrayDotProduct()`
+- `fn.arrayElement()`
+- `fn.arrayElementOrNull()`
+- `fn.arrayEnumerate()`
+- `fn.arrayEnumerateDense()`
+- `fn.arrayEnumerateDenseRanked()`
+- `fn.arrayEnumerateUniq()`
+- `fn.arrayEnumerateUniqRanked()`
+- `fn.arrayExcept()`
+- `fn.arrayExists()`
+- `fn.arrayFill()`
+- `fn.arrayFilter()`
+- `fn.arrayFirst()`
+- `fn.arrayFirstIndex()`
+- `fn.arrayFirstOrNull()`
+- `fn.arrayFlatten()`
+- `fn.arrayFold()`
+- `fn.arrayIntersect()`
+- `fn.arrayJaccardIndex()`
+- `fn.arrayLast()`
+- `fn.arrayLastIndex()`
+- `fn.arrayLastOrNull()`
+- `fn.arrayLevenshteinDistance()`
+- `fn.arrayLevenshteinDistanceWeighted()`
+- `fn.arrayMap()`
+- `fn.arrayMax()`
+- `fn.arrayMin()`
+- `fn.arrayNormalizedGini()`
+- `fn.arrayPartialReverseSort()`
+- `fn.arrayPartialShuffle()`
+- `fn.arrayPartialSort()`
+- `fn.arrayPopBack()`
+- `fn.arrayPopFront()`
+- `fn.arrayProduct()`
+- `fn.arrayPushBack()`
+- `fn.arrayPushFront()`
+- `fn.arrayROCAUC()`
+- `fn.arrayRandomSample()`
+- `fn.arrayReduce()`
+- `fn.arrayReduceInRanges()`
+- `fn.arrayRemove()`
+- `fn.arrayResize()`
+- `fn.arrayReverse()`
+- `fn.arrayReverseFill()`
+- `fn.arrayReverseSort()`
+- `fn.arrayReverseSplit()`
+- `fn.arrayRotateLeft()`
+- `fn.arrayRotateRight()`
+- `fn.arrayShiftLeft()`
+- `fn.arrayShiftRight()`
+- `fn.arrayShingles()`
+- `fn.arrayShuffle()`
+- `fn.arraySimilarity()`
+- `fn.arraySlice()`
+- `fn.arraySort()`
+- `fn.arraySplit()`
+- `fn.arraySum()`
+- `fn.arraySymmetricDifference()`
+- `fn.arrayTranspose()`
+- `fn.arrayUnion()`
+- `fn.arrayUniq()`
+- `fn.arrayWithConstant()`
+- `fn.arrayZip()`
+- `fn.arrayZipUnaligned()`
+- `fn.countEqual()`
+- `fn.empty()`
+- `fn.emptyArrayDate()`
+- `fn.emptyArrayDateTime()`
+- `fn.emptyArrayFloat32()`
+- `fn.emptyArrayFloat64()`
+- `fn.emptyArrayInt16()`
+- `fn.emptyArrayInt32()`
+- `fn.emptyArrayInt64()`
+- `fn.emptyArrayInt8()`
+- `fn.emptyArrayString()`
+- `fn.emptyArrayToSingle()`
+- `fn.emptyArrayUInt16()`
+- `fn.emptyArrayUInt32()`
+- `fn.emptyArrayUInt64()`
+- `fn.emptyArrayUInt8()`
+- `fn.has()`
+- `fn.hasAll()`
+- `fn.hasAny()`
+- `fn.hasSubstr()`
+- `fn.indexOf()`
+- `fn.indexOfAssumeSorted()`
+- `fn.kql_array_sort_asc()`
+- `fn.kql_array_sort_desc()`
+- `fn.length()`
+- `fn.notEmpty()`
+- `fn.range()`
+- `fn.replicate()`
+- `fn.reverse()`
+
+`fn.call(name, ...)` and `fn.withParams(name, ...)` validate `name` as a SQL identifier before compilation. `ck.has(...)`, `ck.hasAll(...)`, `ck.hasAny(...)`, and `ck.hasSubstr(...)` are where-friendly predicate shortcuts for the same ClickHouse functions.
+
+`fn.jsonExtract(json, returnType, ...path)` only accepts `ckType.*` return types, so the ClickHouse return type and the TypeScript decoder stay together:
+
+The JSON and array snippets below assume the fictional `probeTelemetry` schema also has `metadata: JSON` and `tags: Array(String)` columns.
+
+```ts
+import { ckType, ck, fn } from "ck-orm";
+
+const alertCodes = fn.jsonExtract(
+  probeTelemetry.metadata,
+  ckType.array(ckType.string()),
+  "alerts",
+);
+
+const riskScore = fn.jsonExtract(
+  probeTelemetry.metadata,
+  ckType.nullable(ckType.float64()),
+  "risk",
+  "score",
+);
+
+const filtered = db
+  .select({
+    sampleId: probeTelemetry.sampleId,
+    alertCodes: alertCodes.as("alert_codes"),
+    riskScore: riskScore.as("risk_score"),
+  })
+  .from(probeTelemetry)
+  .where(ck.hasAny(alertCodes, ["battery", "thermal"]), ck.gte(riskScore, 80));
+```
+
+Path segments are ClickHouse JSON path arguments. Use string keys for object fields and number or bigint indexes for array positions:
+
+```ts
+// Reads metadata.samples[1].id from a JSON document such as:
+// { "samples": [{ "id": "900001" }, { "id": "900002" }] }
+const secondSampleId = fn.jsonExtract(
+  probeTelemetry.metadata,
+  ckType.int64(),
+  "samples",
+  1,
+  "id",
+);
+```
+
+Higher-order array functions follow ClickHouse's parameter order. Use `ckSql` for the lambda, interpolate outer schema fields, and leave lambda-local variables as bare SQL names. Functions whose lambda controls the element shape, such as `fn.arrayMap(...)`, `fn.arrayFilter(...)`, and `fn.range(...)`, return `Selection<unknown[]>` by default; chain `.mapWith(...)` when your query needs a narrower decoded element type.
+
+```ts
+import { ck, ckSql, fn, type Predicate, type Selection } from "ck-orm";
+
+const buildRangePredicate = (params: {
+  timeColumn: Selection<Date>;
+  scopeTable: {
+    alwaysAccess: Selection<number>;
+    startTsList: Selection<Date[]>;
+    endTsList: Selection<Date[]>;
+  };
+}): Predicate => {
+  const rangeMatched = fn.arrayExists(
+    ckSql`
+      (start_ts, end_ts) ->
+        ${params.timeColumn} >= start_ts
+        AND ${params.timeColumn} < end_ts
+    `,
+    params.scopeTable.startTsList,
+    params.scopeTable.endTsList,
+  );
+
+  return ck.or(ck.eq(params.scopeTable.alwaysAccess, 1), rangeMatched);
+};
+```
+
+In that lambda, `${params.timeColumn}` and `params.scopeTable.startTsList` are schema-backed expressions. `start_ts` and `end_ts` are lambda-local variables created by ClickHouse from the array elements.
+
+`fn.arrayJoin(array)` maps to ClickHouse `arrayJoin` and expands one input row into one row per array element. Pair it with `fn.arrayZip(...)` and `fn.tupleElement(...)` when two arrays must stay positionally matched:
+
+```ts
+import { ck, fn } from "ck-orm";
+
+const sampleIds = ["900001", "900002"];
+const probeIds = ["probe_alpha", "probe_beta"];
+
+const targetSamples = db.$with("target_samples").as(
+  db.select({
+    pair: fn.arrayJoin(fn.arrayZip(sampleIds, probeIds)).as("pair"),
+  }),
+);
+
+const targetTelemetry = db.$with("target_telemetry").as(
+  db
+    .with(targetSamples)
+    .select({
+      sampleId: fn.tupleElement<string>(targetSamples.pair, 1).as("sample_id"),
+      probeId: fn.tupleElement<string>(targetSamples.pair, 2).as("probe_id"),
+    })
+    .from(targetSamples),
+);
+
+const scopedSamples = db
+  .select({
+    pair: fn.tuple(targetTelemetry.sampleId, targetTelemetry.probeId).as("pair"),
+  })
+  .from(targetTelemetry)
+  .as("scoped_samples");
+
+const query = db
+  .with(targetSamples, targetTelemetry)
+  .select({
+    sampleId: probeTelemetry.sampleId,
+    probeId: probeTelemetry.probeId,
+  })
+  .from(probeTelemetry)
+  .where(
+    ck.inArray(fn.tuple(probeTelemetry.sampleId, probeTelemetry.probeId), scopedSamples),
+  );
+```
+
+The important part is the semantics: `arrayZip(sampleIds, probeIds)` preserves positional pairs, `arrayJoin(...)` expands them into rows, and `tupleElement(..., 1/2)` reads each side of the pair.
+
+Use tuple membership for compound keys. Two independent `IN` predicates produce a cross product and can match pairs that were never requested:
+
+```ts
+// Avoid this when sampleId and probeId must stay paired.
+const wrong = ck.and(
+  ck.inArray(probeTelemetry.sampleId, sampleIds),
+  ck.inArray(probeTelemetry.probeId, probeIds),
+);
+```
+
+For pair semantics, compare one tuple against a tuple-producing subquery, or against a list of pairs. `fn.tuple` carries each element type when it is known, so a list binds as one `Array(Tuple(...))` parameter:
+
+```ts
+const right = ck.inArray(
+  fn.tuple(probeTelemetry.sampleId, probeTelemetry.probeId),
+  [
+    ["900001", "probe_alpha"],
+    ["900002", "probe_beta"],
+  ],
+);
+```
+
+A raw SQL fragment has no element type. Wrap the tuple with `fn.cast(fn.tuple(...), "Tuple(Int32, String)")` before using it in `ck.inArray` or `ck.eq`.
+
+For a tuple-producing subquery the same left side works without a parameter:
+
+```ts
+const right = ck.inArray(
+  fn.tuple(probeTelemetry.sampleId, probeTelemetry.probeId),
+  scopedSamples,
+);
+```
+
+Array helpers return typed `Selection` values, so they compose in projections, filters, groups, and joins:
+
+```ts
+import { ck, fn } from "ck-orm";
+
+const query = db
+  .select({
+    firstTag: fn.arrayElement<string>(probeTelemetry.tags, 1).as("first_tag"),
+    maybeSecondTag: fn.arrayElementOrNull<string>(probeTelemetry.tags, 2).as(
+      "maybe_second_tag",
+    ),
+    topTags: fn.arraySlice<string>(probeTelemetry.tags, 1, 3).as("top_tags"),
+    tagCount: fn.length(probeTelemetry.tags).as("tag_count"),
+    hasTags: fn.notEmpty(probeTelemetry.tags).as("has_tags"),
+  })
+  .from(probeTelemetry)
+  .where(ck.hasAny(probeTelemetry.tags, ["solar", "critical"]));
+```
+
+### `fn.count` / `fn.uniqExact` modes
+
+`fn.count()`, `fn.countIf(predicate)` and `fn.uniqExact(expression)` are aggregate counterparts to `db.count(...)` and follow the same three modes — useful when the count appears mid-query (in `select`, `having`, group-bys, sub-queries) rather than as a top-level scalar. They share the same SQL wrappers and decoders, so the choice maps to the same trade-offs:
+
+```ts
+import { ck, fn } from "ck-orm";
+
+const summary = db
+  .select({
+    probeId: probeTelemetry.probeId,
+    // default — Selection<number>, renders toFloat64(count(...))
+    sampleCount: fn.count(probeTelemetry.sampleId).as("sample_count"),
+    // exact — Selection<string>, renders toString(count(...))
+    auditedSampleCount: fn.count(probeTelemetry.sampleId).toSafe().as("audited_sample_count"),
+    // wire-shape — Selection<number | string>, renders toUInt64(count(...))
+    rawSampleCount: fn.count(probeTelemetry.sampleId).toMixed().as("raw_sample_count"),
+    // countIf shares the same chainable modes
+    healthySampleCount: fn.countIf(ck.eq(probeTelemetry.status, 1)).as("healthy_sample_count"),
+    // uniqExact is symmetric with count — same modes, same decoders
+    distinctMissions: fn.uniqExact(probeTelemetry.missionId).as("distinct_missions"),
+    distinctMissionsExact: fn.uniqExact(probeTelemetry.missionId).toSafe().as("distinct_missions_exact"),
+  })
+  .from(probeTelemetry)
+  .groupBy(probeTelemetry.probeId)
+  // mode chooses the SQL semantics used in HAVING, ORDER BY, and other comparisons
+  .having(ck.gt(fn.count(probeTelemetry.sampleId), 0));
+```
+
+The decoders reject anything that is not a non-negative integer — booleans, `NaN`, decimals, and negative numbers throw `Failed to decode count() result: ...` — so corrupt server output fails fast instead of silently producing `0`.
+
+Other aggregates intentionally diverge from this modes API — their precision considerations are not the same as `count` / `uniqExact`:
+
+- `fn.sum()` / `fn.sumIf()` already pick a safe decoder per input column (string for integer/Decimal columns, number for floating-point columns) and auto-widen Decimal precision; chain `.mapWith(Number)` if you specifically want a `number`.
+- `fn.avg()` always returns `Selection<number>` because ClickHouse runs `avg(Decimal)` through Float64 internally — wrapping it as a string would lie about the runtime path.
+- `fn.min()` / `fn.max()` preserve the input column's TS type (so `min(int64Col)` is `Selection<string>`, matching the column's read shape).
+
+### `fn.table`
+
+```ts
+import { fn } from "ck-orm";
+
+const numbers = fn.table.call("numbers", 10).as("n");
+
+const query = db
+  .select({
+    total: fn.count(),
+  })
+  .from(numbers);
+```
+
+## Sessions and temporary tables
+
+ClickHouse does not provide traditional transactions. For scoped analytics and large-filter workflows, session-bound temporary tables are often the right primitive.
+
+Inside a session callback, `ck-orm` gives you:
+
+- `runInSession()`
+- `registerTempTable()`
+- `createTemporaryTable()`
+- `createTemporaryTableRaw()`
+
+### `runInSession()`
+
+```ts
+import { ckTable, ckType, ckSql } from "ck-orm";
+
+const tmpScope = ckTable("tmp_scope", {
+  probe_id: ckType.string(),
+});
+
+await db.runInSession(async (session) => {
+  // Temporary tables live only inside this Session and are cleaned up automatically.
+  await session.createTemporaryTable(tmpScope);
+  await session.insertJsonEachRow(tmpScope, [
+    { probe_id: "probe_alpha" },
+    { probe_id: "probe_beta" },
+  ]);
+
+  return session.execute(ckSql`
+    SELECT probe_id
+    FROM probe_telemetry
+    WHERE probe_id IN (SELECT probe_id FROM tmp_scope)
+  `);
+});
+```
+
+Use `registerTempTable(name)` when the temporary table is created by a command you control but you still want `ck-orm` to drop it during session cleanup:
+
+```ts
+await db.runInSession(async (session) => {
+  await session.command(ckSql`
+    CREATE TEMPORARY TABLE tmp_external_scope
+    (
+      probe_id String
+    )
+    ENGINE = Memory
+  `);
+
+  session.registerTempTable("tmp_external_scope");
+
+  await session.insertJsonEachRow("tmp_external_scope", [
+    { probe_id: "probe_alpha" },
+  ]);
+});
+```
+
+Use `createTemporaryTableRaw(name, definition)` only for trusted, developer-controlled table definitions that cannot be expressed with `ckTable(...)`:
+
+```ts
+await db.runInSession(async (session) => {
+  await session.createTemporaryTableRaw(
+    "tmp_raw_scope",
+    `
+      (
+        probe_id String,
+        created_at DateTime64(3, 'UTC')
+      )
+      ENGINE = Memory
+    `,
+  );
+});
+```
+
+The `definition` argument starts after the table name. Do not include `CREATE TEMPORARY TABLE` or the table name; ck-orm renders those and validates the identifier separately.
+
+### Session behavior
+
+- requests targeting the same `session_id` share a session concurrency controller; the client default is `session_max_concurrent_requests = 1`
+- real ClickHouse sessions are exclusive on the server side, so raising `session_max_concurrent_requests` above `1` disables local serialization but can still fail with `SESSION_IS_LOCKED`
+- `createTemporaryTable()` automatically registers the table for cleanup
+- `createTemporaryTable()` consumes schema objects; temporary-table lifecycle stays on `Session`, not on the schema itself
+- `createTemporaryTableRaw()` is the trusted-only raw SQL API for temporary-table definitions and rejects multi-statement definitions
+- `runInSession()` automatically sends its resolved `session_id` as `X-ClickHouse-Replica-Tag` on every request, including cleanup; this runtime-owned header cannot be overridden through `http_headers`
+- ClickHouse Cloud [replica-aware routing](https://clickhouse.com/docs/products/cloud/features/infrastructure/replica-aware-routing) must be enabled separately and is best-effort; scaling can remap a tag, and cross-origin browser deployments must allow `X-ClickHouse-Replica-Tag` in CORS
+- `runInSession()` drops registered temporary tables when the callback finishes
+- nested `runInSession()` calls always create a new child session
+- nested calls may not reuse any active ancestor `session_id`
+- nested child sessions do not share temp tables or same-session concurrency slots with their parent because they always use a different `session_id`
+
+### Session concurrency contract
+
+The practical rules are:
+
+- the same explicit `session_id` is serialized by default
+- the client default `session_id` participates in the same limiter
+- child clients created by `withSettings()` share the same limiter as their parent when they target the same `session_id`
+- different `session_id` values do not block each other
+- `stream()` and builder `iterator()` hold the same-session slot until the iterator finishes. Stopping early (`break`, `return`, or an error) cancels the server-side query with `KILL QUERY` sent outside the session (same credentials and replica tag), then waits until ClickHouse releases the session, at most `request_timeout` (default 30s)
+- nested `runInSession()` calls create a fresh child `session_id`, so they do not share the parent's same-session slot
+
+Aborting a request, or `request_timeout` firing, only closes the connection. ClickHouse keeps running the query until it finishes or notices the disconnect, so an `INSERT ... SELECT` may still complete, and the next request in the same session may fail with `SESSION_IS_LOCKED`. Set `max_execution_time` in `clickhouse_settings` below `request_timeout` so the server stops first, run `KILL QUERY WHERE query_id = '...'` outside the session, or wrap `fetch` to retry 373 a bounded number of times for requests whose body can be re-sent. Cleanup failures, including `SESSION_IS_LOCKED`, are reported through `onCleanupError` or a `SessionError`.
+
+Recommended usage:
+
+- keep `session_max_concurrent_requests = 1` for temporary-table workflows and any continued-session logic
+- if you need true parallelism, use different `session_id` values instead of raising the same-session limit
+- only raise `session_max_concurrent_requests` when you explicitly want to remove local backpressure and can tolerate `SESSION_IS_LOCKED`
+
+## Runtime methods
+
+Beyond the builder, the client also exposes lower-level runtime methods.
+
+Common per-query fields include:
+
+- `clickhouse_settings`
+- `query_params`
+- `query_id`
+- `session_id`
+- `session_timeout`
+- `session_check`
+- `role`
+- `auth`
+- `abort_signal`
+- `http_headers`
+- `ignore_error_response`
+
+`session_timeout` and `session_check` live here on purpose: they describe a specific request or a specific session block, not a global client default.
+`query_id`, `session_id`, and `session_timeout` are request/session options; keep them outside `clickhouse_settings`.
+
+`session_check` does not bootstrap a new ClickHouse session. Use it when you need ClickHouse to verify that an explicit `session_id` already exists.
+Any request that carries a `session_id` participates in the same per-session limiter, including raw `execute()`, `command()`, `stream()`, builder `.execute()`, and builder `.iterator()`.
+
+Per-request `clickhouse_settings` only override ClickHouse settings for that request:
+
+```ts
+await db.execute(ckSql`SELECT 1`, {
+  query_id: "debug-query",
+  session_id: "debug-session",
+  session_timeout: 60,
+  clickhouse_settings: {
+    max_threads: 2,
+    readonly: 1,
+  },
+});
+```
+
+### `execute()`
+
+Execute a raw query and return `Record<string, unknown>[]`:
+
+```ts
+const rows = await db.execute(ckSql`SELECT 1 AS one`);
+```
+
+### `stream()`
+
+Stream raw query results:
+
+```ts
+for await (const row of db.stream(ckSql`SELECT number FROM numbers(10)`)) {
+  console.log(row);
+}
+```
+
+If `stream()` targets a `session_id`, the same-session slot is released only after the async iterator completes or you close it early by breaking out of the loop.
+
+### `command()`
+
+Execute a command that does not return a row set:
+
+```ts
+await db.command(ckSql`SYSTEM FLUSH LOGS`);
+```
+
+### `withSettings()`
+
+Create a child client with additional default settings:
+
+```ts
+const reportDb = db.withSettings({
+  max_execution_time: 60,
+  join_use_nulls: 0,
+});
+```
+
+`withSettings()` only changes default ClickHouse session/query settings. The returned client keeps the same transport, auth, timeout, and session concurrency controller as the parent client. A `join_use_nulls: 0` literal is inferred, so the child client's left joins are non-null; a value typed as a plain `number` still yields `| null`.
+
+Session lifecycle options stay separate from ClickHouse settings in `runInSession()`:
+
+```ts
+await db.runInSession(
+  async (session) => {
+    await session.execute(ckSql`SELECT 1`);
+
+    await session
+      .withSettings({
+        max_threads: 2,
+      })
+      .execute(ckSql`SELECT 2`);
+  },
+  {
+    session_id: "probe-session",
+    session_timeout: 120,
+    clickhouse_settings: {
+      allow_experimental_correlated_subqueries: 1,
+    },
+  },
+);
+```
+
+### Compiled query integration
+
+Most applications should use the builder directly. Use `executeCompiled()` and `iteratorCompiled()` when you are integrating another layer that already produces a `CompiledQuery`.
+
+```ts
+import { ck, type CompiledQuery } from "ck-orm";
+
+const oneQuery = {
+  kind: "compiled-query",
+  mode: "query",
+  statement: "SELECT 1 AS one",
+  params: {},
+  selection: [
+    {
+      key: "one",
+      sqlAlias: "one",
+      path: ["one"],
+      decoder: (value: unknown) => Number(value),
+    },
+  ],
+} satisfies CompiledQuery<{ one: number }>;
+
+const rows = await db.executeCompiled(oneQuery, {
+  session_id: ck.createSessionId(),
+});
+
+const decoded = ck.decodeRow<{ one: number }>({ one: "1" }, oneQuery.selection);
+```
+
+### `ping()` and `replicasStatus()`
+
+```ts
+await db.ping();
+await db.replicasStatus();
+```
+
+## Observability
+
+`ck-orm` provides three built-in observability layers:
+
+- `logger`
+- `tracing`
+- `instrumentation`
+
+### Logger
+
+```ts
+import type { ClickHouseORMLogger } from "ck-orm";
+
+const logger: ClickHouseORMLogger = {
+  trace(message, fields) {
+    console.debug(message, fields);
+  },
+  debug(message, fields) {
+    console.debug(message, fields);
+  },
+  info(message, fields) {
+    console.info(message, fields);
+  },
+  warn(message, fields) {
+    console.warn(message, fields);
+  },
+  error(message, fields) {
+    console.error(message, fields);
+  },
+};
+
+const db = clickhouseClient({
+  databaseUrl: "http://127.0.0.1:8123/telemetry_lab",
+  logger,
+  logLevel: "info",
+});
+```
+
+### Tracing
+
+```ts
+import { clickhouseClient } from "ck-orm";
+import { trace } from "@opentelemetry/api";
+
+const db = clickhouseClient({
+  databaseUrl: "http://127.0.0.1:8123/telemetry_lab",
+  tracing: {
+    tracer: trace.getTracer("ck-orm-example"),
+    includeStatement: false,
+    includeRowCount: true,
+  },
+});
+```
+
+Tracing derives the database name, server address, server port, and request timeout from the `clickhouseClient(...)` configuration. Pass service-level labels through `tracing.attributes`; keys starting with `db.` are ignored so application code cannot overwrite built-in database attributes.
+
+`includeStatement: false` is the safer setting for shared tracing backends. The library default is `true`; turn it off when table names, column names, or query shape should not leave the service boundary. Bound values are not embedded in the compacted statement, but SQL shape can still be operationally sensitive.
+
+### Custom instrumentation
+
+```ts
+import type { ClickHouseORMInstrumentation } from "ck-orm";
+
+const instrumentation: ClickHouseORMInstrumentation = {
+  onQueryStart(event) {
+    console.log("start", event.operation, event.statement);
+  },
+  onQuerySuccess(event) {
+    console.log("success", event.durationMs, event.rowCount);
+  },
+  onQueryError(event) {
+    console.error("error", event.error);
+  },
+};
+
+const db = clickhouseClient({
+  databaseUrl: "http://127.0.0.1:8123/telemetry_lab",
+  instrumentation: [instrumentation],
+});
+```
+
+Public event types:
+
+- `ClickHouseORMQueryEvent`
+- `ClickHouseORMQueryResultEvent`
+- `ClickHouseORMQueryErrorEvent`
+- `ClickHouseORMQueryStatistics`
+- `ClickHouseORMTracingOptions`
+- `ClickHouseORMLogLevel`
+
+Built-in event fields include `databaseName`, `serverAddress`, `serverPort`, `requestTimeoutMs`, `statementHash`, `querySummary`, `queryId`, `sessionId`, and `tableName` when ck-orm can identify one table without guessing from raw SQL. Eager JSON queries also include ClickHouse response statistics when the server returns them: `serverElapsedMs`, `readRows`, `readBytes`, `resultRows`, and `rowsBeforeLimitAtLeast`.
+
+## Error model
+
+Public error types (type-only exports):
+
+- `ClickHouseORMError`
+- `DecodeError`
+
+Runtime error checks:
+
+- `isClickHouseORMError(error)`
+- `isDecodeError(error)`
+
+`ClickHouseORMError` preserves as much context as possible, including:
+
+- `kind`
+- `executionState`
+- `queryId`
+- `sessionId`
+- `httpStatus`
+- `clickhouseCode`
+- `clickhouseName`
+- `responseText`
+- `requestTimeoutMs`
+
+Current public `kind` values:
+
+- `client_validation`
+- `request_failed`
+- `decode`
+- `timeout`
+- `aborted`
+- `session`
+
+Use the full error context for server-side logs, then return a small public error to application callers:
+
+```ts
+import { isClickHouseORMError, isDecodeError } from "ck-orm";
+
+const toPublicQueryError = (error: unknown) => {
+  if (isDecodeError(error)) {
+    console.error("ClickHouse decode failed", {
+      path: error.path,
+      causeValue: error.causeValue,
+    });
+
+    return { message: "The query result could not be decoded." };
+  }
+
+  if (isClickHouseORMError(error)) {
+    console.error("ClickHouse request failed", {
+      kind: error.kind,
+      executionState: error.executionState,
+      queryId: error.queryId,
+      sessionId: error.sessionId,
+      httpStatus: error.httpStatus,
+      clickhouseCode: error.clickhouseCode,
+      clickhouseName: error.clickhouseName,
+      requestTimeoutMs: error.requestTimeoutMs,
+    });
+
+    if (error.kind === "timeout") return { message: "The query timed out." };
+    if (error.kind === "aborted") return { message: "The query was cancelled." };
+  }
+
+  return { message: "The query failed." };
+};
+```
+
+Avoid returning `responseText` or the raw error `message` to untrusted clients. ClickHouse can include SQL fragments and object names in error text.
+
+## Security
+
+`ck-orm` is designed to make unsafe SQL construction difficult by default.
+
+The built-in protections include:
+
+- identifiers passed to `ckSql.identifier()` are validated and quoted
+- function names used by `fn.call(...)`, `fn.withParams(...)`, `ckType.aggregateFunction(...)`, and `ckType.simpleAggregateFunction(...)` are validated; `AggregateFunction` parameters must be string or numeric literals
+- nested field keys passed to `ckType.nested({...})` are validated as ClickHouse identifiers
+- values interpolated into `` ckSql`...` `` become ClickHouse named parameters rather than raw SQL text
+- `query_params` keys that start with `orm_param` are rejected because that prefix is reserved for internal SQL-template parameters
+- only a single top-level statement is allowed per request
+- authorization headers derived from connection config cannot be overridden by caller-supplied `http_headers`
+- structured connection config rejects credentials embedded in `host`
+- tracing destination data is normalized before it is attached to spans
+
+### Trusted-only APIs
+
+For trusted temporary-table DDL that cannot be represented with `ckTable(...)`, `ck-orm` exposes a scoped raw SQL API inside `runInSession()`:
+
+- `session.createTemporaryTableRaw(name, definition)`
+
+`fn.call(name, ...)` and `fn.withParams(name, ...)` validate `name`, but you should still treat dynamically chosen function names as developer-controlled input rather than untrusted runtime input.
+
+`ckSql.identifier(...)` validates on the compile/execute boundary. Constructing the fragment is cheap; the error appears when the fragment is compiled into a query.
+
+### Tracing data exposure
+
+`tracing.includeStatement` defaults to `true`, so compacted SQL text is attached to spans as `db.statement` and `db.query.text`.
+
+Bound values are stored separately as ClickHouse named parameters and are not included in the statement text, but table names, column names, and query shape still appear in tracing output. If your trace backend is shared or off-host, disable `includeStatement` or filter `db.statement` / `db.query.text` in your collector.
+
+### Error responses
+
+`ClickHouseORMError.responseText` and the error `message` may contain raw text from the ClickHouse server, including SQL fragments and database object names.
+
+Avoid forwarding those details directly to untrusted clients. Log them server-side and expose a generic message instead.

@@ -1,3 +1,6 @@
 [test]
 coverageSkipTestFiles = true
-coverageThreshold = { lines = 100, functions = 100 }
+coverageThreshold = { lines = 1.0, functions = 1.0 }
+# The threshold is for library code. Example tests still run; their main.ts files keep an
+# `if (import.meta.main)` block that only runs when the example is executed directly.
+coveragePathIgnorePatterns = ["examples/**"]

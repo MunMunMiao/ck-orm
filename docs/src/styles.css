@@ -1,0 +1,429 @@
+@import "tailwindcss";
+@source "./";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-panel: var(--panel);
+  --color-rule: var(--rule);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-signal: #ffcc00;
+  --color-ink: #151a1f;
+
+  /* System fonts only. The display stack prefers DIN-style condensed faces (Apple, Windows), then Roboto/Arial narrow cuts. */
+  --font-display: var(--display-stack), var(--font-cjk), system-ui, sans-serif;
+  --font-sans:
+    system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", "Liberation Sans", Arial,
+    var(--font-cjk), sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  --font-mono:
+    ui-monospace, "SF Mono", SFMono-Regular, Menlo, Monaco, "Cascadia Mono", Consolas, "Roboto Mono", "Ubuntu Mono",
+    "Liberation Mono", "DejaVu Sans Mono", var(--font-cjk), monospace;
+}
+
+:root {
+  --display-stack:
+    "DIN Condensed", "Bahnschrift Condensed", "Bahnschrift SemiBold Condensed", "Avenir Next Condensed",
+    "Roboto Condensed", "sans-serif-condensed", "Arial Narrow", "DejaVu Sans Condensed", Impact;
+  --font-cjk: sans-serif;
+  --display-scale: 1;
+  --display-leading: 0.9;
+  --heading-leading: 0.95;
+  --word-break: normal;
+  --em-style: italic;
+  --em-weight: inherit;
+  --overflow-wrap: normal;
+  --hyphens: manual;
+  color-scheme: light;
+  --paper: #fcfcfa;
+  --panel: #f2f3ef;
+  --rule: #dddfd9;
+  --fg: #151a1f;
+  --muted: #5b646c;
+  --focus: #151a1f;
+  --syn-api: #7a5c00;
+  --syn-param: #5e4600;
+  --syn-param-bg: rgb(255 204 0 / 0.3);
+}
+
+.dark {
+  color-scheme: dark;
+  --syn-api: #ffcc00;
+  --syn-param: #ffcc00;
+  --syn-param-bg: rgb(255 204 0 / 0.12);
+  --paper: #0e1215;
+  --panel: #151a1f;
+  --rule: #283037;
+  --fg: #e7e9e4;
+  --muted: #9aa3ab;
+  --focus: #ffcc00;
+}
+
+@layer base {
+  body {
+    word-break: var(--word-break);
+  }
+  :focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: rgb(255 204 0 / 0.45);
+    color: #151a1f;
+  }
+  .theme-icon {
+    display: none;
+  }
+  [data-theme="auto"] .theme-icon[data-mode="auto"],
+  [data-theme="light"] .theme-icon[data-mode="light"],
+  [data-theme="dark"] .theme-icon[data-mode="dark"] {
+    display: block;
+  }
+  .font-display {
+    font-stretch: condensed;
+  }
+}
+
+@layer components {
+  /* Shiki renders both themes as CSS variables; pick one per context. */
+  .shiki span {
+    color: var(--shiki-light);
+  }
+  .dark .shiki span {
+    color: var(--shiki-dark);
+  }
+  /* span.* matches the specificity of `.dark .shiki span`; declared later, so the accent wins. */
+  .shiki span.t-api {
+    color: var(--syn-api);
+    font-weight: 600;
+  }
+  .shiki span.t-param {
+    color: var(--syn-param);
+    background: var(--syn-param-bg);
+    border-radius: 2px;
+  }
+
+  .note code {
+    font-family: var(--font-mono);
+    color: var(--fg);
+  }
+
+  .seg {
+    padding: 0.45rem 0.8rem;
+    font: 500 0.8125rem var(--font-mono);
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .seg[aria-selected="true"] {
+    color: var(--fg);
+    box-shadow: inset 0 -2px 0 var(--color-signal);
+  }
+
+  .btn-copy {
+    padding: 0.3rem 0.6rem;
+    font: 500 0.75rem var(--font-mono);
+    color: var(--muted);
+    border-radius: 2px;
+    cursor: pointer;
+  }
+  .btn-copy:hover {
+    color: var(--fg);
+    background: var(--rule);
+  }
+
+  /* Code blocks */
+  .codeblock {
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    background: var(--panel);
+    overflow: hidden;
+  }
+  .codebar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.3rem 0.4rem 0.3rem 0.9rem;
+    border-bottom: 1px solid var(--rule);
+    font: 500 0.6875rem var(--font-mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  /* Tabbed code block: the tabs sit on the bar's bottom edge. */
+  .codebar:has([role="tablist"]) {
+    padding-block: 0;
+    padding-left: 0;
+  }
+  .codebar .seg {
+    letter-spacing: normal;
+    text-transform: none;
+  }
+  .codeblock pre {
+    margin: 0;
+    padding: 0.9rem 1rem;
+    overflow-x: auto;
+    font: 0.8125rem / 1.65 var(--font-mono);
+    tab-size: 2;
+  }
+  /* ck-orm sends a statement per line, so SQL gets very long lines: wrap them instead of scrolling sideways. */
+  .codeblock pre[data-language="sql"] {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  /* Navigation */
+  .toc ol {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .toc a {
+    display: block;
+    margin-left: -1px;
+    padding: 0.28rem 0.75rem;
+    border-left: 2px solid transparent;
+    color: var(--muted);
+    font-size: 0.875rem;
+    line-height: 1.35;
+  }
+  .toc a:hover {
+    color: var(--fg);
+  }
+  .toc > ol > li > a {
+    font-weight: 600;
+  }
+  .toc li ol {
+    display: none;
+    margin: 0.15rem 0 0.5rem 0.75rem;
+    border-left: 1px solid var(--rule);
+  }
+  .toc li ol a {
+    font-size: 0.8125rem;
+  }
+  .toc li[data-open] > ol {
+    display: block;
+  }
+  .toc a[aria-current] {
+    color: var(--fg);
+    border-left-color: var(--color-signal);
+  }
+  .toc code {
+    font-family: var(--font-mono);
+    font-size: 0.92em;
+  }
+
+  /* Rendered README */
+  .doc {
+    font-size: 1rem;
+    line-height: 1.7;
+    overflow-wrap: break-word;
+  }
+  .doc > * + * {
+    margin-top: 1.1rem;
+  }
+  .doc :is(h2, h3, h4),
+  .section-title {
+    scroll-margin-top: 5rem;
+  }
+  .doc h2,
+  .section-title {
+    position: relative;
+    margin-top: 4.5rem;
+    padding-top: 1.4rem;
+    border-top: 1px solid var(--rule);
+    font: 700 calc(clamp(2.1rem, 4.4vw, 3rem) * var(--display-scale)) / var(--heading-leading) var(--font-display);
+    font-stretch: condensed;
+    text-transform: uppercase;
+    letter-spacing: 0.005em;
+  }
+  .font-display,
+  .doc h2,
+  .section-title {
+    overflow-wrap: var(--overflow-wrap);
+    hyphens: var(--hyphens);
+  }
+  .doc h2::before,
+  .section-title::before {
+    content: "";
+    position: absolute;
+    top: -1px;
+    left: 0;
+    width: 3rem;
+    height: 4px;
+    background: var(--color-signal);
+  }
+  .doc > h2:first-child {
+    margin-top: 0;
+  }
+  .doc h3 {
+    margin-top: 2.75rem;
+    font-size: 1.3rem;
+    font-weight: 650;
+    line-height: 1.3;
+  }
+  .doc h4 {
+    margin-top: 2rem;
+    font-size: 1.05rem;
+    font-weight: 650;
+  }
+  .doc :is(h2, h3, h4) + * {
+    margin-top: 0.9rem;
+  }
+  .doc .anchor {
+    margin-left: 0.4rem;
+    font: 400 0.8em var(--font-mono);
+    color: var(--muted);
+    opacity: 0;
+  }
+  .doc :is(h2, h3, h4):hover .anchor,
+  .doc .anchor:focus-visible {
+    opacity: 1;
+  }
+  .doc ul,
+  .doc ol {
+    padding-left: 1.3rem;
+  }
+  .doc ul {
+    list-style: square;
+  }
+  .doc ol {
+    list-style: decimal;
+  }
+  .doc li + li {
+    margin-top: 0.3rem;
+  }
+  .doc li::marker {
+    color: var(--muted);
+  }
+  .doc li > ul,
+  .doc li > ol {
+    margin-top: 0.3rem;
+  }
+  .doc a {
+    text-decoration: underline;
+    text-decoration-color: var(--color-signal);
+    text-decoration-thickness: 2px;
+    text-underline-offset: 3px;
+  }
+  .doc a:hover {
+    background: rgb(255 204 0 / 0.28);
+  }
+  .doc a.anchor {
+    text-decoration: none;
+    background: none;
+  }
+  .doc em {
+    font-style: var(--em-style);
+    font-weight: var(--em-weight);
+  }
+  .doc :not(pre) > code {
+    padding: 0.08em 0.35em;
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    background: var(--panel);
+    font: 0.86em var(--font-mono);
+  }
+  .doc h2 code {
+    font-size: 0.5em;
+    text-transform: none;
+    vertical-align: 0.2em;
+  }
+  .doc blockquote {
+    padding: 0.8rem 1rem;
+    border-left: 4px solid var(--color-signal);
+    background: var(--panel);
+  }
+  .doc blockquote > * + * {
+    margin-top: 0.6rem;
+  }
+  .doc .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+  }
+  .doc table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+    line-height: 1.5;
+  }
+  .doc th {
+    padding: 0.55rem 0.8rem;
+    background: var(--panel);
+    text-align: left;
+    font: 500 0.6875rem var(--font-mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .doc td {
+    padding: 0.6rem 0.8rem;
+    border-top: 1px solid var(--rule);
+    vertical-align: top;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+/*
+ * Keep every language tag in this one block. Each selector is a language range so the
+ * region suffix still matches; retarget only this line if a locale registry tag changes.
+ */
+:lang(zh-Hans) {
+  --font-cjk:
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC";
+  --display-scale: 0.75;
+  --display-leading: 1.2;
+  --heading-leading: 1.2;
+  --em-style: normal;
+  --em-weight: 600;
+}
+
+:lang(zh-Hant) {
+  --display-scale: 0.75;
+  --display-leading: 1.2;
+  --heading-leading: 1.2;
+  --em-style: normal;
+  --em-weight: 600;
+}
+
+:lang(zh-Hant-TW) {
+  --font-cjk: "PingFang TC", "Microsoft JhengHei UI", "Microsoft JhengHei", "Noto Sans CJK TC", "Source Han Sans TC";
+}
+
+:lang(zh-Hant-HK) {
+  --font-cjk: "PingFang HK", "Microsoft JhengHei UI", "Microsoft JhengHei", "Noto Sans CJK HK", "Source Han Sans HK";
+}
+
+:lang(ja) {
+  --font-cjk:
+    "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Yu Gothic", Meiryo, "Noto Sans CJK JP",
+    "Source Han Sans JP";
+  --display-scale: 0.72;
+  --display-leading: 1.2;
+  --heading-leading: 1.2;
+  --em-style: normal;
+  --em-weight: 600;
+}
+
+:lang(ko) {
+  --font-cjk: "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans CJK KR", "Source Han Sans K", "Nanum Gothic";
+  --display-scale: 0.7;
+  --display-leading: 1.2;
+  --heading-leading: 1.2;
+  --word-break: keep-all;
+  --em-style: normal;
+  --em-weight: 600;
+}
+
+:lang(ru) {
+  --display-stack:
+    "Bahnschrift Condensed", "Bahnschrift SemiBold Condensed", "Roboto Condensed", "Arial Narrow", Impact;
+  --overflow-wrap: anywhere;
+  --hyphens: auto;
+}

@@ -7,6 +7,11 @@
   "description": "ClickHouse ORM for modern JS runtimes",
   "author": "MunMunMiao",
   "license": "MIT",
+  "homepage": "https://ck-orm.lyz.cloud",
+  "workspaces": [
+    "docs",
+    "examples/*"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/MunMunMiao/ck-orm.git"
@@ -15,12 +20,11 @@
     "build": "bun x --bun tsdown --config-loader native --config tsdown.config.ts",
     "lint": "biome check --error-on-warnings .",
     "lint:fix": "biome check --write --unsafe --error-on-warnings .",
-    "test:orm": "bun test ./src",
-    "test:coverage": "rm -rf coverage && bun test ./src --coverage --coverage-reporter lcov",
+    "test:orm": "bun test ./src ./examples",
+    "test:coverage": "rm -rf coverage && bun test ./src ./examples --coverage --coverage-reporter lcov",
     "test:e2e": "bash ./e2e/run.sh",
     "test:e2e:proxy": "bash ./e2e/run-proxy.sh",
-    "type-check": "tsc --noEmit",
-    "type-check:watch": "tsc --noEmit --watch"
+    "type-check": "bun check"
   },
   "peerDependencies": {
     "@opentelemetry/api": "^1.9.1"
@@ -28,7 +32,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.4.14",
     "@opentelemetry/api": "^1.9.1",
-    "@types/bun": "1.3.13",
+    "@types/bun": "1.4.2",
     "tsdown": "0.22.0",
     "typescript": "6.0.3"
   }

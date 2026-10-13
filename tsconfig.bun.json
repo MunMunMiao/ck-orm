@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["bun"],
+    "paths": {
+      "ck-orm": ["./src/index.ts"]
+    }
+  },
+  "include": ["src/**/*.test.ts", "e2e", "examples", "docs/*.ts", "docs/src", "tsdown.config.ts"]
+}

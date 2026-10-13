@@ -1,7 +1,12 @@
 {
   "files": {
     "ignoreUnknown": true,
-    "includes": ["**", "!dist", "!node_modules", "!coverage", "!bun.lock"]
+    "includes": ["**", "!dist", "!node_modules", "!coverage", "!bun.lock", "!docs/dist", "!docs/.build"]
+  },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
   },
   "formatter": {
     "indentStyle": "space",
@@ -32,6 +37,12 @@
     }
   },
   "overrides": [
+    {
+      "includes": ["examples/**"],
+      "formatter": {
+        "lineWidth": 90
+      }
+    },
     {
       "includes": ["**/*.test.ts", "**/*.test.tsx"],
       "linter": {

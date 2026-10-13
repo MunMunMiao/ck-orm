@@ -13,6 +13,7 @@ type DistPackageJson = {
   scripts?: unknown;
   devDependencies?: unknown;
   private?: unknown;
+  workspaces?: unknown;
 };
 
 const packageJsonUrl = new URL("./package.json", import.meta.url);
@@ -38,6 +39,8 @@ async function writeDistPackageJson() {
   delete packageJson.scripts;
   delete packageJson.devDependencies;
   delete packageJson.private;
+  // The docs and examples workspaces are repository tooling, not part of the published package.
+  delete packageJson.workspaces;
 
   await write(distPackageJsonUrl, `${JSON.stringify(packageJson, null, 2)}\n`);
 }
@@ -48,7 +51,7 @@ export default defineConfig([
     outDir: "dist",
     platform: "neutral",
     target: false,
-    tsconfig: "tsconfig.json",
+    tsconfig: "tsconfig.lib.json",
     clean: true,
     dts: true,
     entry: {
@@ -71,7 +74,7 @@ export default defineConfig([
     outDir: "dist",
     platform: "neutral",
     target: false,
-    tsconfig: "tsconfig.json",
+    tsconfig: "tsconfig.lib.json",
     clean: false,
     dts: false,
     entry: {
