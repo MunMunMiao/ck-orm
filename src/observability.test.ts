@@ -22,6 +22,19 @@ import { ckTable } from "./schema";
 import { sql } from "./sql";
 
 const originalFetch = globalThis.fetch;
+const originalRequest = globalThis.Request;
+
+// ck-orm hands fetch a single Request. Recording the init each Request was built from lets fetch mocks keep
+// asserting on the original body (FormData, string or stream) and duplex mode.
+const requestInits = new WeakMap<Request, RequestInit & { duplex?: "half" }>();
+class RecordingRequest extends originalRequest {
+  constructor(input: RequestInfo | URL, init?: RequestInit) {
+    super(input, init);
+    requestInits.set(this, init ?? {});
+  }
+}
+const initOf = (input: string | URL | Request, init?: RequestInit) =>
+  (input instanceof originalRequest ? requestInits.get(input) : undefined) ?? init;
 
 const users = ckTable(
   "users",
@@ -110,11 +123,13 @@ const createCapturedTracer = () => {
 
 describe("ck-orm observability", function describeClickHouseORMObservability() {
   beforeEach(function setupMocks() {
+    globalThis.Request = RecordingRequest as typeof Request;
     mock.restore();
   });
 
   afterEach(function teardownMocks() {
     globalThis.fetch = originalFetch;
+    globalThis.Request = originalRequest;
     mock.restore();
   });
 
@@ -314,7 +329,8 @@ describe("ck-orm observability", function describeClickHouseORMObservability() {
       },
     };
 
-    globalThis.fetch = mock(async (_input: string | URL | Request, init?: RequestInit) => {
+    globalThis.fetch = mock(async (input: string | URL | Request, requestInit?: RequestInit) => {
+      const init = initOf(input, requestInit);
       const body =
         typeof init?.body === "string" ? init.body : String((init?.body as FormData | undefined)?.get("query") ?? "");
       if (body.includes("broken")) {

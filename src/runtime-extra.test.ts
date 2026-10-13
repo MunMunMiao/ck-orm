@@ -1,5 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import { decimal, int32, string } from "./columns";
+import {
+  array,
+  dateTime,
+  dateTime64,
+  decimal,
+  int32,
+  json,
+  map,
+  nested,
+  nullable,
+  string,
+  time,
+  tuple,
+} from "./columns";
 import { isClickHouseORMError } from "./errors";
 import { _resetStreamRequestBodyModeForTest } from "./platform";
 import { expr } from "./query";
@@ -13,6 +26,18 @@ import { orderRewardLog } from "./test-schema/commerce";
 
 const originalFetch = globalThis.fetch;
 const originalRequest = globalThis.Request;
+
+// ck-orm hands fetch a single Request. Recording the init each Request was built from lets fetch mocks keep
+// asserting on the original body (FormData, string or stream) and duplex mode.
+const requestInits = new WeakMap<Request, RequestInit & { duplex?: "half" }>();
+class RecordingRequest extends originalRequest {
+  constructor(input: RequestInfo | URL, init?: RequestInit) {
+    super(input, init);
+    requestInits.set(this, init ?? {});
+  }
+}
+const initOf = (input: string | URL | Request, init?: RequestInit) =>
+  (input instanceof originalRequest ? requestInits.get(input) : undefined) ?? init;
 
 const users = ckTable(
   "users",
@@ -30,6 +55,17 @@ const mappedRewards = ckTable("mapped_rewards", {
   userId: string("user_id"),
   rewardPoints: decimal("reward_points", { precision: 20, scale: 5 }),
   note: string(),
+});
+
+const nestedOrders = ckTable("nested_orders", {
+  id: int32(),
+  lines: nested({
+    sku: string(),
+    qty: int32(),
+  }),
+  events: nested("event_items", {
+    at: dateTime64({ precision: 3 }),
+  }),
 });
 
 const readBodyText = async (body: unknown) => {
@@ -73,6 +109,7 @@ const takeAsync = async <TValue>(iterable: AsyncIterable<TValue>, limit: number)
 
 describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() {
   beforeEach(function setupMocks() {
+    globalThis.Request = RecordingRequest as typeof Request;
     mock.restore();
   });
 
@@ -87,7 +124,8 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
     const capturedBodies: string[] = [];
     const capturedUrls: URL[] = [];
 
-    globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
+    globalThis.fetch = mock(async (input: string | URL | Request, requestInit?: RequestInit) => {
+      const init = initOf(input, requestInit);
       const url = new URL(typeof input === "string" || input instanceof URL ? String(input) : input.url);
       capturedUrls.push(url);
 
@@ -153,7 +191,15 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
     expect(capturedBodies).toContain("truncate table logs");
 
     await db.insert(users).values({ id: 7, name: "zoe" });
-    expect(capturedBodies.some((body) => body.includes("insert into `users`"))).toBe(true);
+    expect(
+      capturedUrls.some(
+        (url) =>
+          url.searchParams.get("query")?.includes("insert into `users`") &&
+          url.searchParams.get("query")?.includes("format Values") &&
+          !url.searchParams.get("query")?.includes("zoe"),
+      ),
+    ).toBe(true);
+    expect(capturedBodies).toContain("(7,'zoe')");
 
     const streamRows: Record<string, unknown>[] = [];
     for await (const row of db.stream(sql`select 1`)) {
@@ -167,9 +213,9 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
     await db.insertJsonEachRow(orderRewardLog as AnyTable, [{ id: 2 }], {
       query_id: "insert_2",
     });
-    // C2: insertJsonEachRow injects date_time_input_format=best_effort by
-    // default (so the JSON.stringify(Date) → 'YYYY-MM-DDTHH:mm:ss.sssZ' value
-    // round-trips into DateTime/DateTime64 columns without manual coercion).
+    // C2: insertJsonEachRow with a bare table name injects
+    // date_time_input_format=best_effort (so the JSON.stringify(Date) →
+    // 'YYYY-MM-DDTHH:mm:ss.sssZ' value round-trips without manual coercion).
     expect(
       capturedUrls.some(
         (url) =>
@@ -205,6 +251,7 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
       executionState: "not_sent",
       message: "[ck-orm] createTemporaryTable() requires runInSession()",
     });
+    // @ts-expect-error CSV is not an eager query format; exercises the runtime guard
     await expectRejectsWithClickhouseError(db.execute(sql`select 1`, { format: "CSV" }), {
       kind: "client_validation",
       executionState: "not_sent",
@@ -212,6 +259,7 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
     });
     await expectRejectsWithClickhouseError(
       (async () => {
+        // @ts-expect-error CSV is not a streaming query format; exercises the runtime guard
         for await (const _row of db.stream(sql`select 1`, { format: "CSV" })) {
           // noop
         }
@@ -231,11 +279,14 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
 
   it("runs direct clients without an optional session concurrency controller", async function testDirectClientWithoutSessionController() {
     const transport: FetchClickHouseTransport = {
-      async queryJSON() {
-        return { rows: [{ id: 1 }] };
+      // Like the real transport, decoded rows are untyped JSON cast to the caller's row type.
+      async queryJSON<T>() {
+        const rows: unknown[] = [{ id: 1 }];
+        return { rows: rows as T[] };
       },
-      async *queryStream() {
-        yield { id: 2 };
+      async *queryStream<T>() {
+        const row: unknown = { id: 2 };
+        yield row as T;
       },
       async command() {},
       async insertJsonEachRow() {},
@@ -261,7 +312,8 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
     const urls: URL[] = [];
     const forms = new Map<string, Record<string, string>>();
 
-    globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
+    globalThis.fetch = mock(async (input: string | URL | Request, requestInit?: RequestInit) => {
+      const init = initOf(input, requestInit);
       const url = new URL(typeof input === "string" || input instanceof URL ? String(input) : input.url);
       urls.push(url);
 
@@ -537,7 +589,7 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
           response: true,
           request: true,
         },
-      } as unknown as Parameters<typeof clickhouseClient<{ users: typeof users }>>[0]),
+      } as unknown as Parameters<typeof clickhouseClient>[0]),
     ).toThrow();
   });
 
@@ -561,8 +613,48 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
     expect(capturedUrls.at(-1)?.searchParams.get("enable_http_compression")).toBeNull();
   });
 
+  it("turns HTTP compression off for streams unless the caller or compression.response enables it", async function testStreamCompressionFloor() {
+    const capturedUrls: URL[] = [];
+    globalThis.fetch = mock(async (input: string | URL | Request, requestInit?: RequestInit) => {
+      const url = new URL(typeof input === "string" || input instanceof URL ? String(input) : input.url);
+      capturedUrls.push(url);
+      const init = initOf(input, requestInit);
+      const bodyText = await readBodyText(init?.body);
+      if (typeof bodyText === "string" && bodyText.includes("FORMAT JSONEachRow")) {
+        return new Response('{"n":1}\n', { status: 200 });
+      }
+      return new Response(JSON.stringify({ data: [{ n: 1 }] }), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const db = clickhouseClient({ host: "http://localhost:8123" });
+    for await (const _row of db.stream(sql`select 1`)) {
+      break;
+    }
+    expect(capturedUrls.at(-1)?.searchParams.get("enable_http_compression")).toBe("0");
+
+    await db.execute(sql`select 1`);
+    expect(capturedUrls.at(-1)?.searchParams.get("enable_http_compression")).toBeNull();
+
+    for await (const _row of db.stream(sql`select 1`, {
+      clickhouse_settings: { enable_http_compression: 1 },
+    })) {
+      break;
+    }
+    expect(capturedUrls.at(-1)?.searchParams.get("enable_http_compression")).toBe("1");
+
+    const compressed = clickhouseClient({
+      host: "http://localhost:8123",
+      compression: { response: true },
+    });
+    for await (const _row of compressed.stream(sql`select 1`)) {
+      break;
+    }
+    expect(capturedUrls.at(-1)?.searchParams.get("enable_http_compression")).toBe("1");
+  });
+
   it("detects ClickHouse exception blocks even when HTTP status is 200", async function testEmbeddedExceptionBlocks() {
-    globalThis.fetch = mock(async (_input: string | URL | Request, init?: RequestInit) => {
+    globalThis.fetch = mock(async (input: string | URL | Request, requestInit?: RequestInit) => {
+      const init = initOf(input, requestInit);
       const bodyText = await readBodyText(init?.body);
       if (typeof bodyText === "string" && bodyText.includes("FORMAT JSONEachRow")) {
         return new Response('{"raw":"first"}\nCode: 60. DB::Exception: table missing (UNKNOWN_TABLE)\n', {
@@ -665,7 +757,8 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
     const bodies: string[] = [];
     const forms = new Map<string, Record<string, string>>();
 
-    globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
+    globalThis.fetch = mock(async (input: string | URL | Request, requestInit?: RequestInit) => {
+      const init = initOf(input, requestInit);
       const url = new URL(typeof input === "string" || input instanceof URL ? String(input) : input.url);
       urls.push(url);
 
@@ -802,11 +895,38 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
     expect(sessionRows).toEqual([{ id: 1, name: "alice" }]);
     expect(urls.some((url) => url.searchParams.get("session_id") === "raw_stream_session")).toBe(true);
     expect(urls.some((url) => url.searchParams.get("max_threads") === "1")).toBe(true);
-    expect(bodies.some((body) => body.includes("insert into `users`"))).toBe(true);
+    expect(urls.some((url) => url.searchParams.get("query")?.includes("format Values"))).toBe(true);
+    expect(bodies).toContain("(9,'zoe')");
+  });
+
+  it("forces Values expression settings off even when the caller turns them on", async function testInsertValuesForcedSettings() {
+    const urls: URL[] = [];
+    globalThis.fetch = mock(async (input: string | URL | Request) => {
+      urls.push(new URL(typeof input === "string" || input instanceof URL ? String(input) : input.url));
+      return new Response("", { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const db = clickhouseClient({ host: "http://localhost:8123" });
+    await db
+      .insert(users)
+      .values({ id: 1, name: "a" })
+      .execute({
+        clickhouse_settings: {
+          input_format_values_interpret_expressions: 1,
+          input_format_values_deduce_templates_of_expressions: 1,
+        },
+      });
+
+    const url = urls.at(-1);
+    expect(url?.searchParams.get("query")).toContain("format Values");
+    expect(url?.searchParams.get("query")).not.toContain("'a'");
+    expect(url?.searchParams.get("input_format_values_interpret_expressions")).toBe("0");
+    expect(url?.searchParams.get("input_format_values_deduce_templates_of_expressions")).toBe("0");
   });
 
   it("returns undecoded rows from executeCompiled and iteratorCompiled when compiled selection is empty", async function testCompiledRawSelectionBypass() {
-    globalThis.fetch = mock(async (_input: string | URL | Request, init?: RequestInit) => {
+    globalThis.fetch = mock(async (input: string | URL | Request, requestInit?: RequestInit) => {
+      const init = initOf(input, requestInit);
       const bodyText = await readBodyText(init?.body);
       if (typeof bodyText === "string" && bodyText.includes("FORMAT JSONEachRow")) {
         return new Response('{"raw":"first"}\n{"raw":"second"}\n', {
@@ -881,7 +1001,8 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
     const urls: URL[] = [];
     const bodies: string[] = [];
 
-    globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
+    globalThis.fetch = mock(async (input: string | URL | Request, requestInit?: RequestInit) => {
+      const init = initOf(input, requestInit);
       const url = new URL(typeof input === "string" || input instanceof URL ? String(input) : input.url);
       urls.push(url);
 
@@ -1027,7 +1148,8 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
     const urls: URL[] = [];
     const bodies: string[] = [];
 
-    globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
+    globalThis.fetch = mock(async (input: string | URL | Request, requestInit?: RequestInit) => {
+      const init = initOf(input, requestInit);
       const url = new URL(typeof input === "string" || input instanceof URL ? String(input) : input.url);
       urls.push(url);
 
@@ -1111,7 +1233,8 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
       return tables;
     };
 
-    globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
+    globalThis.fetch = mock(async (input: string | URL | Request, requestInit?: RequestInit) => {
+      const init = initOf(input, requestInit);
       const url = new URL(typeof input === "string" || input instanceof URL ? String(input) : input.url);
       const sessionId = url.searchParams.get("session_id") ?? "";
       const bodyText = await readBodyText(init?.body);
@@ -1214,7 +1337,8 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
   it("inherits settings into nested child sessions without mutating the parent session identity", async function testNestedWithSettingsInheritance() {
     const requests: Array<{ body: string; url: URL }> = [];
 
-    globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
+    globalThis.fetch = mock(async (input: string | URL | Request, requestInit?: RequestInit) => {
+      const init = initOf(input, requestInit);
       const url = new URL(typeof input === "string" || input instanceof URL ? String(input) : input.url);
       const bodyText = await readBodyText(init?.body);
 
@@ -1258,7 +1382,8 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
   it("maps JSONEachRow logical keys to physical column names for table inputs", async function testJsonEachRowColumnNameMapping() {
     const bodies: string[] = [];
 
-    globalThis.fetch = mock(async (_input: string | URL | Request, init?: RequestInit) => {
+    globalThis.fetch = mock(async (input: string | URL | Request, requestInit?: RequestInit) => {
+      const init = initOf(input, requestInit);
       const bodyText = await readBodyText(init?.body);
       if (typeof bodyText === "string") {
         bodies.push(bodyText);
@@ -1340,6 +1465,119 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
     );
   });
 
+  it("sends JS Dates in schema columns as exact ticks and leaves the datetime parser alone", async function testJsonEachRowDateTicks() {
+    const bodies: string[] = [];
+    const urls: URL[] = [];
+    globalThis.fetch = mock(async (input: string | URL | Request, requestInit?: RequestInit) => {
+      urls.push(new URL(input instanceof originalRequest ? input.url : String(input)));
+      const bodyText = await readBodyText(initOf(input, requestInit)?.body);
+      if (typeof bodyText === "string") {
+        bodies.push(bodyText);
+      }
+      return new Response("", { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const db = clickhouseClient({ databaseUrl: "http://localhost:8123/demo_store" });
+    const instants = ckTable("instants", {
+      at: dateTime(),
+      precise: dateTime64({ precision: 9, timezone: "Asia/Shanghai" }),
+      coarse: dateTime64({ precision: 0 }),
+      maybe: nullable(dateTime64({ precision: 3 })),
+      history: array(dateTime64({ precision: 3 })),
+      byName: map(string(), dateTime()),
+      pair: tuple(dateTime64({ precision: 3 }), string()),
+      stamps: nested({ at: dateTime64({ precision: 6 }) }),
+      clock: time(),
+      payload: json(),
+    });
+    const moment = new Date("2026-06-15T00:00:00.123Z");
+    const preEpoch = new Date("1969-12-31T23:59:59.500Z");
+
+    await db.insertJsonEachRow(instants, [
+      {
+        at: moment,
+        precise: moment,
+        coarse: preEpoch,
+        maybe: preEpoch,
+        history: [preEpoch, moment],
+        byName: { first: moment },
+        pair: [moment, "x"],
+        stamps: [{ at: preEpoch }],
+        clock: "12:34:56",
+        payload: { note: "kept" },
+      },
+      { at: "2026-06-15 08:00:00" as never, maybe: null, history: [], byName: {}, pair: [preEpoch, "y"] },
+    ]);
+    await db.insertJsonEachRow("raw_instants", [{ at: moment }]);
+
+    expect(bodies[0]?.trim().split("\n")).toEqual([
+      '{"at":1781481600,"precise":1781481600123000000,"coarse":0,"maybe":-500,"history":[-500,1781481600123],"byName":{"first":1781481600},"pair":[1781481600123,"x"],"stamps.at":[-500000],"clock":"12:34:56","payload":{"note":"kept"}}',
+      '{"at":"2026-06-15 08:00:00","maybe":null,"history":[],"byName":{},"pair":[-500,"y"]}',
+    ]);
+    // Schema tables keep ClickHouse's default datetime parser; a bare table name
+    // still sends Dates as ISO 8601 and needs best_effort to read them.
+    expect(urls[0]?.searchParams.get("date_time_input_format")).toBeNull();
+    expect(bodies[1]?.trim()).toBe('{"at":"2026-06-15T00:00:00.123Z"}');
+    expect(urls[1]?.searchParams.get("date_time_input_format")).toBe("best_effort");
+  });
+
+  it("flattens Nested columns into column.field arrays for JSONEachRow", async function testJsonEachRowNestedFlattening() {
+    const bodies: string[] = [];
+
+    globalThis.fetch = mock(async (input: string | URL | Request, requestInit?: RequestInit) => {
+      const init = initOf(input, requestInit);
+      const bodyText = await readBodyText(init?.body);
+      if (typeof bodyText === "string") {
+        bodies.push(bodyText);
+      }
+      return new Response("", { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const db = clickhouseClient({
+      databaseUrl: "http://localhost:8123/demo_store",
+    });
+    const at = new Date("2026-04-22T11:00:00.000Z");
+
+    await db.insertJsonEachRow(nestedOrders, [
+      {
+        id: 1,
+        lines: [
+          { sku: "a", qty: 2 },
+          { sku: "b", qty: 3 },
+        ],
+        events: [{ at }],
+      },
+      { id: 2, lines: [], events: [] },
+      { id: 3 },
+      { id: 4, "lines.sku": ["kept"], "lines.qty": [9] },
+      // Explicit undefined means omitted, as it does for other columns and in `.values()`.
+      { id: 5, lines: undefined, events: undefined },
+    ]);
+
+    expect(
+      bodies[0]
+        ?.trim()
+        .split("\n")
+        .map((line) => JSON.parse(line)),
+    ).toEqual([
+      {
+        id: 1,
+        "lines.sku": ["a", "b"],
+        "lines.qty": [2, 3],
+        "event_items.at": [at.getTime()],
+      },
+      {
+        id: 2,
+        "lines.sku": [],
+        "lines.qty": [],
+        "event_items.at": [],
+      },
+      { id: 3 },
+      { id: 4, "lines.sku": ["kept"], "lines.qty": [9] },
+      { id: 5 },
+    ]);
+  });
+
   it("keeps raw streams quiet when ignore_error_response is enabled on an error response", async function testStreamIgnoreErrorResponse() {
     globalThis.fetch = mock(
       async () => new Response("Code: 60. DB::Exception: missing table (UNKNOWN_TABLE)", { status: 404 }),
@@ -1360,7 +1598,7 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
   });
 
   it("sets duplex=half when streaming async inserts in runtimes that support stream uploads", async function testAsyncInsertDuplexMode() {
-    const duplexValues: Array<RequestInit["duplex"] | undefined> = [];
+    const duplexValues: Array<"half" | undefined> = [];
 
     class StreamUploadRequest {
       readonly headers: Headers;
@@ -1397,7 +1635,8 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
 
   it("keeps async iterable HTTPS inserts as stream bodies", async function testHttpsAsyncInsertBody() {
     let capturedBody: BodyInit | null | undefined;
-    const fetchSpy = mock(async (_input: string | URL | Request, init?: RequestInit) => {
+    const fetchSpy = mock(async (input: string | URL | Request, requestInit?: RequestInit) => {
+      const init = initOf(input, requestInit);
       capturedBody = init?.body;
       return new Response("", { status: 200 });
     });
@@ -1433,7 +1672,8 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
   it("allows createTemporaryTableRaw definitions with semicolons inside string literals", async function testCreateTemporaryTableLiteralSemicolon() {
     const bodies: string[] = [];
 
-    globalThis.fetch = mock(async (_input: string | URL | Request, init?: RequestInit) => {
+    globalThis.fetch = mock(async (input: string | URL | Request, requestInit?: RequestInit) => {
+      const init = initOf(input, requestInit);
       const bodyText = await readBodyText(init?.body);
       if (typeof bodyText === "string") {
         bodies.push(bodyText);
@@ -1476,7 +1716,8 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
   it("does not register invalid temp-table names for cleanup", async function testInvalidTempTableNameDoesNotPolluteCleanup() {
     const bodies: string[] = [];
 
-    globalThis.fetch = mock(async (_input: string | URL | Request, init?: RequestInit) => {
+    globalThis.fetch = mock(async (input: string | URL | Request, requestInit?: RequestInit) => {
+      const init = initOf(input, requestInit);
       const bodyText = await readBodyText(init?.body);
       if (typeof bodyText === "string") {
         bodies.push(bodyText);
@@ -1505,7 +1746,8 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
   it("aggregates temp-table cleanup errors into a session error when callback succeeded", async function testRunInSessionCleanupAggregation() {
     const bodies: string[] = [];
 
-    globalThis.fetch = mock(async (_input: string | URL | Request, init?: RequestInit) => {
+    globalThis.fetch = mock(async (input: string | URL | Request, requestInit?: RequestInit) => {
+      const init = initOf(input, requestInit);
       const bodyText = await readBodyText(init?.body);
       if (typeof bodyText === "string") {
         bodies.push(bodyText);
@@ -1538,7 +1780,8 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
   });
 
   it("preserves the user error and routes cleanup errors to onCleanupError hook", async function testRunInSessionCleanupHookPreservesUserError() {
-    globalThis.fetch = mock(async (_input: string | URL | Request, init?: RequestInit) => {
+    globalThis.fetch = mock(async (input: string | URL | Request, requestInit?: RequestInit) => {
+      const init = initOf(input, requestInit);
       const bodyText = await readBodyText(init?.body);
       if (typeof bodyText === "string" && bodyText.startsWith("DROP TABLE IF EXISTS")) {
         throw new TypeError("server gone");
@@ -1578,7 +1821,8 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
     const abortController = new AbortController();
     const userError = new Error("user aborted later");
 
-    globalThis.fetch = mock(async (_input: string | URL | Request, init?: RequestInit) => {
+    globalThis.fetch = mock(async (input: string | URL | Request, requestInit?: RequestInit) => {
+      const init = initOf(input, requestInit);
       const bodyText = await readBodyText(init?.body);
       if (typeof bodyText === "string") {
         bodies.push(bodyText);
@@ -1634,8 +1878,9 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
       return originalRemove(type, listener, options);
     }) as typeof externalController.signal.removeEventListener;
 
-    globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
-      const url = new URL(_input as string);
+    globalThis.fetch = (async (input: string | URL | Request, requestInit?: RequestInit) => {
+      const init = initOf(input, requestInit);
+      const url = new URL(input instanceof originalRequest ? input.url : String(input));
       if (url.searchParams.get("query_id") === "leak_timeout") {
         return await new Promise<Response>((_resolve, reject) => {
           init?.signal?.addEventListener("abort", () => reject(init.signal?.reason ?? new Error("aborted")), {

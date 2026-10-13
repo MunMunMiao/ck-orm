@@ -1,6 +1,6 @@
 services:
   clickhouse:
-    image: clickhouse/clickhouse-server:26.3
+    image: clickhouse/clickhouse-server:${CK_ORM_E2E_CLICKHOUSE_VERSION:-26.3}
     restart: "no"
     environment:
       CLICKHOUSE_DB: ck_orm_e2e
@@ -54,4 +54,7 @@ services:
       CLICKHOUSE_E2E_ROLE_AUDITOR: ck_orm_e2e_role_auditor
       CLICKHOUSE_E2E_ROLE_USERNAME: ck_orm_e2e_transport
       CLICKHOUSE_E2E_ROLE_PASSWORD: ck_orm_e2e_transport_password
+      # Heavy load tests stay skipped unless the caller sets CK_ORM_E2E_LOAD=1.
+      CK_ORM_E2E_LOAD: ${CK_ORM_E2E_LOAD:-0}
+      CK_ORM_E2E_LOAD_ROWS: ${CK_ORM_E2E_LOAD_ROWS:-1000000}
     command: ["bun", "test", "e2e"]

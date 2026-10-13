@@ -28,9 +28,13 @@ import {
   startsWith,
   startsWithIgnoreCase,
 } from "./query";
+import type { Selection, SqlExpression } from "./query-shared";
 import { normalizeSingleStatementSql } from "./runtime/sql-scan";
 import { ckTable } from "./schema";
 import { compileSql, sql } from "./sql";
+
+// Public selections hide their compiler internals; tests inspect them through the internal type.
+const asExpression = <TData>(selection: Selection<TData>) => selection as SqlExpression<TData>;
 
 const _normalizeSql = (value: string) => value.replace(/\s+/g, " ").trim();
 
@@ -74,24 +78,26 @@ describe("ck-orm sql security", function describeSqlSecurity() {
 
   it("rejects invalid function names", function testFunctionNameWhitelist() {
     const buildCtx = () => ({ params: {}, paramTypes: {}, nextParamIndex: 0 });
-    expect(() => fn.call("; DROP TABLE users; --", []).compile(buildCtx())).toThrow(
+    expect(() => asExpression(fn.call("; DROP TABLE users; --", [])).compile(buildCtx())).toThrow(
       "Invalid function name: ; DROP TABLE users; --",
     );
-    expect(() => fn.call("sum`drop", []).compile(buildCtx())).toThrow("Invalid function name: sum`drop");
-    expect(() => fn.call("sum drop", []).compile(buildCtx())).toThrow("Invalid function name: sum drop");
-    expect(() => fn.call("1sum", []).compile(buildCtx())).toThrow("Invalid function name: 1sum");
-    expect(() => fn.withParams("; DROP TABLE users; --", [0.95], []).compile(buildCtx())).toThrow(
+    expect(() => asExpression(fn.call("sum`drop", [])).compile(buildCtx())).toThrow("Invalid function name: sum`drop");
+    expect(() => asExpression(fn.call("sum drop", [])).compile(buildCtx())).toThrow("Invalid function name: sum drop");
+    expect(() => asExpression(fn.call("1sum", [])).compile(buildCtx())).toThrow("Invalid function name: 1sum");
+    expect(() => asExpression(fn.withParams("; DROP TABLE users; --", [0.95], [])).compile(buildCtx())).toThrow(
       "Invalid function name: ; DROP TABLE users; --",
     );
-    expect(() => fn.withParams("sum`drop", [0.95], []).compile(buildCtx())).toThrow("Invalid function name: sum`drop");
+    expect(() => asExpression(fn.withParams("sum`drop", [0.95], [])).compile(buildCtx())).toThrow(
+      "Invalid function name: sum`drop",
+    );
   });
 
   it("allows valid function names", function testValidFunctionNames() {
     const buildCtx = () => ({ params: {}, paramTypes: {}, nextParamIndex: 0 });
-    expect(() => fn.call("sum", []).compile(buildCtx())).not.toThrow();
-    expect(() => fn.call("_sum", []).compile(buildCtx())).not.toThrow();
-    expect(() => fn.call("avgIf", []).compile(buildCtx())).not.toThrow();
-    expect(() => fn.call("groupArrayArray", []).compile(buildCtx())).not.toThrow();
+    expect(() => asExpression(fn.call("sum", [])).compile(buildCtx())).not.toThrow();
+    expect(() => asExpression(fn.call("_sum", [])).compile(buildCtx())).not.toThrow();
+    expect(() => asExpression(fn.call("avgIf", [])).compile(buildCtx())).not.toThrow();
+    expect(() => asExpression(fn.call("groupArrayArray", [])).compile(buildCtx())).not.toThrow();
   });
 
   it("escapes enum keys with single quotes", function testEnumKeyEscaping() {

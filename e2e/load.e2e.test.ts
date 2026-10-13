@@ -81,9 +81,9 @@ loadDescribe("ck-orm e2e load", function describeLoad() {
       let received = 0;
       let lastId = -1;
 
-      for await (const row of db.stream<{ id: number }>(
+      for await (const row of db.stream(
         ckSql`select id from ${ckSql.identifier(tableName)} order by id`,
-      )) {
+      ) as AsyncIterable<{ id: number }>) {
         if (row.id <= lastId) {
           throw new Error(`Stream emitted out-of-order row: prev=${lastId} cur=${row.id}`);
         }
@@ -113,10 +113,9 @@ loadDescribe("ck-orm e2e load", function describeLoad() {
       let received = 0;
       let aborted: unknown;
       try {
-        for await (const _row of db.stream<{ id: number }>(
-          ckSql`select id from ${ckSql.identifier(tableName)} order by id`,
-          { abort_signal: controller.signal },
-        )) {
+        for await (const _row of db.stream(ckSql`select id from ${ckSql.identifier(tableName)} order by id`, {
+          abort_signal: controller.signal,
+        })) {
           received += 1;
           if (received >= 1000) {
             controller.abort();

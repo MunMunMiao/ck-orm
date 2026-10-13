@@ -11,6 +11,18 @@ import { orderRewardLog } from "./test-schema/commerce";
 const originalFetch = globalThis.fetch;
 const originalRequest = globalThis.Request;
 
+// ck-orm hands fetch a single Request. Recording the init each Request was built from lets fetch mocks keep
+// asserting on the original body (FormData, string or stream) and duplex mode.
+const requestInits = new WeakMap<Request, RequestInit & { duplex?: "half" }>();
+class RecordingRequest extends originalRequest {
+  constructor(input: RequestInfo | URL, init?: RequestInit) {
+    super(input, init);
+    requestInits.set(this, init ?? {});
+  }
+}
+const initOf = (input: string | URL | Request, init?: RequestInit) =>
+  (input instanceof originalRequest ? requestInits.get(input) : undefined) ?? init;
+
 type CapturedCall = {
   url: URL;
   init: RequestInit & { duplex?: "half" };
@@ -18,7 +30,8 @@ type CapturedCall = {
 
 const setFetchMock = (handler: (url: URL, init: RequestInit & { duplex?: "half" }) => Promise<Response> | Response) => {
   const calls: CapturedCall[] = [];
-  const fetchMock = mock(async (input: string | URL | Request, init?: RequestInit) => {
+  const fetchMock = mock(async (input: string | URL | Request, requestInit?: RequestInit) => {
+    const init = initOf(input, requestInit);
     const url = new URL(typeof input === "string" || input instanceof URL ? String(input) : input.url);
     const normalizedInit = (init ?? {}) as RequestInit & { duplex?: "half" };
     calls.push({ url, init: normalizedInit });
@@ -66,6 +79,7 @@ const expectRejectsWithClickhouseError = async (promise: Promise<unknown>, expec
 
 describe("ck-orm runtime", function describeClickHouseORMRuntime() {
   beforeEach(function setupMocks() {
+    globalThis.Request = RecordingRequest as typeof Request;
     mock.restore();
   });
 
@@ -132,9 +146,9 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
 
     expect(validStructuredConfig.host).toBe("http://localhost:8123");
 
+    // @ts-expect-error databaseUrl is mutually exclusive with structured fields
     const invalidMixedConfig: ClickHouseClientConfig = {
       databaseUrl: "http://localhost:8123/demo_store",
-      // @ts-expect-error databaseUrl is mutually exclusive with structured fields
       username: "default",
     };
 
@@ -240,32 +254,48 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
     expect((form as FormData).get("param_orm_param1")).toBe("u_1");
   });
 
-  it("uses the client fetch for query and endpoint requests", async function testCustomFetch() {
+  it("passes the client fetch a Request for queries, streamed inserts and endpoints", async function testCustomFetch() {
     globalThis.fetch = mock(async () => {
       throw new Error("global fetch must not be called");
     }) as unknown as typeof fetch;
-    const urls: URL[] = [];
-    const customFetch = mock(async (input: string | URL | Request) => {
-      const url = new URL(typeof input === "string" || input instanceof URL ? String(input) : input.url);
-      urls.push(url);
-      return new Response(url.pathname.endsWith("/ping") ? "Ok.\n" : '{"data":[]}');
-    }) as unknown as typeof fetch;
+    const seen: { method: string; path: string; authorization: string | null; payload: string }[] = [];
     const db = clickhouseClient({
-      databaseUrl: "http://localhost:8123/demo_store",
-      fetch: customFetch,
+      databaseUrl: "http://default:secret@localhost:8123/demo_store",
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        const isForm = request.headers.get("content-type")?.startsWith("multipart/form-data");
+        const payload = isForm ? String((await request.formData()).get("param_id")) : await request.text();
+        seen.push({
+          method: request.method,
+          path: url.pathname,
+          authorization: request.headers.get("authorization"),
+          payload,
+        });
+        return new Response(url.pathname.endsWith("/ping") ? "Ok.\n" : '{"data":[]}');
+      },
     });
+    const rows = async function* () {
+      yield { id: 1 };
+      yield { id: 2 };
+    };
 
-    await db.execute(sql`select 1`);
+    await db.execute(sql`select {id:Int32}`, { query_params: { id: 7 } });
+    await db.insertJsonEachRow("events", rows());
     await db.ping();
 
-    expect(urls.map((url) => url.pathname)).toEqual(["/", "/ping"]);
+    const authorization = `Basic ${btoa("default:secret")}`;
+    expect(seen).toEqual([
+      { method: "POST", path: "/", authorization, payload: "7" },
+      { method: "POST", path: "/", authorization, payload: '{"id":1}\n{"id":2}\n' },
+      { method: "GET", path: "/ping", authorization, payload: "" },
+    ]);
   });
 
   it("uses one generated query_id for instrumentation and transport", async function testGeneratedQueryIdConsistency() {
     const { calls } = setFetchMock(() => {
       return new Response(JSON.stringify({ data: [] }), { status: 200 });
     });
-    const startedQueryIds: Array<string | undefined> = [];
+    const startedQueryIds: Array<string | null | undefined> = [];
 
     const db = clickhouseClient({
       host: "http://localhost:8123",
@@ -362,6 +392,69 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
       expect(new Headers(call.init.headers).get("X-ClickHouse-Replica-Tag")).toBe("session_under_test");
       expect(call.init.method).toBe("POST");
     }
+  });
+
+  const sessionLockedResponse = () =>
+    new Response("Code: 373. DB::Exception: Session is locked. (SESSION_IS_LOCKED)", { status: 500 });
+
+  it("reports SESSION_IS_LOCKED from temporary-table cleanup to onCleanupError", async function testCleanupReportsSessionLocked() {
+    const tmpScope = ckTable("tmp_scope", {
+      user_id: string(),
+    });
+    setFetchMock(async (_url, init) => {
+      const text = await readBodyText(init.body);
+      if (typeof text === "string" && text.startsWith("DROP TABLE")) {
+        return sessionLockedResponse();
+      }
+      return new Response("", { status: 200 });
+    });
+
+    const db = clickhouseClient({
+      host: "http://localhost:8123",
+    });
+    const cleanupErrors: unknown[] = [];
+    await db.runInSession(
+      async (session) => {
+        await session.createTemporaryTable(tmpScope);
+      },
+      {
+        session_id: "cleanup_locked",
+        onCleanupError(errors) {
+          cleanupErrors.push(...errors);
+        },
+      },
+    );
+
+    expect(cleanupErrors).toHaveLength(1);
+    expect(isClickHouseORMError(cleanupErrors[0])).toBe(true);
+    if (isClickHouseORMError(cleanupErrors[0])) {
+      expect(cleanupErrors[0].clickhouseName).toBe("SESSION_IS_LOCKED");
+    }
+  });
+
+  it("throws SessionError when temporary-table cleanup hits SESSION_IS_LOCKED", async function testCleanupSessionLockedThrows() {
+    const tmpScope = ckTable("tmp_scope", {
+      user_id: string(),
+    });
+    setFetchMock(async (_url, init) => {
+      const text = await readBodyText(init.body);
+      if (typeof text === "string" && text.startsWith("DROP TABLE")) {
+        return sessionLockedResponse();
+      }
+      return new Response("", { status: 200 });
+    });
+
+    const db = clickhouseClient({
+      host: "http://localhost:8123",
+    });
+    await expect(
+      db.runInSession(
+        async (session) => {
+          await session.createTemporaryTable(tmpScope);
+        },
+        { session_id: "cleanup_locked_throw" },
+      ),
+    ).rejects.toThrow("Failed to drop 1 temporary table");
   });
 
   it("serializes concurrent requests that share the same session id by default", async function testDefaultSessionConcurrency() {
@@ -521,6 +614,288 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
     await inside;
   });
 
+  it("waits for the server session lock after breaking out of a session stream", async function testSessionStreamBreakWaitsForServerLock() {
+    // Models ClickHouse: a streamed query holds its session until the server
+    // notices the closed connection, a little after the client cancels.
+    let lockedBy: string | undefined;
+    const sessionLocked = () =>
+      new Response("Code: 373. DB::Exception: Session is locked by a concurrent client. (SESSION_IS_LOCKED)", {
+        status: 500,
+      });
+    const db = clickhouseClient({
+      host: "http://localhost:8123",
+      fetch: async (request) => {
+        const query =
+          (
+            await request
+              .clone()
+              .formData()
+              .catch(() => undefined)
+          )?.get("query") ?? (await request.text());
+        if (lockedBy) {
+          return sessionLocked();
+        }
+        if (!String(query).startsWith("select number")) {
+          return Response.json({ data: [{ one: 1 }] });
+        }
+        lockedBy = new URL(request.url).searchParams.get("session_id") ?? undefined;
+        let number = 0;
+        return new Response(
+          new ReadableStream({
+            pull(controller) {
+              controller.enqueue(new TextEncoder().encode(`{"number":${number++}}\n`));
+            },
+            cancel() {
+              setTimeout(() => {
+                lockedBy = undefined;
+              }, 20);
+            },
+          }),
+        );
+      },
+    });
+
+    const rows = await db.runInSession(async (session) => {
+      for await (const row of session.stream(sql`select number from numbers(1000000000)`)) {
+        if (row.number === 2) break;
+      }
+      return session.execute(sql`select 1 as one`);
+    });
+
+    expect(rows).toEqual([{ one: 1 }]);
+  });
+
+  it("stops waiting for a session lock that outlives request_timeout", async function testSessionLockWaitDeadline() {
+    let streamed = false;
+    const db = clickhouseClient({
+      host: "http://localhost:8123",
+      request_timeout: 100,
+      fetch: () => {
+        if (streamed) {
+          return new Response("Code: 373. DB::Exception: Session is locked. (SESSION_IS_LOCKED)", { status: 500 });
+        }
+        streamed = true;
+        return new Response('{"number":0}\n{"number":1}\n');
+      },
+    });
+
+    const next = db.runInSession(async (session) => {
+      for await (const _row of session.stream(sql`select number from numbers(10)`)) {
+        break;
+      }
+      return session.execute(sql`select 1 as one`);
+    });
+
+    await expect(next).rejects.toThrow("SESSION_IS_LOCKED");
+  });
+
+  it("gives up a hanging session poll at the deadline", async function testHangingSessionPollDeadline() {
+    const sessionLocked = () =>
+      new Response("Code: 373. DB::Exception: Session is locked. (SESSION_IS_LOCKED)", { status: 500 });
+    let polls = 0;
+    const db = clickhouseClient({
+      host: "http://localhost:8123",
+      request_timeout: 200,
+      fetch: async (request) => {
+        const query = await request.clone().text();
+        if (query === "SELECT 1") {
+          polls += 1;
+          // The first poll returns locked after most of the budget, so a
+          // later poll that only watches the request signal must stop at
+          // the deadline instead of starting a fresh request_timeout.
+          if (polls === 1) {
+            await Bun.sleep(100);
+            return sessionLocked();
+          }
+          return await new Promise<Response>((resolve) => {
+            const finish = () => resolve(new Response("poll aborted", { status: 500 }));
+            if (request.signal.aborted) {
+              finish();
+              return;
+            }
+            request.signal.addEventListener("abort", finish, { once: true });
+          });
+        }
+        if (query.startsWith("select number")) {
+          return new Response('{"number":0}\n');
+        }
+        return Response.json({ data: [{ one: 1 }] });
+      },
+    });
+
+    const started = Date.now();
+    const next = db.runInSession(async (session) => {
+      for await (const _row of session.stream(sql`select number from numbers(10)`)) {
+        break;
+      }
+      return session.execute(sql`select 1 as one`);
+    });
+    await Promise.race([
+      next.then(
+        () => undefined,
+        () => undefined,
+      ),
+      Bun.sleep(1_000).then(() => {
+        throw new Error("next same-session request still waiting");
+      }),
+    ]);
+    expect(Date.now() - started).toBeLessThan(250);
+  }, 1_500);
+
+  it("keeps holding the slot when the stream used ignore_error_response", async function testIgnoreErrorResponseKeepsSessionSlot() {
+    const sessionLocked = () =>
+      new Response("Code: 373. DB::Exception: Session is locked by a concurrent client. (SESSION_IS_LOCKED)", {
+        status: 500,
+      });
+    let polls = 0;
+    let serverReleased = false;
+    const order: string[] = [];
+    const db = clickhouseClient({
+      host: "http://localhost:8123",
+      fetch: async (request) => {
+        const query = await request.clone().text();
+        if (query.startsWith("select number")) {
+          order.push("stream");
+          return new Response('{"number":0}\n');
+        }
+        if (query.includes("KILL QUERY")) {
+          return new Response("", { status: 200 });
+        }
+        if (query === "SELECT 1") {
+          polls += 1;
+          order.push(`poll-${polls}`);
+          if (polls === 1) {
+            return sessionLocked();
+          }
+          serverReleased = true;
+          return new Response("", { status: 200 });
+        }
+        order.push("next");
+        if (!serverReleased) {
+          return sessionLocked();
+        }
+        return Response.json({ data: [{ one: 1 }] });
+      },
+    });
+
+    const rows = await db.runInSession(async (session) => {
+      for await (const _row of session.stream(sql`select number from numbers(10)`, {
+        ignore_error_response: true,
+      })) {
+        break;
+      }
+      return session.execute(sql`select 1 as one`);
+    });
+
+    expect(rows).toEqual([{ one: 1 }]);
+    expect(order).toEqual(["stream", "poll-1", "poll-2", "next"]);
+  });
+
+  it("cancels an abandoned session stream with KILL QUERY outside the session", async function testKillAbandonedSessionStream() {
+    const requests: Array<{ url: URL; headers: Headers; query: string; paramId: string | null }> = [];
+    const readQuery = async (request: Request) => {
+      const form = await request
+        .clone()
+        .formData()
+        .catch(() => undefined);
+      const query = String(form?.get("query") ?? (await request.clone().text()));
+      return { query, paramId: form?.get("param_id") == null ? null : String(form.get("param_id")) };
+    };
+    const db = clickhouseClient({
+      host: "http://localhost:8123",
+      username: "alice",
+      password: "secret",
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        const { query, paramId } = await readQuery(request);
+        requests.push({ url, headers: new Headers(request.headers), query, paramId });
+        if (query.includes("FORMAT JSONEachRow") || query.startsWith("select number")) {
+          return new Response('{"number":0}\n');
+        }
+        if (query.includes("KILL QUERY")) {
+          return new Response("", { status: 200 });
+        }
+        if (query === "SELECT 1") {
+          return new Response("", { status: 200 });
+        }
+        return Response.json({ data: [{ one: 1 }] });
+      },
+    });
+
+    const rows = await db.runInSession(async (session) => {
+      for await (const _row of session.stream(sql`select number from numbers(10)`, {
+        query_id: "stream_q",
+        session_timeout: 60,
+        session_check: 1,
+        role: "analyst",
+        clickhouse_settings: { max_threads: 2 },
+      })) {
+        break;
+      }
+      return session.execute(sql`select 1 as one`);
+    });
+
+    expect(rows).toEqual([{ one: 1 }]);
+    const kill = requests[1];
+    const stream = requests[0];
+    expect(kill?.query).toContain("KILL QUERY WHERE query_id = {id:String} SYNC");
+    expect(kill?.url.searchParams.get("session_id")).toBeNull();
+    expect(kill?.url.searchParams.get("session_timeout")).toBeNull();
+    expect(kill?.url.searchParams.get("session_check")).toBeNull();
+    expect(kill?.paramId).toBe("stream_q");
+    expect(kill?.url.searchParams.get("query_id")).not.toBe("stream_q");
+    expect(kill?.url.searchParams.get("role")).toBe("analyst");
+    expect(kill?.url.searchParams.get("max_threads")).toBe("2");
+    expect(kill?.headers.get("authorization")).toBe(stream?.headers.get("authorization"));
+    expect(kill?.headers.get("x-clickhouse-replica-tag")).toBe(stream?.url.searchParams.get("session_id"));
+    expect(requests.some((request) => request.query === "SELECT 1")).toBe(true);
+    expect(requests.at(-1)?.query).toContain("select 1 as one");
+  });
+
+  it("polls the session when KILL QUERY fails", async function testKillAbandonedSessionStreamFailure() {
+    let polls = 0;
+    let kills = 0;
+    const db = clickhouseClient({
+      host: "http://localhost:8123",
+      fetch: async (request) => {
+        const form = await request
+          .clone()
+          .formData()
+          .catch(() => undefined);
+        const query = String(form?.get("query") ?? (await request.clone().text()));
+        if (query.startsWith("select number")) {
+          return new Response('{"number":0}\n');
+        }
+        if (query.includes("KILL QUERY")) {
+          kills += 1;
+          return new Response("Code: 497. DB::Exception: Not enough privileges. (ACCESS_DENIED)", { status: 500 });
+        }
+        if (query === "SELECT 1") {
+          polls += 1;
+          if (polls === 1) {
+            return new Response("Code: 373. DB::Exception: Session is locked. (SESSION_IS_LOCKED)", { status: 500 });
+          }
+          return new Response("", { status: 200 });
+        }
+        return Response.json({ data: [{ one: 1 }] });
+      },
+    });
+
+    const rows = await db.runInSession(async (session) => {
+      for await (const _row of session.stream(sql`select number from numbers(10)`, {
+        query_id: "stream_q",
+        ignore_error_response: true,
+      })) {
+        break;
+      }
+      return session.execute(sql`select 1 as one`);
+    });
+
+    expect(rows).toEqual([{ one: 1 }]);
+    expect(kills).toBe(1);
+    expect(polls).toBe(2);
+  });
+
   it("removes the local same-session queue when session_max_concurrent_requests is raised", async function testConfigurableSessionConcurrency() {
     const pendingResponses: Array<() => void> = [];
     let inFlight = 0;
@@ -567,13 +942,11 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
   });
 
   it("encodes auth with pure UTF-8 base64 and skips User-Agent in restricted runtimes", async function testAuthAndUserAgentBoundaries() {
-    class BrowserLikeRequest {
-      readonly headers: Headers;
-
-      constructor(_input: string | URL | Request, init?: RequestInit) {
-        const headers = new Headers(init?.headers);
-        headers.delete("User-Agent");
-        this.headers = headers;
+    // Browsers drop a User-Agent set by scripts; a real Request with that behavior.
+    class BrowserLikeRequest extends RecordingRequest {
+      constructor(input: RequestInfo | URL, init?: RequestInit) {
+        super(input, init);
+        this.headers.delete("User-Agent");
       }
     }
 

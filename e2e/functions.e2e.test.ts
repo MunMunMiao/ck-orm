@@ -1,7 +1,22 @@
 import { expect, it } from "bun:test";
 import { ck, ckSql, ckTable, ckType, fn } from "./ck-orm";
-import { createE2EDb, createTempTableName, schemaPrimitives, users, webEvents } from "./shared";
+import {
+  createE2EDb,
+  createTempTableName,
+  schemaPrimitives,
+  serverSupportsBareTime64Json,
+  serverSupportsFunction,
+  users,
+  webEvents,
+} from "./shared";
 import { describeE2E, expectDate, expectPresent, expectRejectsWithClickhouseError } from "./test-helpers";
+
+// sqlType is internal metadata that the public Selection type does not expose.
+const sqlTypeOf = (selection: object) => (selection as { readonly sqlType?: string }).sqlType;
+
+const arrayExceptSupported = await serverSupportsFunction("arrayExcept");
+const arrayRemoveSupported = await serverSupportsFunction("arrayRemove");
+const bareTime64Json = await serverSupportsBareTime64Json();
 
 describeE2E("ck-orm e2e functions", function describeFunctions() {
   it("supports fn.call, fn.withParams and basic type-conversion helpers", async function testGenericAndConversionFunctions() {
@@ -268,8 +283,6 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
       nullableValue: fn.toNullable<string>("vip").as("nullable_value"),
       timeValue: fn.toTime(ckSql`toDateTime('1970-01-01 12:34:56')`).as("time_value"),
       timeNull: fn.toTimeOrNull("bad").as("time_null"),
-      time64Value: fn.toTime64("12:34:56.789123", 6).as("time64_value"),
-      time64Zero: fn.toTime64OrZero("bad", 6).as("time64_zero"),
       intervalDay: fn.toDate(fn.call("plus", fn.toDate("2026-01-01"), fn.toIntervalDay(1))).as("interval_day"),
       intervalGeneric: fn
         .toDate(fn.call("plus", fn.toDate("2026-01-01"), fn.toInterval(1, "day")))
@@ -337,12 +350,24 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
     expect(presentRow.parsedDateTime64BestEffort.getUTCMilliseconds()).toBe(789);
     // toTime returns DateTime at 1970-01-02 plus the time-of-day (45_296_000 ms = 12h34m56s).
     expect(presentRow.timeValue.getTime()).toBe(86_400_000 + 45_296_000);
-    // toTime64 returns the new Time64 data type — strings, no calendar date.
-    expect(presentRow.time64Value).toBe("12:34:56.789123");
-    expect(presentRow.time64Zero).toBe("00:00:00.000000");
     expect(presentRow.intervalDay.toISOString().slice(0, 10)).toBe("2026-01-02");
     expect(presentRow.intervalGeneric.toISOString().slice(0, 10)).toBe("2026-01-02");
   });
+
+  it.skipIf(!bareTime64Json)(
+    "returns Time64 strings without a trailing Z when the server omits it",
+    async function testTime64JsonOmitsTrailingZ() {
+      const db = createE2EDb();
+      const [row] = await db.select({
+        time64Value: fn.toTime64("12:34:56.789123", 6).as("time64_value"),
+        time64Zero: fn.toTime64OrZero("bad", 6).as("time64_zero"),
+      });
+      const presentRow = expectPresent(row, "time64 row");
+      // toTime64 returns the new Time64 data type — strings, no calendar date.
+      expect(presentRow.time64Value).toBe("12:34:56.789123");
+      expect(presentRow.time64Zero).toBe("00:00:00.000000");
+    },
+  );
 
   it("supports aggregate helpers and month bucketing helpers", async function testAggregateHelpers() {
     const db = createE2EDb();
@@ -398,7 +423,7 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
     };
     const mixedRankInCountry = fn.over(fn.rowNumber().toMixed(), rankInCountrySpec);
     const visibleRankInCountry = fn.if(ck.eq(webEvents.country, "US"), mixedRankInCountry, 6);
-    expect(visibleRankInCountry.sqlType).toBe("UInt64");
+    expect(sqlTypeOf(visibleRankInCountry)).toBe("UInt64");
 
     const rows = await db
       .select({
@@ -770,7 +795,7 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
       sqlType: "LowCardinality(String)",
     });
     const lowCardinalityConditional = fn.if(true, lowCardinalityA, lowCardinalityB);
-    expect(lowCardinalityConditional.sqlType).toBeUndefined();
+    expect(sqlTypeOf(lowCardinalityConditional)).toBeUndefined();
 
     const [sameTypeRow] = await strictDb.select({
       type: fn.call<string>("toTypeName", lowCardinalityConditional).mapWith(String).as("type"),
@@ -782,8 +807,8 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
   it("delegates heterogeneous conditional types to ClickHouse settings", async function testConditionalServerSettings() {
     const conditional = fn.if(true, fn.toUInt64(1), fn.toInt64(-1));
     const negativeUIntFallback = fn.if(true, fn.toUInt64(1), -1);
-    expect(conditional.sqlType).toBeUndefined();
-    expect(negativeUIntFallback.sqlType).toBeUndefined();
+    expect(sqlTypeOf(conditional)).toBeUndefined();
+    expect(sqlTypeOf(negativeUIntFallback)).toBeUndefined();
 
     const strictDb = createE2EDb({
       clickhouse_settings: {
@@ -828,8 +853,8 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
     });
     const inner = fn.if(false, 0, schemaPrimitives.float64_value);
     const outer = fn.multiIf(false, 0, true, inner, 2);
-    expect(inner.sqlType).toBe("Float64");
-    expect(outer.sqlType).toBe("Float64");
+    expect(sqlTypeOf(inner)).toBe("Float64");
+    expect(sqlTypeOf(outer)).toBe("Float64");
 
     const conditionalScores = db
       .select({
@@ -838,7 +863,7 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
       .from(schemaPrimitives)
       .where(ck.eq(schemaPrimitives.id, 1))
       .as("conditional_scores");
-    expect(conditionalScores.score.sqlType).toBe("Float64");
+    expect(sqlTypeOf(conditionalScores.score)).toBe("Float64");
 
     const rows = await db
       .select({
@@ -869,7 +894,7 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
     const decimalValue = fn.if(false, schemaPrimitives.decimal_value, fn.toDecimal64("0.00", 2));
 
     for (const selection of [literalValue, promotedValue, rawValue, dateValue, decimalValue]) {
-      expect(selection.sqlType).toBeUndefined();
+      expect(sqlTypeOf(selection)).toBeUndefined();
     }
 
     const [row] = await strictDb
@@ -920,10 +945,10 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
     const stringValue = fn.if(true, fn.toString("a"), "b");
     const lateMultiValue = fn.multiIf(false, 5, true, fn.toUInt64(7), 6);
 
-    expect(boolValue.sqlType).toBe("Bool");
-    expect(intValue.sqlType).toBe("Int64");
-    expect(stringValue.sqlType).toBe("String");
-    expect(lateMultiValue.sqlType).toBe("UInt64");
+    expect(sqlTypeOf(boolValue)).toBe("Bool");
+    expect(sqlTypeOf(intValue)).toBe("Int64");
+    expect(sqlTypeOf(stringValue)).toBe("String");
+    expect(sqlTypeOf(lateMultiValue)).toBe("UInt64");
 
     const [row] = await db.select({
       boolType: fn.call<string>("toTypeName", boolValue).mapWith(String).as("bool_type"),
@@ -1156,18 +1181,18 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
       countLarge: fn.arrayCount(ckSql`x -> x > 1`, [1, 2, 3]).as("count_large"),
       filtered: fn.arrayFilter<number>(ckSql`x -> x > 1`, [1, 2, 3]).as("filtered"),
       mapped: fn.arrayMap<number>(ckSql`x -> x + 1`, [1, 2]).as("mapped"),
-      firstLarge: fn.arrayFirst<number>(ckSql`x -> x > 1`, [1, 2, 3]).as("first_large"),
+      firstLarge: fn.arrayFirst<string>(ckSql`x -> x > 1`, [1, 2, 3]).as("first_large"),
       firstLargeIndex: fn.arrayFirstIndex(ckSql`x -> x > 1`, [1, 2, 3]).as("first_large_index"),
       firstMissing: fn.arrayFirstOrNull<number>(ckSql`x -> x > 9`, [1, 2, 3]).as("first_missing"),
-      lastLarge: fn.arrayLast<number>(ckSql`x -> x > 1`, [1, 2, 3]).as("last_large"),
+      lastLarge: fn.arrayLast<string>(ckSql`x -> x > 1`, [1, 2, 3]).as("last_large"),
       lastLargeIndex: fn.arrayLastIndex(ckSql`x -> x > 1`, [1, 2, 3]).as("last_large_index"),
       lastMissing: fn.arrayLastOrNull<number>(ckSql`x -> x > 9`, [1, 2, 3]).as("last_missing"),
-      sortedAsc: fn.arraySort<number>([3, 1, 2]).as("sorted_asc"),
-      sortedDesc: fn.arrayReverseSort<number>([3, 1, 2]).as("sorted_desc"),
-      compacted: fn.arrayCompact<number>([1, 1, 2, 2, 3]).as("compacted"),
-      distinctValues: fn.arrayDistinct<number>([1, 1, 2]).as("distinct_values"),
-      diff: fn.arrayDifference<number>([1, 3, 6]).as("diff"),
-      cumSum: fn.arrayCumSum<number>([1, 2, 3]).as("cum_sum"),
+      sortedAsc: fn.arraySort<string>([3, 1, 2]).as("sorted_asc"),
+      sortedDesc: fn.arrayReverseSort<string>([3, 1, 2]).as("sorted_desc"),
+      compacted: fn.arrayCompact<string>([1, 1, 2, 2, 3]).as("compacted"),
+      distinctValues: fn.arrayDistinct<string>([1, 1, 2]).as("distinct_values"),
+      diff: fn.arrayDifference<string>([1, 3, 6]).as("diff"),
+      cumSum: fn.arrayCumSum<string>([1, 2, 3]).as("cum_sum"),
       enumerated: fn.arrayEnumerate(["a", "b"]).as("enumerated"),
       uniqCount: fn.arrayUniq(["vip", "vip", "pro"]).as("uniq_count"),
       equalCount: fn.countEqual([1, 1, 2], 1).as("equal_count"),
@@ -1181,14 +1206,12 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
       sortedIndex: fn.indexOfAssumeSorted([1, 2, 3], 2).as("sorted_index"),
       generatedRange: fn.range(1, 4).as("generated_range"),
       replicated: fn.replicate<string>("vip", [1, 2]).as("replicated"),
-      reversed: fn.reverse<number>([1, 2, 3]).as("reversed"),
-      excepted: fn.arrayExcept<string>(["vip", "pro"], ["pro"]).as("excepted"),
-      removed: fn.arrayRemove<string>(["vip", "pro"], "pro").as("removed"),
+      reversed: fn.reverse<string>([1, 2, 3]).as("reversed"),
       resized: fn.arrayResize<string>(["vip"], 2, "pro").as("resized"),
-      rotatedLeft: fn.arrayRotateLeft<number>([1, 2, 3], 1).as("rotated_left"),
-      shiftedLeft: fn.arrayShiftLeft<number>([1, 2, 3], 1, 0).as("shifted_left"),
-      kqlAsc: fn.kql_array_sort_asc<number>([3, 1, 2]).as("kql_asc"),
-      kqlDesc: fn.kql_array_sort_desc<number>([3, 1, 2]).as("kql_desc"),
+      rotatedLeft: fn.arrayRotateLeft<string>([1, 2, 3], 1).as("rotated_left"),
+      shiftedLeft: fn.arrayShiftLeft<string>([1, 2, 3], 1, 0).as("shifted_left"),
+      kqlAsc: fn.kql_array_sort_asc<[string[]]>([3, 1, 2]).as("kql_asc"),
+      kqlDesc: fn.kql_array_sort_desc<[string[]]>([3, 1, 2]).as("kql_desc"),
     });
 
     expect(expectPresent(row, "array helper additions row")).toEqual({
@@ -1223,8 +1246,6 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
       generatedRange: ["1", "2", "3"],
       replicated: ["vip", "vip"],
       reversed: ["3", "2", "1"],
-      excepted: ["vip"],
-      removed: ["vip"],
       resized: ["vip", "pro"],
       rotatedLeft: ["2", "3", "1"],
       shiftedLeft: ["2", "3", "0"],
@@ -1233,15 +1254,37 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
     });
   });
 
+  it.skipIf(!arrayExceptSupported)(
+    "supports arrayExcept when the server provides it",
+    async function testArrayExcept() {
+      const db = createE2EDb();
+      const [row] = await db.select({
+        excepted: fn.arrayExcept<string>(["vip", "pro"], ["pro"]).as("excepted"),
+      });
+      expect(expectPresent(row, "arrayExcept row").excepted).toEqual(["vip"]);
+    },
+  );
+
+  it.skipIf(!arrayRemoveSupported)(
+    "supports arrayRemove when the server provides it",
+    async function testArrayRemove() {
+      const db = createE2EDb();
+      const [row] = await db.select({
+        removed: fn.arrayRemove<string>(["vip", "pro"], "pro").as("removed"),
+      });
+      expect(expectPresent(row, "arrayRemove row").removed).toEqual(["vip"]);
+    },
+  );
+
   it("supports deterministic higher-order array helpers", async function testHigherOrderArrayHelpers() {
     const db = createE2EDb();
 
     const [row] = await db.select({
       multiArrayExists: fn.arrayExists(ckSql`(x, y) -> x = y`, [1, 2, 3], [9, 2, 8]).as("multi_array_exists"),
-      filled: fn.arrayFill<number>(ckSql`x -> x > 0`, [1, 0, 2, 0]).as("filled"),
-      reverseFilled: fn.arrayReverseFill<number>(ckSql`x -> x > 0`, [1, 0, 2, 0]).as("reverse_filled"),
-      split: fn.arraySplit<number>(ckSql`x -> x = 0`, [1, 0, 2, 3, 0, 4]).as("split"),
-      reverseSplit: fn.arrayReverseSplit<number>(ckSql`x -> x = 0`, [1, 0, 2, 3, 0, 4]).as("reverse_split"),
+      filled: fn.arrayFill<string>(ckSql`x -> x > 0`, [1, 0, 2, 0]).as("filled"),
+      reverseFilled: fn.arrayReverseFill<string>(ckSql`x -> x > 0`, [1, 0, 2, 0]).as("reverse_filled"),
+      split: fn.arraySplit<string[]>(ckSql`x -> x = 0`, [1, 0, 2, 3, 0, 4]).as("split"),
+      reverseSplit: fn.arrayReverseSplit<string[]>(ckSql`x -> x = 0`, [1, 0, 2, 3, 0, 4]).as("reverse_split"),
       folded: fn
         .arrayFold<number>(ckSql`(acc, x, y) -> acc + x * y`, [1, 2, 3], [10, 20, 30], 0)
         .mapWith((value) => Number(value))
@@ -1278,10 +1321,10 @@ describeE2E("ck-orm e2e functions", function describeFunctions() {
       symmetric: fn.arraySymmetricDifference<number>([1, 2], [2, 3]).as("symmetric"),
       shingles: fn.arrayShingles<readonly string[]>(["a", "b", "c"], 2).as("shingles"),
       zippedUnaligned: fn.arrayZipUnaligned([1, 2], ["a"]).as("zipped_unaligned"),
-      popBack: fn.arrayPopBack<number>([1, 2, 3]).as("pop_back"),
-      popFront: fn.arrayPopFront<number>([1, 2, 3]).as("pop_front"),
-      pushBack: fn.arrayPushBack<number>([1, 2], 3).as("push_back"),
-      pushFront: fn.arrayPushFront<number>([2, 3], 1).as("push_front"),
+      popBack: fn.arrayPopBack<string>([1, 2, 3]).as("pop_back"),
+      popFront: fn.arrayPopFront<string>([1, 2, 3]).as("pop_front"),
+      pushBack: fn.arrayPushBack<string>([1, 2], 3).as("push_back"),
+      pushFront: fn.arrayPushFront<string>([2, 3], 1).as("push_front"),
       withConstant: fn.arrayWithConstant<string>(3, "vip").as("with_constant"),
       emptyDate: fn.emptyArrayDate().as("empty_date"),
       emptyDateTime: fn.emptyArrayDateTime().as("empty_date_time"),

@@ -88,29 +88,29 @@ describeE2E("ck-orm e2e — user-scenario type overrides", function describeUser
   it("rejects enum values outside the inferred union at compile time", function testEnumLiteralRejection() {
     type InsertRow = InferInsertModel<typeof auditLogTyped>;
 
-    // @ts-expect-error "delete" is not one of the inferred enum keys
     const _bad: InsertRow = {
       id: 200,
       actor_id: userId(3001),
+      // @ts-expect-error "delete" is not one of the inferred enum keys
       action: "delete",
       actor_role: "admin",
       created_at: new Date(),
     };
     void _bad;
 
-    // @ts-expect-error "owner" is not one of the declared UserRole literals
     const _badRole: InsertRow = {
       id: 201,
       actor_id: userId(3002),
       action: "login",
+      // @ts-expect-error "owner" is not one of the declared UserRole literals
       actor_role: "owner",
       created_at: new Date(),
     };
     void _badRole;
 
-    // @ts-expect-error actor_id requires a UserId brand, plain number is rejected
     const _plainNumber: InsertRow = {
       id: 202,
+      // @ts-expect-error actor_id requires a UserId brand, plain number is rejected
       actor_id: 3003,
       action: "login",
       actor_role: "user",
@@ -168,10 +168,10 @@ describeE2E("ck-orm e2e — user-scenario type overrides", function describeUser
     expect(carolPresent.preferences.locale).toBe("ja-JP");
     expect(carolPresent.preferences.betaFeatures).toEqual(["alpha-only"]);
 
-    // @ts-expect-error preferences must match the declared shape — wrong theme literal
     const _badRow: InferInsertModel<typeof userProfileTyped> = {
       id: 999,
       display_name: "rejected",
+      // @ts-expect-error preferences must match the declared shape — wrong theme literal
       preferences: { theme: "neon", locale: "en", betaFeatures: [] },
       signup_at: new Date(),
     };

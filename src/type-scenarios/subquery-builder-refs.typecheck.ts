@@ -8,7 +8,7 @@
 //     returned builder so `sub.id` remains accessible after the chain
 //   - `.as("name")` route still produces a literal-aliased Subquery
 
-import { ckTable, ckType, clickhouseClient, fn, type Selection } from "../index";
+import { ck, ckAlias, ckTable, ckType, clickhouseClient, fn, type Selection } from "../index";
 import type { Equal, Expect } from "./helpers";
 
 const orders = ckTable(
@@ -82,3 +82,71 @@ const noSelection = db.select().from(orders);
 // `.execute()` resolves to `Promise<{id, name, amount}[]>` (specific shape).
 type _NoSelectionRowShape = Awaited<ReturnType<typeof noSelection.execute>>[number];
 type _NoSelectionRowAssert = Expect<Equal<_NoSelectionRowShape, { id: number; name: string; amount: number }>>;
+
+// 7. A left-joined bare builder or anonymous CTE has no literal source key, but
+//    its unmatched rows still come back as NULL under join_use_nulls = 1, so
+//    its refs widen to `| null`. Other sources keep their own nullability.
+const customerTotals = () =>
+  db
+    .select({ customerId: orders.id, spent: fn.sum(orders.amount) })
+    .from(orders)
+    .groupBy(orders.id);
+const bareTotals = customerTotals();
+const bareLeftJoined = db
+  .select({ name: orders.name, spent: bareTotals.spent, count: fn.count() })
+  .from(orders)
+  .leftJoin(bareTotals, (totals) => ck.eq(orders.id, totals.customerId));
+type _BareLeftJoinRow = Awaited<ReturnType<typeof bareLeftJoined.execute>>[number];
+type _BareLeftJoinAssert = Expect<Equal<_BareLeftJoinRow, { name: string; spent: number | null; count: number }>>;
+
+const bareInnerJoined = db
+  .select({ name: orders.name, spent: bareTotals.spent })
+  .from(orders)
+  .innerJoin(bareTotals, (totals) => ck.eq(orders.id, totals.customerId));
+type _BareInnerJoinRow = Awaited<ReturnType<typeof bareInnerJoined.execute>>[number];
+type _BareInnerJoinAssert = Expect<Equal<_BareInnerJoinRow, { name: string; spent: number }>>;
+
+const anonymousTotals = db.$with().as(customerTotals());
+const cteLeftJoined = db
+  .with(anonymousTotals)
+  .select({ name: orders.name, spent: anonymousTotals.spent })
+  .from(orders)
+  .leftJoin(anonymousTotals, ck.eq(orders.id, anonymousTotals.customerId));
+type _CteLeftJoinRow = Awaited<ReturnType<typeof cteLeftJoined.execute>>[number];
+type _CteLeftJoinAssert = Expect<Equal<_CteLeftJoinRow, { name: string; spent: number | null }>>;
+
+const noNullsBareLeftJoined = db
+  .withSettings({ join_use_nulls: 0 as const })
+  .select({ spent: bareTotals.spent })
+  .from(orders)
+  .leftJoin(bareTotals, ck.eq(orders.id, bareTotals.customerId));
+type _NoNullsBareLeftJoinRow = Awaited<ReturnType<typeof noNullsBareLeftJoined.execute>>[number];
+type _NoNullsBareLeftJoinAssert = Expect<Equal<_NoNullsBareLeftJoinRow, { spent: number }>>;
+
+// A named source whose alias is a wide `string` is still a left join: unmatched
+// rows are NULL. An index signature must not skip that widening.
+const dyn: string = String(Math.random());
+const dynOrders = ckAlias(orders, dyn);
+const dynAliasLeftJoined = db
+  .select({ name: dynOrders.name })
+  .from(orders)
+  .leftJoin(dynOrders, ck.eq(orders.id, dynOrders.id));
+type _DynAliasLeftJoinRow = Awaited<ReturnType<typeof dynAliasLeftJoined.execute>>[number];
+type _DynAliasLeftJoinAssert = Expect<Equal<_DynAliasLeftJoinRow, { name: string | null }>>;
+
+const dynCte = db.$with(dyn).as(customerTotals());
+const dynCteLeftJoined = db
+  .with(dynCte)
+  .select({ spent: dynCte.spent })
+  .from(orders)
+  .leftJoin(dynCte, ck.eq(orders.id, dynCte.customerId));
+type _DynCteLeftJoinRow = Awaited<ReturnType<typeof dynCteLeftJoined.execute>>[number];
+type _DynCteLeftJoinAssert = Expect<Equal<_DynCteLeftJoinRow, { spent: number | null }>>;
+
+const dynSubquery = customerTotals().as(dyn);
+const dynSubqueryLeftJoined = db
+  .select({ spent: dynSubquery.spent })
+  .from(orders)
+  .leftJoin(dynSubquery, ck.eq(orders.id, dynSubquery.customerId));
+type _DynSubqueryLeftJoinRow = Awaited<ReturnType<typeof dynSubqueryLeftJoined.execute>>[number];
+type _DynSubqueryLeftJoinAssert = Expect<Equal<_DynSubqueryLeftJoinRow, { spent: number | null }>>;

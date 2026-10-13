@@ -2,7 +2,7 @@
 
 This directory contains the real `ck-orm` end-to-end suite. It is not a unit test directory.
 
-`bun run test:orm` only runs the ORM unit tests under `src/` and does not execute these E2E tests. The E2E suite connects to a real ClickHouse instance only when the `CLICKHOUSE_E2E_*` environment variables are present or when you run the bundled E2E script.
+`bun run test:orm` only runs the unit tests under `src/` and `examples/` and does not execute these E2E tests. The E2E suite connects to a real ClickHouse instance only when the `CLICKHOUSE_E2E_*` environment variables are present or when you run the bundled E2E script.
 
 The suite does the following:
 
@@ -36,6 +36,7 @@ This repository uses two different environment-variable groups on purpose:
   - `CK_ORM_E2E_PROJECT`
   - `CK_ORM_E2E_USER`
   - `CK_ORM_E2E_PASSWORD`
+  - `CK_ORM_E2E_CLICKHOUSE_VERSION` (optional; ClickHouse image tag, defaults to `26.3`)
   - `KEEP_CK_ORM_E2E`
 - `CLICKHOUSE_E2E_*`: tells the test code how to connect to ClickHouse
   - `CLICKHOUSE_E2E_URL`
@@ -194,7 +195,8 @@ The current E2E suite covers:
   - `reward_events`: 24,000 physical rows
   - `trade_fills`: 20,000
   - `quote_snapshots`: 40,000
-- experimental settings required by `JSON`, `Dynamic`, `QBit`, and related types are provided by the default E2E client settings
+- experimental settings required by `JSON`, `Dynamic`, and related types are provided by the default E2E client settings
+- `schema_qbit` is created and seeded only when `system.data_type_families` includes `QBit`
 
 ## Debugging
 

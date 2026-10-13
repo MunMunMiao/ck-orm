@@ -1,4 +1,4 @@
-ARG BUN_VERSION=1.3.13
+ARG BUN_VERSION=latest
 FROM oven/bun:${BUN_VERSION}
 
 WORKDIR /workspace

@@ -32,6 +32,7 @@ export type SessionConcurrencyController = {
     sessionId: string | undefined,
     operation: () => AsyncGenerator<TValue, void, unknown>,
     abortSignal?: AbortSignal,
+    waitForServerRelease?: () => Promise<void>,
   ): AsyncGenerator<TValue, void, unknown>;
 };
 
@@ -161,6 +162,7 @@ export const createSessionConcurrencyController = (maxConcurrentRequests: number
       sessionId: string | undefined,
       operation: () => AsyncGenerator<TValue, void, unknown>,
       abortSignal?: AbortSignal,
+      waitForServerRelease?: () => Promise<void>,
     ): AsyncGenerator<TValue, void, unknown> {
       if (!sessionId) {
         yield* operation();
@@ -168,10 +170,20 @@ export const createSessionConcurrencyController = (maxConcurrentRequests: number
       }
 
       const release = await acquireSlot(sessionId, abortSignal);
+      let completed = false;
       try {
         yield* operation();
+        completed = true;
       } finally {
-        release();
+        // A stream left early (break, error, abort) can still be running on the
+        // server, which keeps the session locked until it notices the closed
+        // connection. Hold the local slot until then, without blocking the
+        // caller, so the next same-session request does not hit SESSION_IS_LOCKED.
+        if (completed || !waitForServerRelease) {
+          release();
+        } else {
+          void waitForServerRelease().finally(release);
+        }
       }
     },
   };

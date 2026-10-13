@@ -408,7 +408,8 @@ describeE2E("ck-orm e2e insert.fromSelect", function describeInsertFromSelect() 
         session
           .select({
             userId: webEvents.user_id,
-            eventCount: fn.count(),
+            // fromSelect matches the decoded type of each column: UInt64 columns take string-decoded counts.
+            eventCount: fn.count().toSafe(),
             revenue: fn.sum(webEvents.revenue),
           })
           .from(webEvents)
@@ -567,7 +568,7 @@ describeE2E("ck-orm e2e insert.fromSelect", function describeInsertFromSelect() 
       // remain arrays, LowCardinality is transparent on read.
       expect(scopeRows.length).toBe(sourceRows.length);
       for (let i = 0; i < scopeRows.length; i += 1) {
-        expect(scopeRows[i]?.eventId).toBe(sourceRows[i]?.eventId as bigint);
+        expect(scopeRows[i]?.eventId).toBe(sourceRows[i]?.eventId as string);
         expect(scopeRows[i]?.country).toBe(sourceRows[i]?.country as string);
         expect(scopeRows[i]?.revenue).toBe(sourceRows[i]?.revenue as string);
         expect(scopeRows[i]?.tags).toEqual(sourceRows[i]?.tags as string[]);
@@ -623,7 +624,7 @@ describeE2E("ck-orm e2e insert.fromSelect", function describeInsertFromSelect() 
               id: users.id,
               // Force an arithmetic error by dividing by a deliberate zero
               // expression — ClickHouse rejects this at execute time.
-              bucket: fn.intDiv(users.id, ck.expr(ckSql`toInt32(0)`)),
+              bucket: fn.intDiv<number>(users.id, ck.expr(ckSql`toInt32(0)`)),
             })
             .from(users)
             .where(ck.eq(users.id, 1)),
@@ -874,8 +875,8 @@ describeE2E("ck-orm e2e insert.fromSelect", function describeInsertFromSelect() 
       const t2 = Math.floor(new Date("2026-05-01T08:30:00.000Z").getTime() / 1000);
       await session.insert(liveOrders).values([
         {
-          orderId: 1001n,
-          customerId: 42n,
+          orderId: "1001",
+          customerId: "42",
           total: "199.99",
           lineItems: [
             { sku: "BOOK-A", qty: 1, price: 49.99 },
@@ -887,8 +888,8 @@ describeE2E("ck-orm e2e insert.fromSelect", function describeInsertFromSelect() 
           ],
         },
         {
-          orderId: 1002n,
-          customerId: 43n,
+          orderId: "1002",
+          customerId: "43",
           total: "30.00",
           lineItems: [{ sku: "MUG-X", qty: 1, price: 30.0 }],
           statusHistory: [

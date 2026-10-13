@@ -127,12 +127,20 @@ export interface SelectionMeta<TData = unknown> {
   readonly path: readonly [string] | readonly [string, string];
   readonly nullable?: boolean;
   readonly groupNullable?: boolean;
+  /** Array/Map/Nested field. An empty raw value counts as missing when a nullable group is collapsed. */
+  readonly container?: boolean;
+  /** Expression that is not a column or a subquery/CTE/table reference. NULL decodes as null when its decoder throws. */
+  readonly computed?: boolean;
 }
 
 export const passThroughDecoder: Decoder<unknown> = (value) => value;
 
+/** @internal Source object of a lazily aliased column ref (bare builder / anonymous CTE). */
+export const expressionOriginSymbol = Symbol("clickhouseORMExpressionOrigin");
+
 export const createExpression = <TData, TSourceKey extends string | undefined = string | undefined>(config: {
   compile: (ctx: BuildContext) => SQLFragment;
+  origin?: object;
   decoder: Decoder<TData>;
   sqlType?: string;
   outputAlias?: string;
@@ -147,6 +155,7 @@ export const createExpression = <TData, TSourceKey extends string | undefined = 
     sourceKey: config.sourceKey,
     compile: config.compile,
     [windowExpressionCompilerSymbol]: config.windowCompiler,
+    [expressionOriginSymbol]: config.origin,
     as<TAlias extends string>(alias: TAlias): AliasedSelection<TData, TAlias, TSourceKey> {
       return createExpression({
         ...config,

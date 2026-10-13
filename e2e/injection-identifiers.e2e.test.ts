@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { ckAlias, ckSql, fn, type SQLFragment } from "./ck-orm";
+import { ckAlias, ckSql, fn } from "./ck-orm";
 import { createE2EDb, users } from "./shared";
 import { describeE2E, expectClientValidationNotSent, expectNoMutationAfterRejectedInjection } from "./test-helpers";
 
@@ -63,10 +63,7 @@ describeE2E("ck-orm e2e injection identifiers", function describeInjectionIdenti
         message: "[ck-orm] Invalid function name: ; DROP TABLE users; --",
       },
       {
-        run: () =>
-          db.execute(
-            ckSql`select * from ${fn.table.call("; DROP TABLE users; --", 5).as("evil_source") as SQLFragment<unknown>}`,
-          ),
+        run: () => db.execute(ckSql`select * from ${fn.table.call("; DROP TABLE users; --", 5).as("evil_source")}`),
         message: "[ck-orm] Invalid function name: ; DROP TABLE users; --",
       },
     ];

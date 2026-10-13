@@ -13,12 +13,17 @@ import {
   json,
   lowCardinality,
   nullable,
+  simpleAggregateFunction,
   string,
   uint64,
 } from "./columns";
 import { fn, tableFn } from "./functions";
 import { asc, desc } from "./query";
+import { createExpression, passThroughDecoder, type Selection, type SqlExpression } from "./query-shared";
 import { compileSql, sql } from "./sql";
+
+// Public selections hide their compiler internals; tests inspect them through the internal type.
+const asExpression = <TData>(selection: Selection<TData>) => selection as SqlExpression<TData>;
 
 const officialArrayFunctionNames = [
   "array",
@@ -316,9 +321,9 @@ const createContext = () => ({
   nextParamIndex: 0,
 });
 
-const compileExpression = (expression: { compile(ctx: ReturnType<typeof createContext>): unknown }) => {
+const compileExpression = (expression: Selection<unknown>) => {
   const ctx = createContext();
-  const built = compileSql(sql`${expression.compile(ctx)}`, ctx);
+  const built = compileSql(sql`${asExpression(expression).compile(ctx)}`, ctx);
   return {
     query: built.query,
     params: {
@@ -346,7 +351,7 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     const compiledNames: string[] = [];
     const expectCompiled = (
       name: (typeof typeConversionFunctionNames)[number],
-      expression: { compile(ctx: ReturnType<typeof createContext>): unknown },
+      expression: Selection<unknown>,
       expectedSql = `${name}(`,
     ) => {
       compiledNames.push(name);
@@ -599,53 +604,59 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
   });
 
   it("decodes conversion helper result types and rejects invalid literal-only arguments", function testConversionDecoders() {
-    expect(fn.toBool("1").decoder("true")).toBe(true);
-    expect(fn.toBFloat16("1.5").decoder("1.5")).toBe(1.5);
-    expect(fn.toBFloat16OrNull("bad").decoder(null)).toBeNull();
-    expect(fn.toFloat32("1.5").decoder("1.5")).toBe(1.5);
-    expect(fn.toFloat64OrNull("bad").decoder(null)).toBeNull();
+    expect(asExpression(fn.toBool("1")).decoder("true")).toBe(true);
+    expect(asExpression(fn.toBFloat16("1.5")).decoder("1.5")).toBe(1.5);
+    expect(asExpression(fn.toBFloat16OrNull("bad")).decoder(null)).toBeNull();
+    expect(asExpression(fn.toFloat32("1.5")).decoder("1.5")).toBe(1.5);
+    expect(asExpression(fn.toFloat64OrNull("bad")).decoder(null)).toBeNull();
 
-    expect(fn.toInt8("127").decoder("127")).toBe(127);
-    expect(fn.toInt16("32767").decoder(32767)).toBe(32767);
-    expect(fn.toInt32("-2147483648").decoder("-2147483648")).toBe(-2147483648);
-    expect(fn.toUInt8("255").decoder("255")).toBe(255);
-    expect(fn.toUInt16("65535").decoder(65535)).toBe(65535);
-    expect(fn.toUInt32("4294967295").decoder("4294967295")).toBe(4294967295);
-    expect(fn.toInt64("1").decoder(9007199254740993n)).toBe("9007199254740993");
-    expect(fn.toInt128("1").decoder("-170141183460469231731687303715884105728")).toBe(
+    expect(asExpression(fn.toInt8("127")).decoder("127")).toBe(127);
+    expect(asExpression(fn.toInt16("32767")).decoder(32767)).toBe(32767);
+    expect(asExpression(fn.toInt32("-2147483648")).decoder("-2147483648")).toBe(-2147483648);
+    expect(asExpression(fn.toUInt8("255")).decoder("255")).toBe(255);
+    expect(asExpression(fn.toUInt16("65535")).decoder(65535)).toBe(65535);
+    expect(asExpression(fn.toUInt32("4294967295")).decoder("4294967295")).toBe(4294967295);
+    expect(asExpression(fn.toInt64("1")).decoder(9007199254740993n)).toBe("9007199254740993");
+    expect(asExpression(fn.toInt128("1")).decoder("-170141183460469231731687303715884105728")).toBe(
       "-170141183460469231731687303715884105728",
     );
-    expect(fn.toInt256OrNull("bad").decoder(null)).toBeNull();
-    expect(fn.toUInt64("1").decoder(18446744073709551615n)).toBe("18446744073709551615");
-    expect(fn.toUInt128OrNull("bad").decoder(null)).toBeNull();
+    expect(asExpression(fn.toInt256OrNull("bad")).decoder(null)).toBeNull();
+    expect(asExpression(fn.toUInt64("1")).decoder(18446744073709551615n)).toBe("18446744073709551615");
+    expect(asExpression(fn.toUInt128OrNull("bad")).decoder(null)).toBeNull();
     expect(
-      fn.toUInt256("1").decoder("115792089237316195423570985008687907853269984665640564039457584007913129639935"),
+      asExpression(fn.toUInt256("1")).decoder(
+        "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+      ),
     ).toBe("115792089237316195423570985008687907853269984665640564039457584007913129639935");
-    expect(() => fn.toInt8("128").decoder("128")).toThrow("Cannot convert value to integer in range -128..127");
-    expect(() => fn.toUInt64("-1").decoder(-1)).toThrow("Cannot convert value to integer string");
+    expect(() => asExpression(fn.toInt8("128")).decoder("128")).toThrow(
+      "Cannot convert value to integer in range -128..127",
+    );
+    expect(() => asExpression(fn.toUInt64("-1")).decoder(-1)).toThrow("Cannot convert value to integer string");
 
-    expect(fn.toDecimal32OrNull("bad", 2).decoder(null)).toBeNull();
-    expect(fn.toDecimal64OrDefault("bad", 2).decoder("1.23")).toBe("1.23");
-    expect(fn.toDecimalString("1.234", 2).decoder(1.23)).toBe("1.23");
-    expect(fn.toFixedString("abc", 3).decoder(1n)).toBe("1");
+    expect(asExpression(fn.toDecimal32OrNull("bad", 2)).decoder(null)).toBeNull();
+    expect(asExpression(fn.toDecimal64OrDefault("bad", 2)).decoder("1.23")).toBe("1.23");
+    expect(asExpression(fn.toDecimalString("1.234", 2)).decoder(1.23)).toBe("1.23");
+    expect(asExpression(fn.toFixedString("abc", 3)).decoder(1n)).toBe("1");
 
-    expect(fn.toDateOrNull("bad").decoder(null)).toBeNull();
-    expect(fn.toDateOrZero("bad").decoder("1970-01-01")).toEqual(new Date("1970-01-01"));
-    expect(fn.toDateTime64OrNull("bad", 3).decoder(null)).toBeNull();
-    expect(fn.parseDateTimeOrNull("bad", "%F").decoder(null)).toBeNull();
-    expect(fn.parseDateTime64BestEffortOrNull("bad").decoder(null)).toBeNull();
+    expect(asExpression(fn.toDateOrNull("bad")).decoder(null)).toBeNull();
+    expect(asExpression(fn.toDateOrZero("bad")).decoder("1970-01-01")).toEqual(new Date("1970-01-01"));
+    expect(asExpression(fn.toDateTime64OrNull("bad", 3)).decoder(null)).toBeNull();
+    expect(asExpression(fn.parseDateTimeOrNull("bad", "%F")).decoder(null)).toBeNull();
+    expect(asExpression(fn.parseDateTime64BestEffortOrNull("bad")).decoder(null)).toBeNull();
     // toTime returns DateTime (toTimeWithFixedDate). The decoder hands back a Date.
-    expect(fn.toTime("1970-01-01 12:34:56").decoder("1970-01-02 12:34:56")).toEqual(new Date("1970-01-02 12:34:56"));
-    expect(fn.toTimeOrNull("bad").decoder(null)).toBeNull();
+    expect(asExpression(fn.toTime("1970-01-01 12:34:56")).decoder("1970-01-02 12:34:56")).toEqual(
+      new Date("1970-01-02 12:34:56"),
+    );
+    expect(asExpression(fn.toTimeOrNull("bad")).decoder(null)).toBeNull();
     // toTime64 returns the new Time64 data type — strings.
-    expect(fn.toTime64("12:34:56.123456", 6).decoder("12:34:56.123456")).toBe("12:34:56.123456");
-    expect(fn.toTime64OrNull("bad", 6).decoder(null)).toBeNull();
+    expect(asExpression(fn.toTime64("12:34:56.123456", 6)).decoder("12:34:56.123456")).toBe("12:34:56.123456");
+    expect(asExpression(fn.toTime64OrNull("bad", 6)).decoder(null)).toBeNull();
 
-    expect(fn.toUUID("00000000-0000-0000-0000-000000000000").decoder(1n)).toBe("1");
-    expect(fn.toLowCardinality<string>("vip").decoder("vip")).toBe("vip");
-    expect(fn.toNullable<string>("vip").decoder(null)).toBeNull();
-    expect(fn.toNullable<string>("vip").decoder("vip")).toBe("vip");
-    expect(fn.accurateCastOrNull<number>("bad", "UInt8").decoder(null)).toBeNull();
+    expect(asExpression(fn.toUUID("00000000-0000-0000-0000-000000000000")).decoder(1n)).toBe("1");
+    expect(asExpression(fn.toLowCardinality<string>("vip")).decoder("vip")).toBe("vip");
+    expect(asExpression(fn.toNullable<string>("vip")).decoder(null)).toBeNull();
+    expect(asExpression(fn.toNullable<string>("vip")).decoder("vip")).toBe("vip");
+    expect(asExpression(fn.accurateCastOrNull<number>("bad", "UInt8")).decoder(null)).toBeNull();
 
     expect(compileExpression(fn.cast("state", "AggregateFunction(quantile(0.5), Float64)")).query).toContain(
       "CAST({orm_param1:String} AS AggregateFunction(quantile(0.5), Float64))",
@@ -789,33 +800,33 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
 
     const countBuilt = compileExpression(fn.count());
     expect(countBuilt.query).toContain("toFloat64(count())");
-    expect(fn.count().decoder(10)).toBe(10);
-    expect(fn.count().decoder("10")).toBe(10);
-    expect(fn.count().decoder(1n)).toBe(1);
-    expect(() => fn.count().decoder(true)).toThrow("Failed to decode count() result");
-    expect(() => fn.count().decoder(-1)).toThrow("Failed to decode count() result");
+    expect(asExpression(fn.count()).decoder(10)).toBe(10);
+    expect(asExpression(fn.count()).decoder("10")).toBe(10);
+    expect(asExpression(fn.count()).decoder(1n)).toBe(1);
+    expect(() => asExpression(fn.count()).decoder(true)).toThrow("Failed to decode count() result");
+    expect(() => asExpression(fn.count()).decoder(-1)).toThrow("Failed to decode count() result");
 
     const countSafeBuilt = compileExpression(fn.count().toSafe());
     expect(countSafeBuilt.query).toContain("toString(count())");
-    expect(fn.count().toSafe().decoder("10")).toBe("10");
-    expect(fn.count().toSafe().decoder(1n)).toBe("1");
+    expect(asExpression(fn.count().toSafe()).decoder("10")).toBe("10");
+    expect(asExpression(fn.count().toSafe()).decoder(1n)).toBe("1");
 
     const countMixedBuilt = compileExpression(fn.count().toMixed());
     expect(countMixedBuilt.query).toContain("toUInt64(count())");
-    expect(fn.count().toMixed().decoder("10")).toBe("10");
-    expect(fn.count().toMixed().decoder(10)).toBe(10);
+    expect(asExpression(fn.count().toMixed()).decoder("10")).toBe("10");
+    expect(asExpression(fn.count().toMixed()).decoder(10)).toBe(10);
 
     const countUnsafeBuilt = compileExpression(fn.count().toMixed().toUnsafe());
     expect(countUnsafeBuilt.query).toContain("toFloat64(count())");
 
     const countIfBuilt = compileExpression(fn.countIf(fn.not(int32().bind({ name: "id", tableName: "orders" }))));
     expect(countIfBuilt.query).toContain("toFloat64(countIf(not(`orders`.`id`)))");
-    expect(fn.countIf(fn.not(int32())).decoder(9)).toBe(9);
+    expect(asExpression(fn.countIf(fn.not(int32()))).decoder(9)).toBe(9);
     const countIfSafeBuilt = compileExpression(
       fn.countIf(fn.not(int32().bind({ name: "id", tableName: "orders" }))).toSafe(),
     );
     expect(countIfSafeBuilt.query).toContain("toString(countIf(not(`orders`.`id`)))");
-    expect(fn.countIf(fn.not(int32())).toSafe().decoder("9")).toBe("9");
+    expect(asExpression(fn.countIf(fn.not(int32())).toSafe()).decoder("9")).toBe("9");
 
     const countWithArg = compileExpression(fn.count(string().bind({ name: "name", tableName: "orders" })));
     expect(countWithArg.query).toContain("toFloat64(count(`orders`.`name`))");
@@ -839,8 +850,8 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
       int32().bind({ name: "id", tableName: "orders" }),
     );
     expect(compileExpression(argMinSelection).query).toContain("argMin(`orders`.`score`, `orders`.`id`)");
-    expect(argMinSelection.sqlType).toBe("Int32");
-    expect(argMinSelection.decoder(5)).toBe(5);
+    expect(asExpression(argMinSelection).sqlType).toBe("Int32");
+    expect(asExpression(argMinSelection).decoder(5)).toBe(5);
   });
 
   it("compiles and decodes replaceRegexpAll with nullable inputs", function testReplaceRegexpAll() {
@@ -852,15 +863,15 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
       orm_param2: "([a-z]+)([0-9]+)",
       orm_param3: String.raw`\2-\1`,
     });
-    expect(literal.decoder("123-abc")).toBe("123-abc");
-    expect(() => literal.decoder({})).toThrow("Cannot convert value to string");
+    expect(asExpression(literal).decoder("123-abc")).toBe("123-abc");
+    expect(() => asExpression(literal).decoder({})).toThrow("Cannot convert value to string");
 
     for (const selection of [
       fn.replaceRegexpAll(nullable(string()), "a", "b"),
       fn.replaceRegexpAll("abc", nullable(string()), "b"),
       fn.replaceRegexpAll("abc", "a", nullable(string())),
     ]) {
-      expect(selection.decoder(null)).toBeNull();
+      expect(asExpression(selection).decoder(null)).toBeNull();
     }
   });
 
@@ -870,22 +881,25 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
 
     const greatestSelection = fn.greatest(id, 0);
     expect(compileExpression(greatestSelection).query).toContain("greatest(`orders`.`id`, {orm_param1:Int64})");
-    expect(greatestSelection.sqlType).toBe("Int32");
-    expect(greatestSelection.decoder(7)).toBe(7);
+    expect(asExpression(greatestSelection).sqlType).toBe("Int32");
+    expect(asExpression(greatestSelection).decoder(7)).toBe(7);
 
     const leastSelection = fn.least(name, "fallback");
     expect(compileExpression(leastSelection).query).toContain("least(`orders`.`name`, {orm_param1:String})");
-    expect(leastSelection.sqlType).toBe("String");
+    expect(asExpression(leastSelection).sqlType).toBe("String");
 
     const nullIfSelection = fn.nullIf(id, 0);
     expect(compileExpression(nullIfSelection).query).toContain("nullIf(`orders`.`id`, {orm_param1:Int64})");
-    expect(nullIfSelection.sqlType).toBe("Nullable(Int32)");
-    expect(nullIfSelection.decoder(null)).toBeNull();
-    expect(nullIfSelection.decoder(7)).toBe(7);
+    expect(asExpression(nullIfSelection).sqlType).toBe("Nullable(Int32)");
+    expect(asExpression(nullIfSelection).decoder(null)).toBeNull();
+    expect(asExpression(nullIfSelection).decoder(7)).toBe(7);
 
     const nullableInput = nullable(int32()).bind({ name: "maybe_id", tableName: "orders" });
     const nullIfFromNullable = fn.nullIf(nullableInput, 0);
-    expect(nullIfFromNullable.sqlType).toBe("Nullable(Int32)");
+    expect(asExpression(nullIfFromNullable).sqlType).toBe("Nullable(Int32)");
+
+    const safSum = simpleAggregateFunction("sum", uint64()).bind({ name: "total", tableName: "orders" });
+    expect(asExpression(fn.nullIf(safSum, "0")).sqlType).toBe("Nullable(UInt64)");
   });
 
   it("plans conditional literal types only when every value branch matches one anchor", function testConditionalPlans() {
@@ -895,19 +909,19 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
 
     const floatResult = fn.if(sql.raw("1"), ratio, 0);
     expect(compileExpression(floatResult).query).toBe("if(1, `orders`.`ratio`, {orm_param1:Float64})");
-    expect(floatResult.sqlType).toBe("Float64");
-    expect(floatResult.decoder("1.5")).toBe(1.5);
+    expect(asExpression(floatResult).sqlType).toBe("Float64");
+    expect(asExpression(floatResult).decoder("1.5")).toBe(1.5);
 
     const lateAnchor = fn.if(sql.raw("1"), 0, ratio);
     expect(compileExpression(lateAnchor).query).toBe("if(1, {orm_param1:Float64}, `orders`.`ratio`)");
     expect(() => fn.over(lateAnchor)).toThrow("fn.over only accepts window-capable function expressions created by fn");
-    expect(lateAnchor.sqlType).toBe("Float64");
-    expect(lateAnchor.decoder("1.5")).toBe(1.5);
+    expect(asExpression(lateAnchor).sqlType).toBe("Float64");
+    expect(asExpression(lateAnchor).decoder("1.5")).toBe(1.5);
 
     const uintResult = fn.if(sql.raw("1"), rank, 6);
     expect(compileExpression(uintResult).query).toBe("if(1, `orders`.`rank`, {orm_param1:UInt64})");
-    expect(uintResult.sqlType).toBe("UInt64");
-    expect(uintResult.decoder("6")).toBe("6");
+    expect(asExpression(uintResult).sqlType).toBe("UInt64");
+    expect(asExpression(uintResult).decoder("6")).toBe("6");
 
     const negativeUIntFallback = fn.if(sql.raw("1"), rank, -1);
     expect(compileExpression(negativeUIntFallback)).toEqual({
@@ -915,20 +929,20 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
       params: { orm_param1: -1 },
       paramTypes: { orm_param1: "Int64" },
     });
-    expect(negativeUIntFallback.sqlType).toBeUndefined();
+    expect(asExpression(negativeUIntFallback).sqlType).toBeUndefined();
     const undecodedNegativeUInt = { raw: "1" };
-    expect(negativeUIntFallback.decoder(undecodedNegativeUInt)).toBe(undecodedNegativeUInt);
+    expect(asExpression(negativeUIntFallback).decoder(undecodedNegativeUInt)).toBe(undecodedNegativeUInt);
 
     const multiResult = fn.multiIf(sql.raw("a"), rank, sql.raw("b"), 5, 6);
     expect(compileExpression(multiResult).query).toBe(
       "multiIf(a, `orders`.`rank`, b, {orm_param1:UInt64}, {orm_param2:UInt64})",
     );
-    expect(multiResult.sqlType).toBe("UInt64");
+    expect(asExpression(multiResult).sqlType).toBe("UInt64");
 
     const promoted = fn.if(sql.raw("1"), id, 3_000_000_000);
     expect(compileExpression(promoted).query).toBe("if(1, `orders`.`id`, {orm_param1:Int64})");
-    expect(promoted.sqlType).toBeUndefined();
-    expect(promoted.decoder("3000000000")).toBe("3000000000");
+    expect(asExpression(promoted).sqlType).toBeUndefined();
+    expect(asExpression(promoted).decoder("3000000000")).toBe("3000000000");
   });
 
   it("does not partially type conditionals containing heterogeneous or raw branches", function testUnknownConditionals() {
@@ -939,25 +953,25 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     expect(compileExpression(heterogeneous).query).toBe(
       "multiIf(a, `orders`.`rank`, b, {orm_param1:Int64}, c, `orders`.`signed`, {orm_param2:Int64})",
     );
-    expect(heterogeneous.sqlType).toBeUndefined();
-    expect(heterogeneous.decoder("6")).toBe("6");
+    expect(asExpression(heterogeneous).sqlType).toBeUndefined();
+    expect(asExpression(heterogeneous).decoder("6")).toBe("6");
 
     const raw = fn.if(sql.raw("1"), rank, sql.raw("toUInt64(6)"));
     expect(compileExpression(raw).query).toBe("if(1, `orders`.`rank`, toUInt64(6))");
-    expect(raw.sqlType).toBeUndefined();
-    expect(raw.decoder({ raw: true })).toEqual({ raw: true });
+    expect(asExpression(raw).sqlType).toBeUndefined();
+    expect(asExpression(raw).decoder({ raw: true })).toEqual({ raw: true });
 
     const unsupported = fn.if(sql.raw("1"), rank, Symbol("unsupported"));
     expect(unsupported).toBeDefined();
-    expect(unsupported.sqlType).toBeUndefined();
+    expect(asExpression(unsupported).sqlType).toBeUndefined();
     const undecoded = { raw: true };
-    expect(unsupported.decoder(undecoded)).toBe(undecoded);
+    expect(asExpression(unsupported).decoder(undecoded)).toBe(undecoded);
     expect(() => compileExpression(unsupported)).toThrow("Unsupported SQL parameter value");
 
     const emptyMulti = fn.multiIf();
     expect(compileExpression(emptyMulti).query).toBe("multiIf()");
-    expect(emptyMulti.sqlType).toBeUndefined();
-    expect(emptyMulti.decoder({ raw: true })).toEqual({ raw: true });
+    expect(asExpression(emptyMulti).sqlType).toBeUndefined();
+    expect(asExpression(emptyMulti).decoder({ raw: true })).toEqual({ raw: true });
   });
 
   it("keeps unsupported same-type expression branches conservative", function testTypedConditionalExpressions() {
@@ -966,15 +980,15 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     const dateResult = fn.if(sql.raw("1"), openedAt, closedAt);
 
     expect(compileExpression(dateResult).query).toBe("if(1, `orders`.`opened_at`, `orders`.`closed_at`)");
-    expect(dateResult.sqlType).toBeUndefined();
-    expect(dateResult.decoder("2026-07-14T00:00:00.123Z")).toBe("2026-07-14T00:00:00.123Z");
+    expect(asExpression(dateResult).sqlType).toBeUndefined();
+    expect(asExpression(dateResult).decoder("2026-07-14T00:00:00.123Z")).toBe("2026-07-14T00:00:00.123Z");
 
     const currentState = lowCardinality(string()).bind({ name: "current_state", tableName: "orders" });
     const previousState = lowCardinality(string()).bind({ name: "previous_state", tableName: "orders" });
     const lowCardinalityResult = fn.if(sql.raw("1"), currentState, previousState);
 
-    expect(lowCardinalityResult.sqlType).toBeUndefined();
-    expect(lowCardinalityResult.decoder({ raw: true })).toEqual({ raw: true });
+    expect(asExpression(lowCardinalityResult).sqlType).toBeUndefined();
+    expect(asExpression(lowCardinalityResult).decoder({ raw: true })).toEqual({ raw: true });
   });
 
   it("compiles fn arithmetic operators with first-arg type propagation", function testArithmeticFns() {
@@ -982,31 +996,31 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
 
     const plusSel = fn.plus(id, 1);
     expect(compileExpression(plusSel).query).toContain("plus(`orders`.`id`, {orm_param1:Int64})");
-    expect(plusSel.sqlType).toBe("Int32");
-    expect(plusSel.decoder(5)).toBe(5);
+    expect(asExpression(plusSel).sqlType).toBe("Int32");
+    expect(asExpression(plusSel).decoder(5)).toBe(5);
 
     const minusSel = fn.minus(id, 1);
     expect(compileExpression(minusSel).query).toContain("minus(`orders`.`id`,");
-    expect(minusSel.sqlType).toBe("Int32");
+    expect(asExpression(minusSel).sqlType).toBe("Int32");
 
     const mulSel = fn.multiply(id, 2);
     expect(compileExpression(mulSel).query).toContain("multiply(`orders`.`id`,");
-    expect(mulSel.sqlType).toBe("Int32");
+    expect(asExpression(mulSel).sqlType).toBe("Int32");
 
     const divSel = fn.divide(id, 2);
     expect(compileExpression(divSel).query).toContain("divide(`orders`.`id`,");
-    expect(divSel.sqlType).toBe("Float64");
-    expect(divSel.decoder(2.5)).toBe(2.5);
+    expect(asExpression(divSel).sqlType).toBe("Float64");
+    expect(asExpression(divSel).decoder(2.5)).toBe(2.5);
 
     const intDivSel = fn.intDiv(id, 60);
     expect(compileExpression(intDivSel).query).toContain("intDiv(`orders`.`id`,");
-    expect(intDivSel.sqlType).toBe("Int32");
+    expect(asExpression(intDivSel).sqlType).toBe("Int32");
 
     expect(compileExpression(fn.intDivOrZero(id, 60)).query).toContain("intDivOrZero(`orders`.`id`,");
 
     const modSel = fn.modulo(id, 7);
     expect(compileExpression(modSel).query).toContain("modulo(`orders`.`id`,");
-    expect(modSel.sqlType).toBe("Int32");
+    expect(asExpression(modSel).sqlType).toBe("Int32");
 
     expect(compileExpression(fn.moduloOrZero(id, 7)).query).toContain("moduloOrZero(`orders`.`id`,");
 
@@ -1017,10 +1031,10 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     // string-decoded representation. Use `.mapWith(...)` to switch the runtime
     // decoder when JS `number` is the desired output.
     const int64Chain = fn.intDiv(fn.toInt64(id), 60);
-    expect(int64Chain.sqlType).toBe("Int64");
-    expect(int64Chain.decoder(123)).toBe("123");
+    expect(asExpression(int64Chain).sqlType).toBe("Int64");
+    expect(asExpression(int64Chain).decoder(123)).toBe("123");
     const remapped = int64Chain.mapWith<number>((v) => Number(v));
-    expect(remapped.decoder("123")).toBe(123);
+    expect(asExpression(remapped).decoder("123")).toBe(123);
   });
 
   it("inherits column types across decimal/float64/uint64 arithmetic chains", function testArithmeticAcrossTypeFamilies() {
@@ -1031,23 +1045,23 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     // Decimal column → keeps Decimal(18, 2) sqlType + string decoder
     const totalSel = fn.multiply(price, qty);
     expect(compileExpression(totalSel).query).toContain("multiply(`orders`.`price`, `orders`.`qty`)");
-    expect(totalSel.sqlType).toBe("Decimal(18, 2)");
-    expect(totalSel.decoder("12.50")).toBe("12.50");
+    expect(asExpression(totalSel).sqlType).toBe("Decimal(18, 2)");
+    expect(asExpression(totalSel).decoder("12.50")).toBe("12.50");
 
     // UInt64 column → keeps UInt64 sqlType + string decoder
     const inflated = fn.plus(qty, 100);
-    expect(inflated.sqlType).toBe("UInt64");
-    expect(inflated.decoder("18446744073709551615")).toBe("18446744073709551615");
+    expect(asExpression(inflated).sqlType).toBe("UInt64");
+    expect(asExpression(inflated).decoder("18446744073709551615")).toBe("18446744073709551615");
 
     // Float64 column → keeps Float64 sqlType + number decoder
     const adjusted = fn.minus(ratio, 0.1);
-    expect(adjusted.sqlType).toBe("Float64");
-    expect(adjusted.decoder(0.5)).toBe(0.5);
+    expect(asExpression(adjusted).sqlType).toBe("Float64");
+    expect(asExpression(adjusted).decoder(0.5)).toBe(0.5);
 
     // divide always promotes to Float64 + number, regardless of input type
     const decimalDivide = fn.divide(price, qty);
-    expect(decimalDivide.sqlType).toBe("Float64");
-    expect(decimalDivide.decoder(1.25)).toBe(1.25);
+    expect(asExpression(decimalDivide).sqlType).toBe("Float64");
+    expect(asExpression(decimalDivide).decoder(1.25)).toBe(1.25);
   });
 
   it("parameterizes literal operands with their inferred ClickHouse types", function testArithmeticLiteralParametrization() {
@@ -1089,11 +1103,11 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     expect(compiled.query).toContain("plus(");
     expect(compiled.query).toContain("multiply(intDiv(minus(toInt64(toUnixTimestamp(`mt_deal`.`time_utc`)),");
     // sqlType is inherited from the leftmost toInt64 → Int64
-    expect(bucketTs.sqlType).toBe("Int64");
+    expect(asExpression(bucketTs).sqlType).toBe("Int64");
     // The runtime decoder is intStringDecoder (from toInt64); generic <number> is a TS hint only.
     // Production code should pair with .mapWith(Number) if JS number is required.
-    expect(bucketTs.decoder("1767225600")).toBe("1767225600");
-    const decoded = bucketTs.mapWith<number>((v) => Number(v)).decoder("1767225600");
+    expect(asExpression(bucketTs).decoder("1767225600")).toBe<string>("1767225600");
+    const decoded = asExpression(bucketTs.mapWith<number>((v) => Number(v))).decoder("1767225600");
     expect(decoded).toBe(1767225600);
   });
 
@@ -1101,13 +1115,13 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     const id = int32().bind({ name: "id", tableName: "orders" });
 
     // abs / negate keep first-arg sqlType
-    expect(fn.abs(id).sqlType).toBe("Int32");
-    expect(fn.negate(id).sqlType).toBe("Int32");
+    expect(asExpression(fn.abs(id)).sqlType).toBe("Int32");
+    expect(asExpression(fn.negate(id)).sqlType).toBe("Int32");
 
     // Compose: abs(negate(id)) — both inherit Int32
     const composed = fn.abs(fn.negate(id));
     expect(compileExpression(composed).query).toContain("abs(negate(`orders`.`id`))");
-    expect(composed.sqlType).toBe("Int32");
+    expect(asExpression(composed).sqlType).toBe("Int32");
 
     // OrZero variants render the safe function name; ClickHouse handles 0-divisor semantics
     expect(compileExpression(fn.intDivOrZero(id, 0)).query).toContain("intDivOrZero(`orders`.`id`,");
@@ -1128,7 +1142,7 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     // Literal as left operand still works (parameterized)
     const litLeft = fn.divide(100, id);
     expect(compileExpression(litLeft).query).toContain("divide({orm_param1:Int64}, `orders`.`id`)");
-    expect(litLeft.sqlType).toBe("Float64");
+    expect(asExpression(litLeft).sqlType).toBe("Float64");
   });
 
   it("compiles fn.jsonPath / jsonCast / jsonSubobject / jsonMerged / jsonArray dynamic-path helpers", function testDynamicJsonHelpers() {
@@ -1141,38 +1155,38 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     // jsonPath — `column.<path>` with passthrough decoder
     const pathSel = fn.jsonPath<string>(payload, "a.b");
     expect(compileExpression(pathSel).query).toContain("`events`.`payload`.a.b");
-    expect(pathSel.decoder("raw")).toBe("raw");
+    expect(asExpression(pathSel).decoder("raw")).toBe("raw");
 
     // jsonCast — `column.<path>.:<sqlType>` with the cast column's decoder
     const castSel = fn.jsonCast(payload, "a.b", uint64());
     expect(compileExpression(castSel).query).toContain("`events`.`payload`.a.b.:UInt64");
-    expect(castSel.sqlType).toBe("UInt64");
-    expect(castSel.decoder("123")).toBe("123");
+    expect(asExpression(castSel).sqlType).toBe("UInt64");
+    expect(asExpression(castSel).decoder("123")).toBe("123");
 
     // jsonSubobject — `column.^<head>(.tail)?`
     const subSingleSel = fn.jsonSubobject(payload, "a");
     expect(compileExpression(subSingleSel).query).toContain("`events`.`payload`.^a");
     const subNestedSel = fn.jsonSubobject(payload, "a.b");
     expect(compileExpression(subNestedSel).query).toContain("`events`.`payload`.^a.b");
-    expect(subSingleSel.decoder({ a: 1 })).toEqual({ a: 1 });
+    expect(asExpression(subSingleSel).decoder({ a: 1 })).toEqual({ a: 1 });
 
     // jsonMerged — `column.@<head>(.tail)?`
     const mergedSingleSel = fn.jsonMerged(payload, "a");
     expect(compileExpression(mergedSingleSel).query).toContain("`events`.`payload`.@a");
     const mergedNestedSel = fn.jsonMerged(payload, "a.b");
     expect(compileExpression(mergedNestedSel).query).toContain("`events`.`payload`.@a.b");
-    expect(mergedSingleSel.decoder({ shared: true })).toEqual({ shared: true });
+    expect(asExpression(mergedSingleSel).decoder({ shared: true })).toEqual({ shared: true });
 
     // jsonArray — `column.<path>[]` array-expansion view
     const arraySel = fn.jsonArray<string>(payload, "tags");
     expect(compileExpression(arraySel).query).toContain("`events`.`payload`.tags[]");
-    expect(arraySel.decoder(["a", "b"])).toEqual(["a", "b"]);
+    expect(asExpression(arraySel).decoder(["a", "b"])).toEqual(["a", "b"]);
 
     // dynamicType — `dynamicType(expression)` runtime type-name introspection
     const dtSel = fn.dynamicType(fn.jsonPath(payload, "a.b"));
     expect(compileExpression(dtSel).query).toContain("dynamicType(`events`.`payload`.a.b)");
-    expect(dtSel.sqlType).toBe("String");
-    expect(dtSel.decoder("UInt64")).toBe("UInt64");
+    expect(asExpression(dtSel).sqlType).toBe("String");
+    expect(asExpression(dtSel).decoder("UInt64")).toBe("UInt64");
   });
 
   it("compiles fn.positionCaseInsensitive helpers", function testPositionCaseInsensitiveFns() {
@@ -1182,8 +1196,8 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     expect(compileExpression(positionSelection).query).toContain(
       "positionCaseInsensitive(`orders`.`name`, {orm_param1:String})",
     );
-    expect(positionSelection.sqlType).toBe("UInt64");
-    expect(positionSelection.decoder("5")).toBe("5");
+    expect(asExpression(positionSelection).sqlType).toBe("UInt64");
+    expect(asExpression(positionSelection).decoder("5")).toBe("5");
 
     const positionWithStart = compileExpression(fn.positionCaseInsensitive(haystack, "vip", 3));
     expect(positionWithStart.query).toContain(
@@ -1194,7 +1208,7 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     expect(compileExpression(utf8Selection).query).toContain(
       "positionCaseInsensitiveUTF8(`orders`.`name`, {orm_param1:String})",
     );
-    expect(utf8Selection.sqlType).toBe("UInt64");
+    expect(asExpression(utf8Selection).sqlType).toBe("UInt64");
   });
 
   it("compiles typed JSON, array and tuple helpers", function testCompileStructuredHelpers() {
@@ -1503,72 +1517,78 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
   });
 
   it("decodes type-conversion functions for date, datetime and unix-timestamp helpers", function testTypeConversionDecoders() {
-    expect(fn.toString(int32()).decoder(12)).toBe("12");
-    expect(fn.toDate(string()).decoder("2026-04-21")).toEqual(new Date("2026-04-21"));
+    expect(asExpression(fn.toString(int32())).decoder(12)).toBe("12");
+    expect(asExpression(fn.toDate(string())).decoder("2026-04-21")).toEqual(new Date("2026-04-21"));
     const existingDate = new Date("2026-04-21T12:34:56.000Z");
-    expect(fn.toDate(string()).decoder(existingDate)).toBe(existingDate);
-    expect(fn.toDateTime(string()).decoder("2026-04-21T00:00:00.000Z")).toEqual(new Date("2026-04-21T00:00:00.000Z"));
-    expect(fn.toDate32(string()).decoder("2026-04-21")).toEqual(new Date("2026-04-21"));
-    expect(fn.toDateTime32(string()).decoder("2026-04-21T00:00:00.000Z")).toEqual(new Date("2026-04-21T00:00:00.000Z"));
-    expect(fn.toDateTime64(string(), 3).decoder("2026-04-21T00:00:00.123Z")).toEqual(
-      new Date("2026-04-21T00:00:00.123Z"),
-    );
-    expect(fn.fromUnixTimestamp(int32()).decoder("2026-04-21T00:00:00.000Z")).toEqual(
+    expect(asExpression(fn.toDate(string())).decoder(existingDate)).toBe(existingDate);
+    expect(asExpression(fn.toDateTime(string())).decoder("2026-04-21T00:00:00.000Z")).toEqual(
       new Date("2026-04-21T00:00:00.000Z"),
     );
-    expect(fn.fromUnixTimestamp(int32(), "%F").decoder(20260421)).toBe("20260421");
-    expect(fn.fromUnixTimestamp64Milli(int64()).decoder("2026-04-21T00:00:00.123Z")).toEqual(
+    expect(asExpression(fn.toDate32(string())).decoder("2026-04-21")).toEqual(new Date("2026-04-21"));
+    expect(asExpression(fn.toDateTime32(string())).decoder("2026-04-21T00:00:00.000Z")).toEqual(
+      new Date("2026-04-21T00:00:00.000Z"),
+    );
+    expect(asExpression(fn.toDateTime64(string(), 3)).decoder("2026-04-21T00:00:00.123Z")).toEqual(
       new Date("2026-04-21T00:00:00.123Z"),
     );
-    expect(fn.toUnixTimestamp(string()).decoder("1739489491")).toBe(1739489491);
-    expect(fn.toUnixTimestamp64Milli(string()).decoder(1739489491011n)).toBe("1739489491011");
-    expect(fn.toStartOfMonth(string()).decoder("2026-04-01")).toEqual(new Date("2026-04-01"));
-    expect(fn.toString(int32()).decoder(1n)).toBe("1");
-    expect(fn.toString(int32()).decoder(false)).toBe("false");
-    expect(() => fn.toString(int32()).decoder({})).toThrow("Cannot convert value to string");
+    expect(asExpression(fn.fromUnixTimestamp(int32())).decoder("2026-04-21T00:00:00.000Z")).toEqual(
+      new Date("2026-04-21T00:00:00.000Z"),
+    );
+    expect(asExpression(fn.fromUnixTimestamp(int32(), "%F")).decoder(20260421)).toBe("20260421");
+    expect(asExpression(fn.fromUnixTimestamp64Milli(int64())).decoder("2026-04-21T00:00:00.123Z")).toEqual(
+      new Date("2026-04-21T00:00:00.123Z"),
+    );
+    expect(asExpression(fn.toUnixTimestamp(string())).decoder("1739489491")).toBe(1739489491);
+    expect(asExpression(fn.toUnixTimestamp64Milli(string())).decoder(1739489491011n)).toBe("1739489491011");
+    expect(asExpression(fn.toStartOfMonth(string())).decoder("2026-04-01")).toEqual(new Date("2026-04-01"));
+    expect(asExpression(fn.toString(int32())).decoder(1n)).toBe("1");
+    expect(asExpression(fn.toString(int32())).decoder(false)).toBe("false");
+    expect(() => asExpression(fn.toString(int32())).decoder({})).toThrow("Cannot convert value to string");
   });
 
   it("decodes aggregate functions including not/count error paths", function testAggregateDecoders() {
-    expect(fn.avg(int32()).decoder(4.5)).toBe(4.5);
-    expect(fn.avg(int32()).decoder("8")).toBe(8);
-    expect(fn.avg(int32()).decoder(7n)).toBe(7);
-    expect(fn.avg(int32()).decoder(9n)).toBe(9);
-    expect(fn.avg(int32()).decoder("9")).toBe(9);
-    expect(fn.avg(int32()).decoder("4.5")).toBe(4.5);
-    expect(fn.sum(float64()).decoder("12.5")).toBe(12.5);
-    expect(fn.sum(int32()).decoder(12)).toBe("12");
-    expect(fn.sum(int32()).decoder(7n)).toBe("7");
-    expect(fn.sumIf(float64(), fn.not(fn.count())).decoder(7n)).toBe(7);
-    expect(fn.countIf(fn.not(int32())).decoder(9)).toBe(9);
-    expect(fn.min(int32()).decoder("8")).toBe(8);
-    expect(fn.max(string()).decoder(1n)).toBe("1");
+    expect(asExpression(fn.avg(int32())).decoder(4.5)).toBe(4.5);
+    expect(asExpression(fn.avg(int32())).decoder("8")).toBe(8);
+    expect(asExpression(fn.avg(int32())).decoder(7n)).toBe(7);
+    expect(asExpression(fn.avg(int32())).decoder(9n)).toBe(9);
+    expect(asExpression(fn.avg(int32())).decoder("9")).toBe(9);
+    expect(asExpression(fn.avg(int32())).decoder("4.5")).toBe(4.5);
+    expect(asExpression(fn.sum(float64())).decoder("12.5")).toBe(12.5);
+    expect(asExpression(fn.sum(int32())).decoder(12)).toBe("12");
+    expect(asExpression(fn.sum(int32())).decoder(7n)).toBe("7");
+    expect(asExpression(fn.sumIf(float64(), fn.not(fn.count()))).decoder(7n)).toBe(7);
+    expect(asExpression(fn.countIf(fn.not(int32()))).decoder(9)).toBe(9);
+    expect(asExpression(fn.min(int32())).decoder("8")).toBe(8);
+    expect(asExpression(fn.max(string())).decoder(1n)).toBe("1");
     const aggregateDate = new Date("2026-04-21T12:34:56.000Z");
-    expect(fn.min(dateTime()).decoder(aggregateDate)).toBe(aggregateDate);
-    expect(fn.max(dateTime()).decoder("2026-04-21T00:00:00.000Z")).toEqual(new Date("2026-04-21T00:00:00.000Z"));
-    expect(fn.uniqExact(int32()).decoder(5)).toBe(5);
-    expect(fn.count().decoder(1n)).toBe(1);
-    expect(() => fn.count().decoder(true)).toThrow("Failed to decode count() result");
-    expect(() => fn.avg(int32()).decoder({})).toThrow("Cannot convert value to number");
+    expect(asExpression(fn.min(dateTime())).decoder(aggregateDate)).toBe(aggregateDate);
+    expect(asExpression(fn.max(dateTime())).decoder("2026-04-21T00:00:00.000Z")).toEqual(
+      new Date("2026-04-21T00:00:00.000Z"),
+    );
+    expect(asExpression(fn.uniqExact(int32())).decoder(5)).toBe(5);
+    expect(asExpression(fn.count()).decoder(1n)).toBe(1);
+    expect(() => asExpression(fn.count()).decoder(true)).toThrow("Failed to decode count() result");
+    expect(() => asExpression(fn.avg(int32())).decoder({})).toThrow("Cannot convert value to number");
 
-    expect(fn.not(int32()).decoder(true)).toBe(true);
-    expect(fn.not(int32()).decoder("true")).toBe(true);
-    expect(fn.not(int32()).decoder(0)).toBe(false);
-    expect(() => fn.not(int32()).decoder({})).toThrow("Cannot convert value to boolean");
+    expect(asExpression(fn.not(int32())).decoder(true)).toBe(true);
+    expect(asExpression(fn.not(int32())).decoder("true")).toBe(true);
+    expect(asExpression(fn.not(int32())).decoder(0)).toBe(false);
+    expect(() => asExpression(fn.not(int32())).decoder({})).toThrow("Cannot convert value to boolean");
   });
 
   it("compiles fn.coalesce with type-aware fallbacks across numeric/string columns", function testCoalesceTyping() {
     const coalesced = fn.coalesce(string(), int32());
-    expect(coalesced.decoder(10)).toBe("10");
-    expect(fn.coalesce().decoder({ raw: true })).toEqual({ raw: true });
+    expect(asExpression(coalesced).decoder(10)).toBe("10");
+    expect(asExpression(fn.coalesce()).decoder({ raw: true })).toEqual({ raw: true });
 
     const price = float64().bind({ name: "price", tableName: "orders" });
     const coalescedFloat = fn.coalesce(price, 0);
-    expect(coalescedFloat.sqlType).toBe("Float64");
+    expect(asExpression(coalescedFloat).sqlType).toBe("Float64");
     expect(compileExpression(coalescedFloat).query).toContain("coalesce(`orders`.`price`, {orm_param1:Float64})");
     expect(compileExpression(coalescedFloat).params).toEqual({ orm_param1: 0 });
 
     const coalescedFloatSum = fn.coalesce(fn.sum(price), 0);
-    expect(coalescedFloatSum.sqlType).toBe("Float64");
+    expect(asExpression(coalescedFloatSum).sqlType).toBe("Float64");
     expect(compileExpression(coalescedFloatSum).query).toContain(
       "coalesce(sum(`orders`.`price`), {orm_param1:Float64})",
     );
@@ -1618,138 +1638,173 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     );
   });
 
+  it("reports element types on tuple and groupArray and leaves unknown arrays untyped", function testTupleAndArraySqlTypes() {
+    const id = int32();
+    const label = string();
+    expect(asExpression(fn.tuple(id, label)).sqlType).toBe("Tuple(Int32, String)");
+    expect(asExpression(fn.tuple(id, 1, "x")).sqlType).toBe("Tuple(Int32, Int64, String)");
+    expect(asExpression(fn.tuple(id, sql`now()`)).sqlType).toBeUndefined();
+    expect(asExpression(fn.tuple(id, null)).sqlType).toBeUndefined();
+    expect(asExpression(fn.array([1])).sqlType).toBeUndefined();
+    expect(asExpression(fn.arrayReverseSort([2, 1])).sqlType).toBeUndefined();
+    expect(asExpression(fn.arrayReverseSort(arrayColumn(id))).sqlType).toBe("Array(Int32)");
+    expect(asExpression(fn.emptyArrayInt32()).sqlType).toBe("Array(Int32)");
+    expect(asExpression(fn.withParams("groupArray", [], id)).sqlType).toBe("Array(Int32)");
+    expect(asExpression(fn.withParams("groupArray", [], nullable(id))).sqlType).toBe("Array(Int32)");
+    expect(asExpression(fn.withParams("groupArray", [], lowCardinality(label))).sqlType).toBe(
+      "Array(LowCardinality(String))",
+    );
+    expect(asExpression(fn.withParams("groupArray", [], sql`now()`)).sqlType).toBeUndefined();
+  });
+
   it("decodes tuple/arrayZip/jsonExtract container helpers", function testContainerDecoders() {
-    expect(fn.tuple().decoder([])).toEqual([]);
-    expect(() => fn.tuple().decoder([1, 2])).toThrow("tuple: expected 0 items, got 2");
-    expect(() => fn.tuple().decoder("bad")).toThrow("Cannot convert value to tuple array");
+    expect(asExpression(fn.tuple()).decoder([])).toEqual([]);
+    expect(() => asExpression(fn.tuple()).decoder([1, 2])).toThrow("tuple: expected 0 items, got 2");
+    expect(() => asExpression(fn.tuple()).decoder("bad")).toThrow("Cannot convert value to tuple array");
 
-    expect(fn.arrayZip().decoder([[1, 2]])).toEqual([[1, 2]]);
-    expect(() => fn.arrayZip().decoder("bad")).toThrow("Cannot convert value to arrayZip array");
+    expect(asExpression(fn.arrayZip()).decoder([[1, 2]])).toEqual([[1, 2]]);
+    expect(() => asExpression(fn.arrayZip()).decoder("bad")).toThrow("Cannot convert value to arrayZip array");
 
-    expect(fn.jsonExtract(sql.raw("payload"), arrayColumn(string())).decoder(["vip", 1])).toEqual(["vip", "1"]);
-    expect(fn.jsonExtract(sql.raw("payload"), nullable(string())).decoder(null)).toBeNull();
-    expect(fn.jsonExtract(sql.raw("payload"), nullable(string())).decoder("vip")).toBe("vip");
+    expect(asExpression(fn.jsonExtract(sql.raw("payload"), arrayColumn(string()))).decoder(["vip", 1])).toEqual([
+      "vip",
+      "1",
+    ]);
+    expect(asExpression(fn.jsonExtract(sql.raw("payload"), nullable(string()))).decoder(null)).toBeNull();
+    expect(asExpression(fn.jsonExtract(sql.raw("payload"), nullable(string()))).decoder("vip")).toBe("vip");
 
-    expect(fn.tupleElement<string>(fn.tuple("ticket"), 1).decoder("ticket")).toBe("ticket");
+    expect(asExpression(fn.tupleElement<string>(fn.tuple("ticket"), 1)).decoder("ticket")).toBe("ticket");
   });
 
   it("decodes tuple aggregation and sorting through their input decoders", function testCompositeDecoderPropagation() {
-    expect(() => fn.arrayReverseSort([3, 1, 2]).decoder("bad")).toThrow(
+    expect(() => asExpression(fn.arrayReverseSort([3, 1, 2])).decoder("bad")).toThrow(
       "Cannot convert value to arrayReverseSort array",
     );
-    expect(() => fn.arrayReverseSort(sql.raw("x -> -x"), [3, 1, 2]).decoder("bad")).toThrow(
+    expect(() => asExpression(fn.arrayReverseSort(sql.raw("x -> -x"), [3, 1, 2])).decoder("bad")).toThrow(
       "Cannot convert value to arrayReverseSort array",
     );
 
     const closedAt = dateTime64({ precision: 3 });
     const active = bool();
     const rawItem = ["2026-07-11T12:34:56.789Z", 1];
-    const expectedItem = [new Date("2026-07-11T12:34:56.789Z"), true];
+    const expectedItem: [Date, boolean] = [new Date("2026-07-11T12:34:56.789Z"), true];
     const item = fn.tuple(closedAt, active);
 
-    expect(item.decoder(rawItem)).toEqual(expectedItem);
-    expect(() => item.decoder([rawItem[0]])).toThrow("tuple: expected 2 items, got 1");
+    expect(asExpression(item).decoder(rawItem)).toEqual(expectedItem);
+    expect(() => asExpression(item).decoder([rawItem[0]])).toThrow("tuple: expected 2 items, got 1");
 
     const grouped = fn.withParams("groupArray", [21], item);
-    expect(grouped.decoder([rawItem])).toEqual([expectedItem]);
-    expect(() => grouped.decoder(undefined)).toThrow("Cannot convert value to groupArray array");
+    expect(asExpression(grouped).decoder([rawItem])).toEqual([expectedItem]);
+    expect(() => asExpression(grouped).decoder(undefined)).toThrow("Cannot convert value to groupArray array");
 
-    expect(fn.tuple("literal", 1).decoder(["literal", 1])).toEqual(["literal", 1]);
+    expect(asExpression(fn.tuple("literal", 1)).decoder(["literal", 1])).toEqual(["literal", 1]);
 
     const sorted = fn.arrayReverseSort(grouped);
-    expect(sorted.decoder([rawItem])).toEqual([expectedItem]);
+    expect(asExpression(sorted).decoder([rawItem])).toEqual([expectedItem]);
 
     const sortedDates = fn.arrayReverseSort(arrayColumn(dateTime64({ precision: 3 })));
-    expect(sortedDates.decoder([rawItem[0]])).toEqual([expectedItem[0]]);
+    expect(asExpression(sortedDates).decoder([rawItem[0]])).toEqual([expectedItem[0]]);
   });
 
   it("decodes scalar array operations (has/exists/indexOf/length/etc.)", function testArrayScalarOps() {
-    expect(fn.array("vip").decoder(["vip"])).toEqual(["vip"]);
-    expect(() => fn.array("vip").decoder("bad")).toThrow("Cannot convert value to array array");
-    expect(fn.arrayConcat("vip").decoder(["vip"])).toEqual(["vip"]);
-    expect(() => fn.arrayConcat("vip").decoder("bad")).toThrow("Cannot convert value to arrayConcat array");
-    expect(fn.arraySlice("vip", 1).decoder(["vip"])).toEqual(["vip"]);
-    expect(() => fn.arraySlice("vip", 1).decoder("bad")).toThrow("Cannot convert value to arraySlice array");
-    expect(fn.arrayFlatten("vip").decoder(["vip"])).toEqual(["vip"]);
-    expect(() => fn.arrayFlatten("vip").decoder("bad")).toThrow("Cannot convert value to arrayFlatten array");
-    expect(fn.arrayIntersect("vip").decoder(["vip"])).toEqual(["vip"]);
-    expect(() => fn.arrayIntersect("vip").decoder("bad")).toThrow("Cannot convert value to arrayIntersect array");
-    expect(fn.arrayJoin<string>(["vip"]).decoder("vip")).toBe("vip");
-    expect(fn.indexOf(["vip"], "vip").decoder(1)).toBe("1");
-    expect(fn.length(["vip"]).decoder(1n)).toBe("1");
-    expect(fn.notEmpty(["vip"]).decoder(1)).toBe(true);
-    expect(fn.arrayExists(sql.raw("x -> x > 1"), [1]).decoder(1)).toBe(true);
-    expect(fn.arrayAll(sql.raw("x -> x > 1"), [1]).decoder(0)).toBe(false);
-    expect(fn.has(["vip"], "vip").decoder(1)).toBe(true);
-    expect(fn.hasAll(["vip"], ["vip"]).decoder("0")).toBe(false);
-    expect(fn.hasAny(["vip"], ["pro"]).decoder(true)).toBe(true);
-    expect(fn.hasSubstr(["vip"], ["vip"]).decoder("1")).toBe(true);
-    expect(fn.arrayFirstIndex(sql.raw("x -> x > 1"), [1]).decoder("2")).toBe(2);
-    expect(fn.arrayLastIndex(sql.raw("x -> x > 1"), [1]).decoder("3")).toBe(3);
-    expect(fn.indexOfAssumeSorted(["vip"], "vip").decoder(1)).toBe("1");
-    expect(fn.arrayCount(sql.raw("x -> x > 1"), [1]).decoder(2n)).toBe("2");
-    expect(fn.arrayUniq(["vip", "vip"]).decoder(1)).toBe("1");
-    expect(fn.countEqual(["vip"], "vip").decoder(2)).toBe("2");
-    expect(fn.empty([]).decoder(0)).toBe(false);
+    expect(asExpression(fn.array("vip")).decoder(["vip"])).toEqual(["vip"]);
+    expect(() => asExpression(fn.array("vip")).decoder("bad")).toThrow("Cannot convert value to array array");
+    expect(asExpression(fn.arrayConcat("vip")).decoder(["vip"])).toEqual(["vip"]);
+    expect(() => asExpression(fn.arrayConcat("vip")).decoder("bad")).toThrow(
+      "Cannot convert value to arrayConcat array",
+    );
+    expect(asExpression(fn.arraySlice("vip", 1)).decoder(["vip"])).toEqual(["vip"]);
+    expect(() => asExpression(fn.arraySlice("vip", 1)).decoder("bad")).toThrow(
+      "Cannot convert value to arraySlice array",
+    );
+    expect(asExpression(fn.arrayFlatten("vip")).decoder(["vip"])).toEqual(["vip"]);
+    expect(() => asExpression(fn.arrayFlatten("vip")).decoder("bad")).toThrow(
+      "Cannot convert value to arrayFlatten array",
+    );
+    expect(asExpression(fn.arrayIntersect("vip")).decoder(["vip"])).toEqual(["vip"]);
+    expect(() => asExpression(fn.arrayIntersect("vip")).decoder("bad")).toThrow(
+      "Cannot convert value to arrayIntersect array",
+    );
+    expect(asExpression(fn.arrayJoin<string>(["vip"])).decoder("vip")).toBe("vip");
+    expect(asExpression(fn.indexOf(["vip"], "vip")).decoder(1)).toBe("1");
+    expect(asExpression(fn.length(["vip"])).decoder(1n)).toBe("1");
+    expect(asExpression(fn.notEmpty(["vip"])).decoder(1)).toBe(true);
+    expect(asExpression(fn.arrayExists(sql.raw("x -> x > 1"), [1])).decoder(1)).toBe(true);
+    expect(asExpression(fn.arrayAll(sql.raw("x -> x > 1"), [1])).decoder(0)).toBe(false);
+    expect(asExpression(fn.has(["vip"], "vip")).decoder(1)).toBe(true);
+    expect(asExpression(fn.hasAll(["vip"], ["vip"])).decoder("0")).toBe(false);
+    expect(asExpression(fn.hasAny(["vip"], ["pro"])).decoder(true)).toBe(true);
+    expect(asExpression(fn.hasSubstr(["vip"], ["vip"])).decoder("1")).toBe(true);
+    expect(asExpression(fn.arrayFirstIndex(sql.raw("x -> x > 1"), [1])).decoder("2")).toBe(2);
+    expect(asExpression(fn.arrayLastIndex(sql.raw("x -> x > 1"), [1])).decoder("3")).toBe(3);
+    expect(asExpression(fn.indexOfAssumeSorted(["vip"], "vip")).decoder(1)).toBe("1");
+    expect(asExpression(fn.arrayCount(sql.raw("x -> x > 1"), [1])).decoder(2n)).toBe("2");
+    expect(asExpression(fn.arrayUniq(["vip", "vip"])).decoder(1)).toBe("1");
+    expect(asExpression(fn.countEqual(["vip"], "vip")).decoder(2)).toBe("2");
+    expect(asExpression(fn.empty([])).decoder(0)).toBe(false);
   });
 
   it("decodes statistical/numeric array reducers (avg/sum/min/max/dotProduct/etc.)", function testArrayReducers() {
-    expect(fn.arrayAvg([1, 2]).decoder("1.5")).toBe(1.5);
-    expect(fn.arrayAUCPR([0.1, 0.9], [0, 1]).decoder(1)).toBe(1);
-    expect(fn.arrayJaccardIndex(["vip"], ["vip"]).decoder("0.5")).toBe(0.5);
-    expect(fn.arrayLevenshteinDistance(["A"], ["B"]).decoder(1n)).toBe(1);
-    expect(fn.arrayLevenshteinDistanceWeighted(["A"], ["B"], [1], [1]).decoder("2")).toBe(2);
-    expect(fn.arrayROCAUC([0.1, 0.9], [0, 1]).decoder("1")).toBe(1);
-    expect(fn.arraySimilarity(["A"], ["B"], [1], [1]).decoder(0.25)).toBe(0.25);
-    expect(fn.arrayDotProduct<number>([1, 2], [3, 4]).decoder("11")).toBe("11");
-    expect(fn.arrayMax<number>([1, 2]).decoder("2")).toBe("2");
-    expect(fn.arrayMin<number>([1, 2]).decoder("1")).toBe("1");
-    expect(fn.arraySum<number>([1, 2]).decoder("3")).toBe("3");
-    expect(fn.arrayProduct<number>([1, 2]).decoder("2")).toBe("2");
-    expect(fn.arrayReduce<string>("sum", [1, 2]).decoder("3")).toBe("3");
-    expect(fn.arrayFold<number>(sql.raw("(acc, x) -> acc + x"), [1, 2], 0).decoder("3")).toBe("3");
+    expect(asExpression(fn.arrayAvg([1, 2])).decoder("1.5")).toBe(1.5);
+    expect(asExpression(fn.arrayAUCPR([0.1, 0.9], [0, 1])).decoder(1)).toBe(1);
+    expect(asExpression(fn.arrayJaccardIndex(["vip"], ["vip"])).decoder("0.5")).toBe(0.5);
+    expect(asExpression(fn.arrayLevenshteinDistance(["A"], ["B"])).decoder(1n)).toBe(1);
+    expect(asExpression(fn.arrayLevenshteinDistanceWeighted(["A"], ["B"], [1], [1])).decoder("2")).toBe(2);
+    expect(asExpression(fn.arrayROCAUC([0.1, 0.9], [0, 1])).decoder("1")).toBe(1);
+    expect(asExpression(fn.arraySimilarity(["A"], ["B"], [1], [1])).decoder(0.25)).toBe(0.25);
+    expect(asExpression(fn.arrayDotProduct<string>([1, 2], [3, 4])).decoder("11")).toBe("11");
+    expect(asExpression(fn.arrayMax<string>([1, 2])).decoder("2")).toBe("2");
+    expect(asExpression(fn.arrayMin<string>([1, 2])).decoder("1")).toBe("1");
+    expect(asExpression(fn.arraySum<string>([1, 2])).decoder("3")).toBe("3");
+    expect(asExpression(fn.arrayProduct<string>([1, 2])).decoder("2")).toBe("2");
+    expect(asExpression(fn.arrayReduce<string>("sum", [1, 2])).decoder("3")).toBe("3");
+    expect(asExpression(fn.arrayFold<string>(sql.raw("(acc, x) -> acc + x"), [1, 2], 0)).decoder("3")).toBe("3");
   });
 
   it("decodes higher-order array transforms (filter/sort/split/transpose/etc.)", function testArrayTransforms() {
-    expect(fn.arrayFilter(sql.raw("x -> x > 1"), [1]).decoder([2])).toEqual([2]);
-    expect(fn.arrayAutocorrelation([1, 2, 3]).decoder([1, 0.5])).toEqual([1, 0.5]);
-    expect(fn.arrayCumSumNonNegative([1, -2, 3]).decoder([1, 0, 3])).toEqual([1, 0, 3]);
-    expect(fn.arrayEnumerate(["vip"]).decoder([1])).toEqual([1]);
-    expect(fn.arrayEnumerateDense(["vip"]).decoder([1])).toEqual([1]);
-    expect(fn.arrayEnumerateDenseRanked(1, [["vip"]], 2).decoder([[1]])).toEqual([[1]]);
-    expect(fn.arrayEnumerateUniq(["vip"]).decoder([1])).toEqual([1]);
-    expect(fn.arrayEnumerateUniqRanked(1, [["vip"]], 2).decoder([[1]])).toEqual([[1]]);
-    expect(fn.arrayFill(sql.raw("x -> x > 1"), [1]).decoder([1])).toEqual([1]);
-    expect(fn.arrayReverseFill(sql.raw("x -> x > 1"), [1]).decoder([1])).toEqual([1]);
-    expect(() => fn.arrayMap(sql.raw("x -> x + 1"), [1]).decoder("bad")).toThrow(
+    expect(asExpression(fn.arrayFilter(sql.raw("x -> x > 1"), [1])).decoder([2])).toEqual([2]);
+    expect(asExpression(fn.arrayAutocorrelation([1, 2, 3])).decoder([1, 0.5])).toEqual([1, 0.5]);
+    expect(asExpression(fn.arrayCumSumNonNegative([1, -2, 3])).decoder([1, 0, 3])).toEqual([1, 0, 3]);
+    expect(asExpression(fn.arrayEnumerate(["vip"])).decoder([1])).toEqual([1]);
+    expect(asExpression(fn.arrayEnumerateDense(["vip"])).decoder([1])).toEqual([1]);
+    expect(asExpression(fn.arrayEnumerateDenseRanked(1, [["vip"]], 2)).decoder([[1]])).toEqual([[1]]);
+    expect(asExpression(fn.arrayEnumerateDenseRanked(1, [["vip"]], 2)).sqlType).toBe("Array(Array(UInt32))");
+    expect(asExpression(fn.arrayEnumerateUniqRanked(1n, ["vip"], 1n)).sqlType).toBe("Array(UInt32)");
+    expect(asExpression(fn.arrayEnumerateUniqRanked(1, ["vip"], 0)).sqlType).toBeUndefined();
+    expect(asExpression(fn.arrayEnumerateUniq(["vip"])).decoder([1])).toEqual([1]);
+    expect(asExpression(fn.arrayEnumerateUniqRanked(1, [["vip"]], 2)).decoder([[1]])).toEqual([[1]]);
+    expect(asExpression(fn.arrayFill(sql.raw("x -> x > 1"), [1])).decoder([1])).toEqual([1]);
+    expect(asExpression(fn.arrayReverseFill(sql.raw("x -> x > 1"), [1])).decoder([1])).toEqual([1]);
+    expect(() => asExpression(fn.arrayMap(sql.raw("x -> x + 1"), [1])).decoder("bad")).toThrow(
       "Cannot convert value to arrayMap array",
     );
-    expect(fn.arrayPartialSort<number>(2, [3, 1]).decoder([1, 3])).toEqual([1, 3]);
-    expect(fn.arrayPartialReverseSort<number>(2, [3, 1]).decoder([3, 1])).toEqual([3, 1]);
-    expect(fn.arrayPartialShuffle<number>([1, 2], 1).decoder([2, 1])).toEqual([2, 1]);
-    expect(fn.arrayRandomSample<number>([1, 2], 1).decoder([2])).toEqual([2]);
-    expect(fn.arrayReverseSplit<number>(sql.raw("x -> x = 0"), [1]).decoder([[1]])).toEqual([[1]]);
-    expect(fn.arraySplit<number>(sql.raw("x -> x = 0"), [1]).decoder([[1]])).toEqual([[1]]);
-    expect(fn.arrayTranspose<number>([[1, 2]]).decoder([[1], [2]])).toEqual([[1], [2]]);
-    expect(fn.arrayZipUnaligned([1], ["vip"]).decoder([[1, "vip"]])).toEqual([[1, "vip"]]);
-    expect(fn.kql_array_sort_asc(["vip"]).decoder([["vip"]])).toEqual([["vip"]]);
+    expect(asExpression(fn.arrayPartialSort<number>(2, [3, 1])).decoder([1, 3])).toEqual([1, 3]);
+    expect(asExpression(fn.arrayPartialReverseSort<number>(2, [3, 1])).decoder([3, 1])).toEqual([3, 1]);
+    expect(asExpression(fn.arrayPartialShuffle<number>([1, 2], 1)).decoder([2, 1])).toEqual([2, 1]);
+    expect(asExpression(fn.arrayRandomSample<number>([1, 2], 1)).decoder([2])).toEqual([2]);
+    expect(asExpression(fn.arrayReverseSplit<number[]>(sql.raw("x -> x = 0"), [1])).decoder([[1]])).toEqual([[1]]);
+    expect(asExpression(fn.arraySplit<number[]>(sql.raw("x -> x = 0"), [1])).decoder([[1]])).toEqual([[1]]);
+    expect(asExpression(fn.arrayTranspose<number[]>([[1, 2]])).decoder([[1], [2]])).toEqual([[1], [2]]);
+    expect(asExpression(fn.arrayZipUnaligned([1], ["vip"])).decoder([[1, "vip"]])).toEqual([[1, "vip"]]);
+    expect(asExpression(fn.kql_array_sort_asc(["vip"])).decoder([["vip"]])).toEqual([["vip"]]);
   });
 
   it("decodes empty-array constructors with type-correct defaults", function testEmptyArrayConstructors() {
-    expect(fn.emptyArrayDate().decoder([])).toEqual([]);
-    expect(fn.emptyArrayDateTime().decoder([])).toEqual([]);
-    expect(fn.emptyArrayFloat32().decoder([])).toEqual([]);
-    expect(fn.emptyArrayFloat64().decoder([])).toEqual([]);
-    expect(fn.emptyArrayInt8().decoder([])).toEqual([]);
-    expect(fn.emptyArrayInt16().decoder([])).toEqual([]);
-    expect(fn.emptyArrayInt32().decoder([])).toEqual([]);
-    expect(fn.emptyArrayString().decoder([])).toEqual([]);
-    expect(fn.emptyArrayInt64().decoder(["1"])).toEqual(["1"]);
-    expect(fn.emptyArrayUInt8().decoder([])).toEqual([]);
-    expect(fn.emptyArrayUInt16().decoder([])).toEqual([]);
-    expect(fn.emptyArrayUInt32().decoder([])).toEqual([]);
-    expect(fn.emptyArrayUInt64().decoder(["1"])).toEqual(["1"]);
-    expect(() => fn.emptyArrayFloat64().decoder("bad")).toThrow("Cannot convert value to emptyArrayFloat64 array");
+    expect(asExpression(fn.emptyArrayDate()).decoder([])).toEqual([]);
+    expect(asExpression(fn.emptyArrayDateTime()).decoder([])).toEqual([]);
+    expect(asExpression(fn.emptyArrayFloat32()).decoder([])).toEqual([]);
+    expect(asExpression(fn.emptyArrayFloat64()).decoder([])).toEqual([]);
+    expect(asExpression(fn.emptyArrayInt8()).decoder([])).toEqual([]);
+    expect(asExpression(fn.emptyArrayInt16()).decoder([])).toEqual([]);
+    expect(asExpression(fn.emptyArrayInt32()).decoder([])).toEqual([]);
+    expect(asExpression(fn.emptyArrayString()).decoder([])).toEqual([]);
+    expect(asExpression(fn.emptyArrayInt64()).decoder(["1"])).toEqual(["1"]);
+    expect(asExpression(fn.emptyArrayUInt8()).decoder([])).toEqual([]);
+    expect(asExpression(fn.emptyArrayUInt16()).decoder([])).toEqual([]);
+    expect(asExpression(fn.emptyArrayUInt32()).decoder([])).toEqual([]);
+    expect(asExpression(fn.emptyArrayUInt64()).decoder(["1"])).toEqual(["1"]);
+    expect(() => asExpression(fn.emptyArrayFloat64()).decoder("bad")).toThrow(
+      "Cannot convert value to emptyArrayFloat64 array",
+    );
   });
 
   it("validates ClickHouse type literals used by conversion helpers", function testTypeLiteralValidation() {
@@ -1770,15 +1825,21 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     const amount = decimal({ precision: 18, scale: 5 }).bind({ name: "amount", tableName: "ledger" });
 
     const cast128 = fn.toDecimal128(amount, 5);
-    expect(compileSql(sql`${cast128.compile(createContext())}`).query).toContain("toDecimal128(`ledger`.`amount`, 5)");
-    expect(cast128.sqlType).toBe("Decimal(38, 5)");
-    expect(cast128.decoder("1.23")).toBe("1.23");
+    expect(compileSql(sql`${asExpression(cast128).compile(createContext())}`).query).toContain(
+      "toDecimal128(`ledger`.`amount`, 5)",
+    );
+    expect(asExpression(cast128).sqlType).toBe("Decimal(38, 5)");
+    expect(asExpression(cast128).decoder("1.23")).toBe("1.23");
     const cast64 = fn.toDecimal64(amount, 2);
-    expect(compileSql(sql`${cast64.compile(createContext())}`).query).toContain("toDecimal64(`ledger`.`amount`, 2)");
-    expect(fn.sum(cast64).sqlType).toBe("Decimal(38, 2)");
+    expect(compileSql(sql`${asExpression(cast64).compile(createContext())}`).query).toContain(
+      "toDecimal64(`ledger`.`amount`, 2)",
+    );
+    expect(asExpression(fn.sum(cast64)).sqlType).toBe("Decimal(38, 2)");
     const cast256 = fn.toDecimal256(amount, 8);
-    expect(compileSql(sql`${cast256.compile(createContext())}`).query).toContain("toDecimal256(`ledger`.`amount`, 8)");
-    expect(cast256.sqlType).toBe("Decimal(76, 8)");
+    expect(compileSql(sql`${asExpression(cast256).compile(createContext())}`).query).toContain(
+      "toDecimal256(`ledger`.`amount`, 8)",
+    );
+    expect(asExpression(cast256).sqlType).toBe("Decimal(76, 8)");
     expect(() => fn.toDecimal128(amount, "5" as never)).toThrow(
       /toDecimal128 scale must be an integer between 0 and 38 \(the toDecimal128 fixed width\)/,
     );
@@ -1787,41 +1848,41 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     );
 
     const summed = fn.sum(amount);
-    const summedCompiled = compileSql(sql`${summed.compile(createContext())}`);
+    const summedCompiled = compileSql(sql`${asExpression(summed).compile(createContext())}`);
     expect(summedCompiled.query).toBe("CAST(sum(`ledger`.`amount`) AS Decimal(38, 5))");
-    expect(summed.sqlType).toBe("Decimal(38, 5)");
-    expect(summed.decoder("9.99")).toBe("9.99");
+    expect(asExpression(summed).sqlType).toBe("Decimal(38, 5)");
+    expect(asExpression(summed).decoder("9.99")).toBe("9.99");
 
     // avg(Decimal) intentionally does NOT auto-cast — aligned with ClickHouse's
     // native avg(Decimal) → Float64 behavior (sum-of-divides path).
     const averaged = fn.avg(amount);
-    expect(compileSql(sql`${averaged.compile(createContext())}`).query).toBe("avg(`ledger`.`amount`)");
-    expect(averaged.sqlType).toBe("Float64");
-    expect(averaged.decoder("4.5")).toBe(4.5);
+    expect(compileSql(sql`${asExpression(averaged).compile(createContext())}`).query).toBe("avg(`ledger`.`amount`)");
+    expect(asExpression(averaged).sqlType).toBe("Float64");
+    expect(asExpression(averaged).decoder("4.5")).toBe(4.5);
 
     const summedIf = fn.sumIf(amount, sql`1`);
-    expect(compileSql(sql`${summedIf.compile(createContext())}`).query).toBe(
+    expect(compileSql(sql`${asExpression(summedIf).compile(createContext())}`).query).toBe(
       "CAST(sumIf(`ledger`.`amount`, 1) AS Decimal(38, 5))",
     );
 
     const minimal = fn.min(amount);
-    expect(compileSql(sql`${minimal.compile(createContext())}`).query).toBe(
+    expect(compileSql(sql`${asExpression(minimal).compile(createContext())}`).query).toBe(
       "CAST(min(`ledger`.`amount`) AS Decimal(18, 5))",
     );
 
-    expect(fn.sum(int32()).sqlType).toBeUndefined();
-    expect(fn.avg(int32()).decoder("4.5")).toBe(4.5);
+    expect(asExpression(fn.sum(int32())).sqlType).toBeUndefined();
+    expect(asExpression(fn.avg(int32())).decoder("4.5")).toBe(4.5);
 
     const floatAmount = float64().bind({ name: "amount", tableName: "ledger" });
-    expect(fn.sum(floatAmount).sqlType).toBe("Float64");
-    expect(fn.sumIf(floatAmount, sql`1`).sqlType).toBe("Float64");
+    expect(asExpression(fn.sum(floatAmount)).sqlType).toBe("Float64");
+    expect(asExpression(fn.sumIf(floatAmount, sql`1`)).sqlType).toBe("Float64");
 
     const nullableFloat = nullable(float64()).bind({ name: "score", tableName: "ledger" });
     const lowCardFloat = lowCardinality(float64()).bind({ name: "fee_ratio", tableName: "ledger" });
-    expect(fn.sum(nullableFloat).sqlType).toBe("Float64");
-    expect(fn.sum(lowCardFloat).sqlType).toBe("Float64");
-    expect(fn.sum(nullableFloat).decoder("4.5")).toBe(4.5);
-    expect(fn.sum(lowCardFloat).decoder("2.25")).toBe(2.25);
+    expect(asExpression(fn.sum(nullableFloat)).sqlType).toBe("Float64");
+    expect(asExpression(fn.sum(lowCardFloat)).sqlType).toBe("Float64");
+    expect(asExpression(fn.sum(nullableFloat)).decoder("4.5")).toBe(4.5);
+    expect(asExpression(fn.sum(lowCardFloat)).decoder("2.25")).toBe(2.25);
 
     // Wrapped Decimal columns must still trigger auto-cast.
     const nullableAmount = nullable(decimal({ precision: 18, scale: 5 })).bind({
@@ -1829,7 +1890,7 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
       tableName: "ledger",
     });
     const summedNullable = fn.sum(nullableAmount);
-    expect(compileSql(sql`${summedNullable.compile(createContext())}`).query).toBe(
+    expect(compileSql(sql`${asExpression(summedNullable).compile(createContext())}`).query).toBe(
       "CAST(sum(`ledger`.`amount`) AS Decimal(38, 5))",
     );
 
@@ -1838,8 +1899,10 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
       name: "fee",
       tableName: "ledger",
     });
-    expect(compileSql(sql`${fn.avg(lowCardAmount).compile(createContext())}`).query).toBe("avg(`ledger`.`fee`)");
-    expect(fn.avg(lowCardAmount).sqlType).toBe("Float64");
+    expect(compileSql(sql`${asExpression(fn.avg(lowCardAmount)).compile(createContext())}`).query).toBe(
+      "avg(`ledger`.`fee`)",
+    );
+    expect(asExpression(fn.avg(lowCardAmount)).sqlType).toBe("Float64");
   });
 
   it("compiles window expressions, conditional maxima and exact decimal division", function testHistoryQueryHelpers() {
@@ -1855,24 +1918,24 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     expect(compileExpression(rank).query).toBe(
       "toFloat64(row_number() OVER (PARTITION BY `ledger`.`tier` ORDER BY `ledger`.`id` DESC, `ledger`.`tier` ASC))",
     );
-    expect(rank.sqlType).toBe("Float64");
-    expect(rank.decoder("2")).toBe(2);
-    expect(rank.decoder("9007199254740993")).toBe(9007199254740992);
+    expect(asExpression(rank).sqlType).toBe("Float64");
+    expect(asExpression(rank).decoder("2")).toBe(2);
+    expect(asExpression(rank).decoder("9007199254740993")).toBe(9007199254740992);
 
     const safeRank = fn.over(fn.rowNumber().toSafe(), rowNumberSpec);
     expect(compileExpression(safeRank).query).toBe(
       "toString(row_number() OVER (PARTITION BY `ledger`.`tier` ORDER BY `ledger`.`id` DESC, `ledger`.`tier` ASC))",
     );
-    expect(safeRank.sqlType).toBe("String");
-    expect(safeRank.decoder("9007199254740993")).toBe("9007199254740993");
+    expect(asExpression(safeRank).sqlType).toBe("String");
+    expect(asExpression(safeRank).decoder("9007199254740993")).toBe("9007199254740993");
 
     const mixedRank = fn.over(fn.rowNumber().toMixed(), rowNumberSpec);
     expect(compileExpression(mixedRank).query).toBe(
       "toUInt64(row_number() OVER (PARTITION BY `ledger`.`tier` ORDER BY `ledger`.`id` DESC, `ledger`.`tier` ASC))",
     );
-    expect(mixedRank.sqlType).toBe("UInt64");
-    expect(mixedRank.decoder(2)).toBe(2);
-    expect(mixedRank.decoder("9007199254740993")).toBe("9007199254740993");
+    expect(asExpression(mixedRank).sqlType).toBe("UInt64");
+    expect(asExpression(mixedRank).decoder(2)).toBe(2);
+    expect(asExpression(mixedRank).decoder("9007199254740993")).toBe("9007199254740993");
 
     const explicitUnsafeRank = fn.over(fn.rowNumber().toSafe().toUnsafe(), rowNumberSpec);
     expect(compileExpression(explicitUnsafeRank).query).toBe(
@@ -1886,11 +1949,11 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
 
     const windowedDecimalSum = fn.over(fn.sum(amount));
     expect(compileExpression(windowedDecimalSum).query).toBe("CAST(sum(`ledger`.`amount`) OVER () AS Decimal(38, 5))");
-    expect(windowedDecimalSum.sqlType).toBe("Decimal(38, 5)");
-    expect(windowedDecimalSum.decoder("12.34567")).toBe("12.34567");
+    expect(asExpression(windowedDecimalSum).sqlType).toBe("Decimal(38, 5)");
+    expect(asExpression(windowedDecimalSum).decoder("12.34567")).toBe("12.34567");
 
     const mappedWindowedDecimalSum = fn.over(fn.sum(amount).mapWith(Number));
-    expect(mappedWindowedDecimalSum.decoder("12.34567")).toBe(12.34567);
+    expect(asExpression(mappedWindowedDecimalSum).decoder("12.34567")).toBe(12.34567);
     expect(compileExpression(fn.over(fn.sum(amount).as("ignored_alias"))).query).toBe(
       "CAST(sum(`ledger`.`amount`) OVER () AS Decimal(38, 5))",
     );
@@ -1902,33 +1965,33 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
 
     const safeWindowedCount = fn.over(fn.count().toSafe());
     expect(compileExpression(safeWindowedCount).query).toBe("toString(count() OVER ())");
-    expect(safeWindowedCount.decoder("2")).toBe("2");
+    expect(asExpression(safeWindowedCount).decoder("2")).toBe("2");
 
     const parameterizedWindow = fn.over(fn.withParams<number>("quantile", [0.5], id));
     expect(compileExpression(parameterizedWindow).query).toBe("quantile({orm_param1:Float64})(`ledger`.`id`) OVER ()");
 
     const conditionalMaximum = fn.maxIf(amount, sql`1`);
     expect(compileExpression(conditionalMaximum).query).toBe("CAST(maxIf(`ledger`.`amount`, 1) AS Decimal(18, 5))");
-    expect(conditionalMaximum.sqlType).toBe("Decimal(18, 5)");
-    expect(conditionalMaximum.decoder("99.00000")).toBe("99.00000");
+    expect(asExpression(conditionalMaximum).sqlType).toBe("Decimal(18, 5)");
+    expect(asExpression(conditionalMaximum).decoder("99.00000")).toBe("99.00000");
     expect(compileExpression(fn.over(conditionalMaximum)).query).toBe(
       "CAST(maxIf(`ledger`.`amount`, 1) OVER () AS Decimal(18, 5))",
     );
 
     const integerConditionalMaximum = fn.maxIf(id, sql`1`);
     expect(compileExpression(integerConditionalMaximum).query).toBe("maxIf(`ledger`.`id`, 1)");
-    expect(integerConditionalMaximum.sqlType).toBe("Int32");
-    expect(integerConditionalMaximum.decoder("7")).toBe(7);
+    expect(asExpression(integerConditionalMaximum).sqlType).toBe("Int32");
+    expect(asExpression(integerConditionalMaximum).decoder("7")).toBe(7);
     expect(compileExpression(fn.over(integerConditionalMaximum)).query).toBe("maxIf(`ledger`.`id`, 1) OVER ()");
 
     const decimalDivision = fn.divideDecimal(amount, sql`toDecimal64(3, 2)`, 4);
     expect(compileExpression(decimalDivision).query).toBe("divideDecimal(`ledger`.`amount`, toDecimal64(3, 2), 4)");
-    expect(decimalDivision.sqlType).toBe("Decimal(76, 4)");
-    expect(decimalDivision.decoder("0.3333")).toBe("0.3333");
+    expect(asExpression(decimalDivision).sqlType).toBe("Decimal(76, 4)");
+    expect(asExpression(decimalDivision).decoder("0.3333")).toBe("0.3333");
 
     const derivedDecimalDivision = fn.divideDecimal(amount, sql`toDecimal64(3, 2)`);
     expect(compileExpression(derivedDecimalDivision).query).toBe("divideDecimal(`ledger`.`amount`, toDecimal64(3, 2))");
-    expect(derivedDecimalDivision.sqlType).toBeUndefined();
+    expect(asExpression(derivedDecimalDivision).sqlType).toBeUndefined();
 
     expect(() => fn.divideDecimal(amount, amount, -1)).toThrow(
       "divideDecimal resultScale must be an integer between 0 and 76",
@@ -1981,72 +2044,75 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     expect(compileExpression(flippedToUnsafe).query).toContain("toFloat64(count())");
 
     // Decoder semantics per mode.
-    expect(fn.count().decoder(0)).toBe(0);
-    expect(fn.count().decoder("9007199254740991")).toBe(9007199254740991);
-    expect(fn.count().decoder(42n)).toBe(42);
-    expect(() => fn.count().decoder(Number.NaN)).toThrow("Failed to decode count() result");
-    expect(() => fn.count().decoder(1.5)).toThrow("Failed to decode count() result");
-    expect(() => fn.count().decoder(-1)).toThrow("Failed to decode count() result");
-    expect(() => fn.count().decoder(true)).toThrow("Failed to decode count() result");
-    expect(() => fn.count().decoder(" 7 ")).toThrow("Failed to decode count() result");
+    expect(asExpression(fn.count()).decoder(0)).toBe(0);
+    expect(asExpression(fn.count()).decoder("9007199254740991")).toBe(9007199254740991);
+    expect(asExpression(fn.count()).decoder(42n)).toBe(42);
+    expect(() => asExpression(fn.count()).decoder(Number.NaN)).toThrow("Failed to decode count() result");
+    expect(() => asExpression(fn.count()).decoder(1.5)).toThrow("Failed to decode count() result");
+    expect(() => asExpression(fn.count()).decoder(-1)).toThrow("Failed to decode count() result");
+    expect(() => asExpression(fn.count()).decoder(true)).toThrow("Failed to decode count() result");
+    expect(() => asExpression(fn.count()).decoder(" 7 ")).toThrow("Failed to decode count() result");
 
-    expect(fn.count().toSafe().decoder("0")).toBe("0");
-    expect(fn.count().toSafe().decoder(99n)).toBe("99");
-    expect(fn.count().toSafe().decoder(7)).toBe("7");
-    expect(() => fn.count().toSafe().decoder(-1n)).toThrow("Failed to decode count() result");
-    expect(() => fn.count().toSafe().decoder("1.0")).toThrow("Failed to decode count() result");
-    expect(() => fn.count().toSafe().decoder(Number.NaN)).toThrow("Failed to decode count() result");
+    expect(asExpression(fn.count().toSafe()).decoder("0")).toBe("0");
+    expect(asExpression(fn.count().toSafe()).decoder(99n)).toBe("99");
+    expect(asExpression(fn.count().toSafe()).decoder(7)).toBe("7");
+    expect(() => asExpression(fn.count().toSafe()).decoder(-1n)).toThrow("Failed to decode count() result");
+    expect(() => asExpression(fn.count().toSafe()).decoder("1.0")).toThrow("Failed to decode count() result");
+    expect(() => asExpression(fn.count().toSafe()).decoder(Number.NaN)).toThrow("Failed to decode count() result");
 
-    expect(fn.count().toMixed().decoder("100")).toBe("100");
-    expect(fn.count().toMixed().decoder(100)).toBe(100);
-    expect(fn.count().toMixed().decoder(7n)).toBe("7");
-    expect(() => fn.count().toMixed().decoder(true)).toThrow("Failed to decode count() result");
-    expect(() => fn.count().toMixed().decoder(-2)).toThrow("Failed to decode count() result");
+    expect(asExpression(fn.count().toMixed()).decoder("100")).toBe("100");
+    expect(asExpression(fn.count().toMixed()).decoder(100)).toBe(100);
+    expect(asExpression(fn.count().toMixed()).decoder(7n)).toBe("7");
+    expect(() => asExpression(fn.count().toMixed()).decoder(true)).toThrow("Failed to decode count() result");
+    expect(() => asExpression(fn.count().toMixed()).decoder(-2)).toThrow("Failed to decode count() result");
 
     // countIf preserves the predicate body inside every wrapper.
     const condition = fn.not(int32().bind({ name: "id", tableName: "orders" }));
     expect(compileExpression(fn.countIf(condition)).query).toContain("toFloat64(countIf(not(`orders`.`id`)))");
     expect(compileExpression(fn.countIf(condition).toSafe()).query).toContain("toString(countIf(not(`orders`.`id`)))");
     expect(compileExpression(fn.countIf(condition).toMixed()).query).toContain("toUInt64(countIf(not(`orders`.`id`)))");
-    expect(fn.countIf(condition).decoder(3)).toBe(3);
-    expect(fn.countIf(condition).toSafe().decoder("3")).toBe("3");
-    expect(fn.countIf(condition).toMixed().decoder("3")).toBe("3");
+    expect(asExpression(fn.countIf(condition)).decoder(3)).toBe(3);
+    expect(asExpression(fn.countIf(condition).toSafe()).decoder("3")).toBe("3");
+    expect(asExpression(fn.countIf(condition).toMixed()).decoder("3")).toBe("3");
 
     // The same selection is reusable as a SQL operand inside other expressions (e.g. HAVING).
     const composed = fn.count();
-    const composedQuery = compileExpression({
-      compile: (ctx) => sql`${composed.compile(ctx)} > {orm_paramN:Int64}`,
-    }).query;
+    const composedQuery = compileExpression(
+      createExpression({
+        compile: (ctx) => sql`${asExpression(composed).compile(ctx)} > {orm_paramN:Int64}`,
+        decoder: passThroughDecoder,
+      }),
+    ).query;
     expect(composedQuery).toContain("toFloat64(count()) > {orm_paramN:Int64}");
 
     // .as() preserves chosen mode and decoder.
     const aliased = fn.count().toMixed().as("total");
     const aliasedBuilt = compileExpression(aliased);
     expect(aliasedBuilt.query).toContain("toUInt64(count())");
-    expect(aliased.decoder("4")).toBe("4");
+    expect(asExpression(aliased).decoder("4")).toBe("4");
 
     // fn.uniqExact mirrors fn.count's three modes.
     const uniqArg = int32().bind({ name: "user_id", tableName: "events" });
     const defaultUniq = fn.uniqExact(uniqArg);
     expect(defaultUniq.sqlType).toBe("Float64");
     expect(compileExpression(defaultUniq).query).toContain("toFloat64(uniqExact(`events`.`user_id`))");
-    expect(defaultUniq.decoder(7)).toBe(7);
-    expect(defaultUniq.decoder("7")).toBe(7);
-    expect(defaultUniq.decoder(7n)).toBe(7);
-    expect(() => defaultUniq.decoder(-1)).toThrow("Failed to decode count() result");
-    expect(() => defaultUniq.decoder(true)).toThrow("Failed to decode count() result");
+    expect(asExpression(defaultUniq).decoder(7)).toBe(7);
+    expect(asExpression(defaultUniq).decoder("7")).toBe(7);
+    expect(asExpression(defaultUniq).decoder(7n)).toBe(7);
+    expect(() => asExpression(defaultUniq).decoder(-1)).toThrow("Failed to decode count() result");
+    expect(() => asExpression(defaultUniq).decoder(true)).toThrow("Failed to decode count() result");
 
     const safeUniq = fn.uniqExact(uniqArg).toSafe();
     expect(safeUniq.sqlType).toBe("String");
     expect(compileExpression(safeUniq).query).toContain("toString(uniqExact(`events`.`user_id`))");
-    expect(safeUniq.decoder("99")).toBe("99");
-    expect(safeUniq.decoder(99n)).toBe("99");
+    expect(asExpression(safeUniq).decoder("99")).toBe("99");
+    expect(asExpression(safeUniq).decoder(99n)).toBe("99");
 
     const mixedUniq = fn.uniqExact(uniqArg).toMixed();
     expect(mixedUniq.sqlType).toBe("UInt64");
     expect(compileExpression(mixedUniq).query).toContain("toUInt64(uniqExact(`events`.`user_id`))");
-    expect(mixedUniq.decoder("100")).toBe("100");
-    expect(mixedUniq.decoder(100)).toBe(100);
+    expect(asExpression(mixedUniq).decoder("100")).toBe("100");
+    expect(asExpression(mixedUniq).decoder(100)).toBe(100);
 
     const unsafeUniq = fn.uniqExact(uniqArg).toMixed().toUnsafe();
     expect(unsafeUniq.sqlType).toBe("Float64");
@@ -2056,22 +2122,29 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     const aliasedUniq = fn.uniqExact(uniqArg).toMixed().as("distinct_users");
     const aliasedUniqBuilt = compileExpression(aliasedUniq);
     expect(aliasedUniqBuilt.query).toContain("toUInt64(uniqExact(`events`.`user_id`))");
-    expect(aliasedUniq.decoder("8")).toBe("8");
+    expect(asExpression(aliasedUniq).decoder("8")).toBe("8");
 
     // Embedded as a SQL operand (e.g. inside HAVING / ORDER BY) — exercises compile() reuse.
-    const havingExpr = compileExpression({
-      compile: (ctx) => sql`${defaultUniq.compile(ctx)} > {orm_paramN:Int64}`,
-    }).query;
+    const havingExpr = compileExpression(
+      createExpression({
+        compile: (ctx) => sql`${asExpression(defaultUniq).compile(ctx)} > {orm_paramN:Int64}`,
+        decoder: passThroughDecoder,
+      }),
+    ).query;
     expect(havingExpr).toContain("toFloat64(uniqExact(`events`.`user_id`)) > {orm_paramN:Int64}");
 
     // Boundary decoder coverage for uniqExact mirrors count.
-    expect(fn.uniqExact(uniqArg).decoder(0)).toBe(0);
-    expect(fn.uniqExact(uniqArg).decoder("9007199254740991")).toBe(9007199254740991);
-    expect(() => fn.uniqExact(uniqArg).decoder(Number.NaN)).toThrow("Failed to decode count() result");
-    expect(() => fn.uniqExact(uniqArg).decoder(1.5)).toThrow("Failed to decode count() result");
-    expect(() => fn.uniqExact(uniqArg).toSafe().decoder(-1n)).toThrow("Failed to decode count() result");
-    expect(() => fn.uniqExact(uniqArg).toSafe().decoder("1.0")).toThrow("Failed to decode count() result");
-    expect(() => fn.uniqExact(uniqArg).toMixed().decoder(true)).toThrow("Failed to decode count() result");
+    expect(asExpression(fn.uniqExact(uniqArg)).decoder(0)).toBe(0);
+    expect(asExpression(fn.uniqExact(uniqArg)).decoder("9007199254740991")).toBe(9007199254740991);
+    expect(() => asExpression(fn.uniqExact(uniqArg)).decoder(Number.NaN)).toThrow("Failed to decode count() result");
+    expect(() => asExpression(fn.uniqExact(uniqArg)).decoder(1.5)).toThrow("Failed to decode count() result");
+    expect(() => asExpression(fn.uniqExact(uniqArg).toSafe()).decoder(-1n)).toThrow("Failed to decode count() result");
+    expect(() => asExpression(fn.uniqExact(uniqArg).toSafe()).decoder("1.0")).toThrow(
+      "Failed to decode count() result",
+    );
+    expect(() => asExpression(fn.uniqExact(uniqArg).toMixed()).decoder(true)).toThrow(
+      "Failed to decode count() result",
+    );
   });
 
   it("compiles table functions with and without alias", function testTableFunctions() {

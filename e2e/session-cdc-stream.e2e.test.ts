@@ -34,6 +34,24 @@ describeE2E("ck-orm e2e session, cdc and stream", function describeSessionCdcAnd
     expect(rawRows).toEqual(builderRows);
   });
 
+  it("delivers the first row of a sparse stream before the query finishes", async function testSparseStreamArrivesIncrementally() {
+    const db = createE2EDb();
+    const started = Date.now();
+    let firstRowAt: number | undefined;
+    let count = 0;
+
+    for await (const _row of db.stream(
+      ckSql`select number from numbers(4) where sleepEachRow(1) = 0 settings max_block_size = 1, max_threads = 1`,
+    )) {
+      firstRowAt ??= Date.now() - started;
+      count += 1;
+    }
+
+    expect(count).toBe(4);
+    expect(firstRowAt).toBeLessThan(2_500);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(3_500);
+  });
+
   it("supports leftJoin null semantics and join_use_nulls opt-out", async function testJoinNullModes() {
     const db = createE2EDb();
 

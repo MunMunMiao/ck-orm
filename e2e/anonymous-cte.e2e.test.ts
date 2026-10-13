@@ -1,7 +1,7 @@
 import { expect, it } from "bun:test";
-import { ck, ckSql, ckType, fn, isClickHouseORMError } from "./ck-orm";
+import { ck, ckSql, ckTable, ckType, fn, isClickHouseORMError } from "./ck-orm";
 import { createE2EDb, createTempTableName, datasetCounts, pets, users, webEvents } from "./shared";
-import { describeE2E, expectPresent } from "./test-helpers";
+import { describeE2E, expectClientValidationNotSent, expectPresent } from "./test-helpers";
 
 // E2E verification for the anonymous-CTE feature (`db.$with()` with no name).
 // Each pattern runs a real query against a seeded ClickHouse instance and
@@ -390,5 +390,109 @@ describeE2E("ck-orm e2e anonymous CTE via $with()", function describeAnonymousCt
     expect(expectPresent(u, "users")).toBe(datasetCounts.users);
     expect(expectPresent(p, "pets")).toBe(datasetCounts.pets);
     expect(expectPresent(w, "webEvents")).toBe(datasetCounts.webEvents);
+  });
+
+  it("keeps a left-joined null when that query is selected from again", async function testNestedLeftJoinNull() {
+    const db = createE2EDb();
+    const petTotals = db
+      .select({ ownerId: pets.owner_id, petCount: fn.count(pets.id).as("pet_count") })
+      .from(pets)
+      .groupBy(pets.owner_id);
+    const inner = db
+      .select({ id: users.id, petCount: petTotals.petCount })
+      .from(users)
+      .leftJoin(petTotals, ck.eq(users.id, petTotals.ownerId));
+
+    expect(
+      await db
+        .select({ id: inner.id, petCount: inner.petCount })
+        .from(inner)
+        .where(ck.between(inner.id, 4000, 4001))
+        .orderBy(inner.id),
+    ).toEqual([
+      { id: 4000, petCount: 2 },
+      { id: 4001, petCount: null },
+    ]);
+  });
+
+  it("returns flat rows from select() left-joined to an anonymous CTE", async function testAnonymousCteFlatDefaultProjection() {
+    const db = createE2EDb();
+    const petTotals = db.$with().as(
+      db
+        .select({ ownerId: pets.owner_id, petCount: fn.count(pets.id).as("pet_count") })
+        .from(pets)
+        .groupBy(pets.owner_id),
+    );
+    const rows = await db
+      .with(petTotals)
+      .select()
+      .from(users)
+      .leftJoin(petTotals, ck.eq(users.id, petTotals.ownerId))
+      .where(ck.eq(users.id, 1));
+
+    expect(rows).toEqual([expect.objectContaining({ id: 1, name: "alice", tier: "vip" })]);
+    expect(rows[0]).not.toHaveProperty("users");
+  });
+
+  it("collapses an unmatched left-joined group that contains array and map columns", async function testLeftJoinEmptyArrayAndMap() {
+    const db = createE2EDb();
+    const userTableName = createTempTableName("tmp_lj_users");
+    const profileTableName = createTempTableName("tmp_lj_profiles");
+    const userTable = ckTable(userTableName, {
+      id: ckType.int32(),
+      name: ckType.string(),
+    });
+    const profileTable = ckTable(profileTableName, {
+      user_id: ckType.int32(),
+      tags: ckType.array(ckType.string()),
+      attrs: ckType.map(ckType.string(), ckType.string()),
+    });
+
+    await db.runInSession(async (session) => {
+      await session.createTemporaryTable(userTable);
+      await session.createTemporaryTable(profileTable);
+      await session.insert(userTable).values([
+        { id: 1, name: "matched" },
+        { id: 2, name: "solo" },
+      ]);
+      await session.insert(profileTable).values([{ user_id: 1, tags: ["a"], attrs: { k: "v" } }]);
+
+      const rows = (await session
+        .select()
+        .from(userTable)
+        .leftJoin(profileTable, ck.eq(userTable.id, profileTable.user_id))
+        .orderBy(userTable.id)) as ReadonlyArray<Record<string, unknown>>;
+
+      expect(rows).toEqual([
+        {
+          [userTableName]: { id: 1, name: "matched" },
+          [profileTableName]: { user_id: 1, tags: ["a"], attrs: { k: "v" } },
+        },
+        {
+          [userTableName]: { id: 2, name: "solo" },
+          [profileTableName]: null,
+        },
+      ]);
+    });
+  });
+
+  it("rejects joining one anonymous CTE twice before sending a request", async function testAnonCteJoinedTwice() {
+    const db = createE2EDb();
+    const totals = db.$with().as(db.select({ id: users.id }).from(users).where(ck.eq(users.id, 1)));
+
+    const error = await expectClientValidationNotSent(() =>
+      db
+        .with(totals)
+        .select({ id: users.id })
+        .from(users)
+        .leftJoin(totals, ck.eq(users.id, totals.id))
+        .leftJoin(totals, ck.eq(users.id, totals.id)),
+    );
+    expect(error.message).toContain("Anonymous CTE used twice");
+    expect(error.message).toContain('auto-alias "__cte_1"');
+    expect(error.message).toContain("Every column ref compiles to that same alias");
+    expect(error.message).toContain("two db.$with().as(...) calls");
+    expect(error.message).toContain("two named CTEs with different names");
+    expect(error.message).not.toContain("ckAlias");
   });
 });

@@ -333,6 +333,52 @@ describeE2E("ck-orm e2e write paths", function describeWritePaths() {
     });
   });
 
+  it("round-trips Nested columns through insertJsonEachRow", async function testInsertJsonEachRowNested() {
+    const db = createE2EDb();
+    const tempTable = createTempTableName("tmp_json_each_row_nested");
+    const scope = ckTable(tempTable, {
+      id: ckType.int32(),
+      lines: ckType.nested({
+        sku: ckType.string(),
+        qty: ckType.int32(),
+      }),
+    });
+
+    await db.runInSession(async (session) => {
+      await session.createTemporaryTable(scope);
+      await session.insertJsonEachRow(scope, [
+        {
+          id: 1,
+          lines: [
+            { sku: "a", qty: 2 },
+            { sku: "b", qty: 3 },
+          ],
+        },
+        { id: 2, lines: [] },
+        { id: 4, lines: undefined },
+      ]);
+      await session.insertJsonEachRow(
+        scope,
+        (async function* rows() {
+          yield { id: 3, lines: [{ sku: "c", qty: 4 }] };
+        })(),
+      );
+
+      expect(await session.select({ id: scope.id, lines: scope.lines }).from(scope).orderBy(scope.id)).toEqual([
+        {
+          id: 1,
+          lines: [
+            { sku: "a", qty: 2 },
+            { sku: "b", qty: 3 },
+          ],
+        },
+        { id: 2, lines: [] },
+        { id: 3, lines: [{ sku: "c", qty: 4 }] },
+        { id: 4, lines: [] },
+      ]);
+    });
+  });
+
   it("supports JSONEachRow unknown-field skipping when ClickHouse setting is enabled", async function testJsonEachRowSkipUnknownFields() {
     const db = createE2EDb();
     const tempTable = createTempTableName("tmp_json_each_row_unknown");
@@ -480,6 +526,63 @@ describeE2E("ck-orm e2e write paths", function describeWritePaths() {
         uint64Value: "18446744073709551000",
       },
     ]);
+  });
+
+  it("writes 64-bit and Decimal values nested in Array, Map and Tuple columns through insert builder", async function testInsertBuilderNestedNumericStrings() {
+    const db = createE2EDb();
+    const tempTable = createTempTableName("tmp_builder_nested_numeric");
+    const scope = ckTable(tempTable, {
+      id: ckType.int32(),
+      ids: ckType.array(ckType.uint64()),
+      totals: ckType.map(ckType.string(), ckType.uint64()),
+      prices: ckType.array(ckType.decimal({ precision: 18, scale: 2 })),
+      pair: ckType.tuple(ckType.int64(), ckType.string()),
+    });
+
+    await db.runInSession(async (session) => {
+      await session.createTemporaryTable(scope);
+      await session.insert(scope).values({
+        id: 1,
+        ids: ["18446744073709551615", "1"],
+        totals: { all: "18446744073709551615" },
+        prices: ["-3.50", "1e2"],
+        pair: ["-9223372036854775808", "min"],
+      });
+
+      expect(await session.select().from(scope)).toEqual([
+        {
+          id: 1,
+          ids: ["18446744073709551615", "1"],
+          totals: { all: "18446744073709551615" },
+          prices: ["-3.5", "100"],
+          pair: ["-9223372036854775808", "min"],
+        },
+      ]);
+    });
+  });
+
+  it("applies column DEFAULTs when only some insert builder rows omit a column", async function testInsertBuilderMixedDefaults() {
+    const db = createE2EDb();
+    const tempTable = createTempTableName("tmp_builder_mixed_defaults");
+    const scope = ckTable(tempTable, {
+      id: ckType.int32(),
+      note: ckType.string().default(ckSql`concat('n-', toString(id))`),
+      lines: ckType.nested({ sku: ckType.string() }),
+    });
+
+    await db.runInSession(async (session) => {
+      await session.createTemporaryTable(scope);
+      await session
+        .insert(scope)
+        .values([{ id: 1, note: "first", lines: [{ sku: "a" }] }, { id: 2 }, { id: 3, note: "third" }, { id: 4 }]);
+
+      expect(await session.select().from(scope).orderBy(scope.id)).toEqual([
+        { id: 1, note: "first", lines: [{ sku: "a" }] },
+        { id: 2, note: "n-2", lines: [] },
+        { id: 3, note: "third", lines: [] },
+        { id: 4, note: "n-4", lines: [] },
+      ]);
+    });
   });
 
   it("round-trips 64-bit schema columns through array insertJsonEachRow", async function testInsertJsonEachRowBigIntArray() {

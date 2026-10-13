@@ -1,4 +1,4 @@
-import { createClientValidationError, createSessionError } from "../errors";
+import { createClientValidationError, createSessionError, isClickHouseORMError } from "../errors";
 import {
   type ClickHouseORMInstrumentation,
   type ClickHouseORMQueryKind,
@@ -27,6 +27,7 @@ import {
   type ClickHouseQueryOptions,
   type ClickHouseStreamOptions,
   type CreateTemporaryTableOptions,
+  encodeJsonEachRowInstants,
   mergeClickHouseSettings,
   mergeQueryParams,
   normalizeRawQueryInput,
@@ -102,7 +103,10 @@ const createSessionController = (sessionId: string, ancestorSessionIds: readonly
 type JsonEachRowColumnEntry = {
   readonly logicalKey: string;
   readonly physicalName: string;
+  readonly sqlType: string;
   readonly mapToDriverValue: (value: unknown) => unknown;
+  // Field key and its column SQL type, for nested columns.
+  readonly nestedFields?: readonly (readonly [string, string])[];
 };
 
 type JsonEachRowMapping = {
@@ -120,15 +124,25 @@ const getJsonEachRowMapping = (table: AnyTable): JsonEachRowMapping => {
   if (cached) return cached;
 
   // Run every value through the column's `mapToDriverValue` so JSONEachRow
-  // sees ClickHouse-acceptable literals (e.g. Date → `'YYYY-MM-DD HH:MM:SS'`
-  // rather than `JSON.stringify` ISO 8601 with `Z`). Logical-to-physical
-  // key rename is folded into the same pass.
+  // sees ClickHouse-acceptable literals (Date columns → `'YYYY-MM-DD'`,
+  // DateTime/DateTime64 Dates → integer ticks via `encodeJsonEachRowInstants`).
+  // Logical-to-physical key rename is folded into the same pass. Nested
+  // columns are stored as parallel arrays (`flatten_nested = 1`), so their
+  // field names and types are cached here and emitted as `name.field` arrays.
   const columnEntries: JsonEachRowColumnEntry[] = [];
   const schemaKeys = new Set<string>();
   for (const [schemaKey, column] of Object.entries(table.columns)) {
     const logicalKey = column.key ?? schemaKey;
     const physicalName = column.name ?? schemaKey;
-    columnEntries.push({ logicalKey, physicalName, mapToDriverValue: column.mapToDriverValue });
+    columnEntries.push({
+      logicalKey,
+      physicalName,
+      sqlType: column.sqlType,
+      mapToDriverValue: column.mapToDriverValue,
+      nestedFields: column.nestedShape
+        ? Object.entries(column.nestedShape).map(([fieldKey, field]) => [fieldKey, field.sqlType] as const)
+        : undefined,
+    });
     schemaKeys.add(logicalKey);
     schemaKeys.add(physicalName);
   }
@@ -282,7 +296,60 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
       yield* operation();
       return;
     }
-    yield* sessionConcurrencyController.runStream(options.session_id, operation, options.abort_signal);
+    yield* sessionConcurrencyController.runStream(options.session_id, operation, options.abort_signal, () =>
+      waitForSessionRelease(options),
+    );
+  };
+
+  // Cancels the abandoned stream from outside the session, then polls until
+  // ClickHouse stops answering SESSION_IS_LOCKED. The session is locked, so
+  // the kill cannot run inside it; an empty session_id keeps the client
+  // default from putting it back. A failed kill is ignored. Never rejects:
+  // on any other outcome the caller simply releases its slot and the next
+  // request reports whatever the server says. Each request stops at the time
+  // still left, and a cancelled stream's ignore_error_response must not
+  // treat SESSION_IS_LOCKED as success.
+  const waitForSessionRelease = async (options: ClickHouseBaseQueryOptions): Promise<void> => {
+    // ponytail: fixed deadline and backoff; expose them if slow-to-cancel queries need longer.
+    const deadline = Date.now() + (config.requestTimeoutMs ?? 30_000);
+    try {
+      await config.client.command(
+        "KILL QUERY WHERE query_id = {id:String} SYNC",
+        {
+          ...options,
+          session_id: "",
+          session_timeout: undefined,
+          session_check: undefined,
+          query_id: createUuid(),
+          ignore_error_response: false,
+          abort_signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())),
+        },
+        { id: options.query_id },
+        { id: "String" },
+      );
+    } catch {
+      // Permissions, network, and the deadline all fall through to the poll.
+    }
+    for (let delayMs = 10; ; delayMs = Math.min(delayMs * 2, 250)) {
+      try {
+        await config.client.command("SELECT 1", {
+          ...options,
+          query_id: createUuid(),
+          query_params: undefined,
+          abort_signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())),
+          ignore_error_response: false,
+        });
+        return;
+      } catch (error) {
+        if (!isClickHouseORMError(error) || error.clickhouseName !== "SESSION_IS_LOCKED" || Date.now() >= deadline) {
+          return;
+        }
+      }
+      await new Promise((resolve) => {
+        const timer = setTimeout(resolve, delayMs) as unknown as { unref?: () => void };
+        timer.unref?.();
+      });
+    }
   };
 
   const executeCompiled = async <TResult extends Record<string, unknown>>(
@@ -317,6 +384,7 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
               mergedOptions,
               queryConfig.query_params,
               queryConfig.query_param_types,
+              compiled.body,
             );
             return { value: [] as TResult[] };
           }
@@ -451,7 +519,7 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
       for (const [key, value] of Object.entries(row)) {
         if (!schemaKeys.has(key)) mapped[key] = value;
       }
-      for (const { logicalKey, physicalName, mapToDriverValue } of columnEntries) {
+      for (const { logicalKey, physicalName, sqlType, mapToDriverValue, nestedFields } of columnEntries) {
         const fromLogical = Object.hasOwn(row, logicalKey);
         const fromPhysical = logicalKey !== physicalName && Object.hasOwn(row, physicalName);
         if (fromLogical && fromPhysical) {
@@ -459,8 +527,21 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
             `insertJsonEachRow() row contains both logical key "${logicalKey}" and database column "${physicalName}"`,
           );
         }
-        if (fromLogical) mapped[physicalName] = mapToDriverValue(row[logicalKey]);
-        else if (fromPhysical) mapped[physicalName] = mapToDriverValue(row[physicalName]);
+        if (!fromLogical && !fromPhysical) continue;
+        const value = row[fromLogical ? logicalKey : physicalName];
+        // Explicit undefined means omitted, as in `.values()`: ClickHouse fills the DEFAULT.
+        if (value === undefined) continue;
+        const encoded = mapToDriverValue(value);
+        if (!nestedFields) {
+          mapped[physicalName] = encodeJsonEachRowInstants(encoded, sqlType);
+          continue;
+        }
+        const items = encoded as readonly Record<string, unknown>[];
+        for (const [fieldKey, fieldType] of nestedFields) {
+          mapped[`${physicalName}.${fieldKey}`] = items.map((item) =>
+            encodeJsonEachRowInstants(item[fieldKey], fieldType),
+          );
+        }
       }
       return mapped;
     };
@@ -605,7 +686,7 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
       });
     },
 
-    withSettings<TSettings extends ClickHouseSettings>(
+    withSettings<const TSettings extends ClickHouseSettings>(
       settings: TSettings,
     ): ClickHouseORMClient<ResolveJoinUseNulls<TSettings, TJoinUseNulls>> {
       const nextJoinUseNulls = (
@@ -630,20 +711,22 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
       rows: readonly Record<string, unknown>[] | AsyncIterable<Record<string, unknown>>,
       options?: ClickHouseBaseQueryOptions,
     ) {
-      // The schema-aware encoder for `dateTime`/`dateTime64` columns emits
-      // ISO 8601 with `Z` so identical instants land at identical Unix scaled
-      // values regardless of the column's declared timezone. ClickHouse's
-      // default `date_time_input_format=basic` parser rejects the `Z` suffix,
-      // so the `best_effort` mode is enabled by default. Callers retain
-      // priority — explicit per-request or client-level overrides win.
+      // With a table schema, Dates in DateTime/DateTime64 columns are sent as
+      // integer ticks and ClickHouse's default `basic` datetime parser stays in
+      // charge of strings, as in `.values()`. A bare table name has no types,
+      // so Dates go out as JSON.stringify ISO 8601 with `Z`, which only the
+      // `best_effort` parser reads. Callers' explicit settings always win.
       const baseOptions = mergeOptions(options);
-      const mergedOptions: ClickHouseBaseQueryOptions = {
-        ...baseOptions,
-        clickhouse_settings: {
-          date_time_input_format: "best_effort",
-          ...(baseOptions.clickhouse_settings ?? {}),
-        },
-      };
+      const mergedOptions: ClickHouseBaseQueryOptions =
+        typeof table === "string"
+          ? {
+              ...baseOptions,
+              clickhouse_settings: {
+                date_time_input_format: "best_effort",
+                ...(baseOptions.clickhouse_settings ?? {}),
+              },
+            }
+          : baseOptions;
       const tableName = toClickHouseTableName(table);
       const tableIdentifier = quoteIdentifier({ table: tableName });
       const mappedRows = mapLogicalJsonEachRowKeys(table, rows);
@@ -747,7 +830,6 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
           const identifier = renderTempTableIdentifier(tableName);
           await sessionClient.command(sql(`DROP TABLE IF EXISTS ${identifier}`), {
             abort_signal: undefined,
-            ignore_error_response: true,
           });
         } catch (error) {
           cleanupErrors.push(error);

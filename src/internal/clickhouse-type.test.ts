@@ -6,6 +6,7 @@ import {
   normalizeClickHouseTypeLiteral,
   splitTopLevelTypeList,
   unwrapNullableLowCardinalityType,
+  unwrapStorageType,
 } from "./clickhouse-type";
 
 describe("ck-orm internal ClickHouse type literals", function describeClickHouseTypeLiterals() {
@@ -50,6 +51,24 @@ describe("ck-orm internal ClickHouse type literals", function describeClickHouse
       "Enum8('a,b' = 1)",
     ]);
     expect(unwrapNullableLowCardinalityType("Nullable(LowCardinality(String))")).toBe("String");
+    expect(unwrapNullableLowCardinalityType("SimpleAggregateFunction(sum, UInt64)")).toBe("UInt64");
+    expect(unwrapNullableLowCardinalityType("SimpleAggregateFunction(sum, UInt8, UInt64)")).toBe("UInt64");
+    expect(
+      unwrapNullableLowCardinalityType(
+        "Nullable(SimpleAggregateFunction(max, LowCardinality(DateTime('Asia/Shanghai'))))",
+      ),
+    ).toBe("DateTime('Asia/Shanghai')");
+    expect(unwrapNullableLowCardinalityType("SimpleAggregateFunction(quantiles(0.5, 0.9), Float64)")).toBe("Float64");
+    expect(unwrapNullableLowCardinalityType("SimpleAggregateFunction(sum)")).toBe("SimpleAggregateFunction(sum)");
+    expect(unwrapNullableLowCardinalityType("AggregateFunction(sum, UInt64)")).toBe("AggregateFunction(sum, UInt64)");
+    expect(unwrapStorageType("LowCardinality(Nullable(DateTime))")).toBe("Nullable(DateTime)");
+    expect(unwrapStorageType("SimpleAggregateFunction(max, DateTime('Asia/Shanghai'))")).toBe(
+      "DateTime('Asia/Shanghai')",
+    );
+    expect(unwrapStorageType("Nullable(LowCardinality(DateTime))")).toBe("Nullable(LowCardinality(DateTime))");
+    expect(unwrapStorageType("LowCardinality(SimpleAggregateFunction(max, Nullable(DateTime)))")).toBe(
+      "Nullable(DateTime)",
+    );
     expect(unwrapNullableLowCardinalityType("Nullable(UInt8, String)")).toBe("Nullable(UInt8, String)");
     expect(getArrayElementType(undefined)).toBeUndefined();
     expect(getArrayElementType("String")).toBeUndefined();

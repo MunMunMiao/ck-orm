@@ -1,6 +1,25 @@
 import { describe, expect, it } from "bun:test";
-import { array, bool, date, date32, decimal, float64, int32, nested, nullable, string, tuple } from "./columns";
+import {
+  array,
+  bool,
+  date,
+  date32,
+  dateTime,
+  dateTime64,
+  decimal,
+  float64,
+  int32,
+  lowCardinality,
+  map,
+  nested,
+  nullable,
+  point,
+  simpleAggregateFunction,
+  string,
+  tuple,
+} from "./columns";
 import { fn, tableFn } from "./functions";
+import { bindDatesAsUtc } from "./internal/datetime";
 import {
   and,
   asc,
@@ -41,9 +60,13 @@ import {
   or,
   startsWith,
 } from "./query";
-import type { Predicate } from "./query-shared";
+import type { Predicate, Selection, SqlExpression } from "./query-shared";
+import { formatQueryParamValue } from "./runtime/config";
 import { ckAlias, ckTable } from "./schema";
-import { sql } from "./sql";
+import { compileSql, sql } from "./sql";
+
+// Public selections hide their compiler internals; tests inspect them through the internal type.
+const asExpression = <TData>(selection: Selection<TData>) => selection as SqlExpression<TData>;
 
 const normalizeSql = (value: string) => value.replace(/\s+/g, " ").trim();
 const buildCompiled = (compiled: { statement: string; params: Record<string, unknown> }) => {
@@ -181,13 +204,14 @@ describe("ck-orm query extras", function describeClickHouseORMQueryExtras() {
     expect(normalizeSql(built.query)).toContain(
       "`orders`.`amount` between {orm_param2:Float64} and {orm_param3:Float64}",
     );
-    expect(normalizeSql(built.query)).toContain("`orders`.`id` in ({orm_param4:Int32}, {orm_param5:Int32})");
+    expect(normalizeSql(built.query)).toContain("`orders`.`id` in {orm_param4:Array(Int32)}");
     expect(normalizeSql(built.query)).toContain("1");
     expect(normalizeSql(built.query)).toContain(
       "exists (select `orders`.`id` as `id`, sum(`orders`.`amount`) as `total_amount` from `orders`)",
     );
     expect(normalizeSql(built.query)).toContain("not (exists (select `orders`.`id` as `id` from `orders`))");
-    expect(normalizeSql(built.query)).toContain("not (`orders`.`id` = {orm_param8:Int32})");
+    expect(normalizeSql(built.query)).toContain("`orders`.`id` not in {orm_param5:Array(Int32)}");
+    expect(normalizeSql(built.query)).toContain("not (`orders`.`id` = {orm_param6:Int32})");
     expect(normalizeSql(built.query)).toContain("order by `orders`.`id` ASC, `orders`.`amount` DESC");
     expect(normalizeSql(built.query)).toContain("limit 10");
     expect(normalizeSql(built.query)).toContain("offset 5");
@@ -195,12 +219,10 @@ describe("ck-orm query extras", function describeClickHouseORMQueryExtras() {
       orm_param1: 1,
       orm_param2: 1,
       orm_param3: 10,
-      orm_param4: 1,
-      orm_param5: 2,
-      orm_param6: 99,
-      orm_param7: 100,
-      orm_param8: 2,
-      orm_param9: 1,
+      orm_param4: [1, 2],
+      orm_param5: [99, 100],
+      orm_param6: 2,
+      orm_param7: 1,
     });
 
     const tableFnBuilt = buildCompiled(
@@ -298,15 +320,15 @@ describe("ck-orm query extras", function describeClickHouseORMQueryExtras() {
       ).query,
     ).toContain("not");
 
-    expect(expr(sql.raw("1").mapWith((value) => Number(value) + 1)).decoder("4")).toBe(5);
-    expect(eq(orders.id, 1).decoder(1)).toBe(true);
-    expect(and(eq(orders.id, 1), gt(orders.amount, 0)).decoder("1")).toBe(true);
-    expect(or(eq(orders.id, 0), eq(orders.id, 1)).decoder(1)).toBe(true);
-    expect(not(eq(orders.id, 1)).decoder(0)).toBe(false);
-    expect(between(orders.amount, 1, 10).decoder(1)).toBe(true);
-    expect(inArray(orders.id, [1, 2]).decoder(1)).toBe(true);
-    expect(notInArray(orders.id, totals).decoder(0)).toBe(false);
-    expect(exists(totals).decoder(1)).toBe(true);
+    expect(asExpression(expr(sql.raw("1").mapWith((value) => Number(value) + 1))).decoder("4")).toBe(5);
+    expect(asExpression(eq(orders.id, 1)).decoder(1)).toBe(true);
+    expect(asExpression(and(eq(orders.id, 1), gt(orders.amount, 0))).decoder("1")).toBe(true);
+    expect(asExpression(or(eq(orders.id, 0), eq(orders.id, 1))).decoder(1)).toBe(true);
+    expect(asExpression(not(eq(orders.id, 1))).decoder(0)).toBe(false);
+    expect(asExpression(between(orders.amount, 1, 10)).decoder(1)).toBe(true);
+    expect(asExpression(inArray(orders.id, [1, 2])).decoder(1)).toBe(true);
+    expect(asExpression(notInArray(orders.id, totals)).decoder(0)).toBe(false);
+    expect(asExpression(exists(totals)).decoder(1)).toBe(true);
 
     expect(
       decodeRow<{ id: number; amount: number }>({ id: "4", total_amount: "8.5" }, [
@@ -547,10 +569,10 @@ describe("ck-orm query extras", function describeClickHouseORMQueryExtras() {
       orm_param4: ["vip"],
     });
 
-    expect(has(taggedOrders.tags, "vip").decoder(1)).toBe(true);
-    expect(hasAll(taggedOrders.tags, ["vip"]).decoder(0)).toBe(false);
-    expect(hasAny(taggedOrders.tags, ["vip"]).decoder("1")).toBe(true);
-    expect(hasSubstr(taggedOrders.tags, ["vip"]).decoder("1")).toBe(true);
+    expect(asExpression(has(taggedOrders.tags, "vip")).decoder(1)).toBe(true);
+    expect(asExpression(hasAll(taggedOrders.tags, ["vip"])).decoder(0)).toBe(false);
+    expect(asExpression(hasAny(taggedOrders.tags, ["vip"])).decoder("1")).toBe(true);
+    expect(asExpression(hasSubstr(taggedOrders.tags, ["vip"])).decoder("1")).toBe(true);
 
     const encodedBuilt = buildCompiled(
       db
@@ -607,7 +629,8 @@ describe("ck-orm query extras", function describeClickHouseORMQueryExtras() {
               ? "7"
               : 7;
           const decoder = compiled.selection?.[0]?.decoder;
-          return [{ value: decoder ? decoder(rawValue) : rawValue }] as TResult[];
+          const rows: Record<string, unknown>[] = [{ value: decoder ? decoder(rawValue) : rawValue }];
+          return rows as TResult[];
         },
         async *iterator() {},
         async command() {},
@@ -846,6 +869,8 @@ describe("ck-orm query extras", function describeClickHouseORMQueryExtras() {
 
     const insertBuilder = createInsertBuilder(orders).values({
       id: 1,
+      name: "alice",
+      amount: 1,
     });
     expect(() => insertBuilder.execute()).toThrow(
       "execute() requires a clickhouseClient-backed query runner. Attach one with clickhouseClient(...).select(...) or clickhouseClient(...).from(table).",
@@ -884,7 +909,8 @@ describe("ck-orm query extras", function describeClickHouseORMQueryExtras() {
             statement: compiled.statement,
             params: compiled.params,
           });
-          yield { id: compiled.params.orm_param1 } as TResult;
+          const row: Record<string, unknown> = { id: compiled.params.orm_param1 };
+          yield row as TResult;
         },
         async command() {
           return undefined;
@@ -916,7 +942,7 @@ describe("ck-orm query extras", function describeClickHouseORMQueryExtras() {
 
   it("fails fast with an internal error when nested forced settings compile without active state", function testMissingCompileStateInvariant() {
     const nestedQuery = {
-      [compileWithContextSymbol]() {
+      [compileWithContextSymbol](_context: unknown) {
         return {
           kind: "compiled-query" as const,
           mode: "query" as const,
@@ -939,7 +965,7 @@ describe("ck-orm query extras", function describeClickHouseORMQueryExtras() {
 
     const existsPredicate = exists(nestedQuery as never);
     expect(() =>
-      existsPredicate.compile({
+      asExpression(existsPredicate).compile({
         params: {},
         paramTypes: {},
         nextParamIndex: 0,
@@ -966,15 +992,22 @@ describe("ck-orm query extras", function describeClickHouseORMQueryExtras() {
 
     const defaultInsert = buildCompiled(
       createInsertBuilder(orders)
+        // @ts-expect-error omits required columns to exercise runtime DEFAULT rendering
         .values({
           id: 3,
         })
         [compileQuerySymbol](),
     );
-    expect(defaultInsert.query).toContain("values ({orm_param1:Int32}, DEFAULT, DEFAULT)");
-    expect(defaultInsert.params).toEqual({
-      orm_param1: 3,
-    });
+    expect(defaultInsert.query).toContain("format Values");
+    expect(defaultInsert.params).toEqual({});
+    expect(
+      createInsertBuilder(orders)
+        // @ts-expect-error omits required columns to exercise runtime DEFAULT rendering
+        .values({
+          id: 3,
+        })
+        [compileQuerySymbol]().body,
+    ).toBe("(3,DEFAULT,DEFAULT)");
 
     const rawArrayPredicate = buildCompiled(
       db
@@ -1008,19 +1041,16 @@ describe("ck-orm query extras", function describeClickHouseORMQueryExtras() {
     expect(normalizeSql(compiled.statement)).toContain(
       "`typed_events`.`local_day` between {orm_param2:Date32} and {orm_param3:Date32}",
     );
-    expect(normalizeSql(compiled.statement)).toContain(
-      "`typed_events`.`businessDay` in ({orm_param4:Date}, {orm_param5:Date})",
-    );
+    expect(normalizeSql(compiled.statement)).toContain("`typed_events`.`businessDay` in {orm_param4:Array(Date)}");
     expect(normalizeSql(compiled.statement)).toContain("`typed_events`.`optionalNote` is null");
     expect(normalizeSql(compiled.statement)).toContain("`typed_events`.`optionalNote` is not null");
-    expect(isNull(typedEvents.optionalNote).decoder(1)).toBe(true);
-    expect(isNotNull(typedEvents.optionalNote).decoder(0)).toBe(false);
+    expect(asExpression(isNull(typedEvents.optionalNote)).decoder(1)).toBe(true);
+    expect(asExpression(isNotNull(typedEvents.optionalNote)).decoder(0)).toBe(false);
     expect(compiled.params).toEqual({
       orm_param1: "2026-06-15",
       orm_param2: "2026-06-16",
       orm_param3: "2026-06-17",
-      orm_param4: "2026-06-18",
-      orm_param5: "2026-06-19",
+      orm_param4: ["2026-06-18", "2026-06-19"],
     });
 
     expect(() => isNull(null)).toThrow("isNull() expects a SQL expression");
@@ -1235,6 +1265,7 @@ describe("ck-orm query extras", function describeClickHouseORMQueryExtras() {
     const db = createQueryClient();
     const compiled = db
       .insert(typedEvents)
+      // @ts-expect-error omits required localDay to exercise runtime DEFAULT rendering
       .values({
         id: 1,
         businessDay: new Date("2026-06-15T08:00:00.000Z"),
@@ -1250,37 +1281,23 @@ describe("ck-orm query extras", function describeClickHouseORMQueryExtras() {
     expect(normalizeSql(compiled.statement)).toContain(
       "insert into `typed_events` (`id`, `businessDay`, `local_day`, `optionalNote`, `pair`, `entries`.`name`, `entries`.`score`)",
     );
-    expect(normalizeSql(compiled.statement)).toContain(
-      "values ({orm_param1:Int32}, {orm_param2:Date}, DEFAULT, NULL, {orm_param3:Tuple(String, Int32)}, {orm_param4:Array(String)}, {orm_param5:Array(Int32)})",
-    );
-    expect(compiled.params).toEqual({
-      orm_param1: 1,
-      orm_param2: "2026-06-15",
-      orm_param3: ["login", 42],
-      orm_param4: ["first", "second"],
-      orm_param5: [10, 20],
-    });
-    expect(compiled.paramTypes).toEqual({
-      orm_param1: "Int32",
-      orm_param2: "Date",
-      orm_param3: "Tuple(String, Int32)",
-      orm_param4: "Array(String)",
-      orm_param5: "Array(Int32)",
-    });
+    expect(normalizeSql(compiled.statement)).toContain("format Values");
+    expect(compiled.params).toEqual({});
+    expect(compiled.body).toBe("(1,'2026-06-15',DEFAULT,NULL,('login',42),['first','second'],[10,20])");
 
     const defaultNested = db
       .insert(typedEvents)
+      // @ts-expect-error omits every required column to exercise runtime DEFAULT rendering
       .values({
         id: 2,
       })
       [compileQuerySymbol]();
-    expect(normalizeSql(defaultNested.statement)).toContain(
-      "values ({orm_param1:Int32}, DEFAULT, DEFAULT, DEFAULT, DEFAULT, DEFAULT, DEFAULT)",
-    );
+    expect(defaultNested.body).toBe("(2,DEFAULT,DEFAULT,DEFAULT,DEFAULT,DEFAULT,DEFAULT)");
 
     expect(() =>
       db
         .insert(typedEvents)
+        // @ts-expect-error invalid nested payload without required columns, rejected at runtime
         .values({
           id: 3,
           entries: "bad" as never,
@@ -1290,6 +1307,7 @@ describe("ck-orm query extras", function describeClickHouseORMQueryExtras() {
     expect(() =>
       db
         .insert(typedEvents)
+        // @ts-expect-error invalid nested payload without required columns, rejected at runtime
         .values({
           id: 4,
           entries: [1 as never],
@@ -1299,6 +1317,7 @@ describe("ck-orm query extras", function describeClickHouseORMQueryExtras() {
     expect(() =>
       db
         .insert(typedEvents)
+        // @ts-expect-error invalid nested payload without required columns, rejected at runtime
         .values({
           id: 2,
           entries: [{ name: "missing-score" } as never],
@@ -1345,7 +1364,7 @@ describe("ck-orm query extras", function describeClickHouseORMQueryExtras() {
         [compileQuerySymbol](),
     );
 
-    expect(normalizeSql(compiled.query)).toContain("insert into `generated_orders` (`id`, `name`) values");
+    expect(normalizeSql(compiled.query)).toContain("insert into `generated_orders` (`id`, `name`) format Values");
     expect(compiled.query).not.toContain("shard_day");
     expect(compiled.query).not.toContain("name_alias");
 
@@ -1387,33 +1406,33 @@ describe("ck-orm query extras", function describeClickHouseORMQueryExtras() {
     const decodeDb = createQueryClient();
 
     const defaultCount = decodeDb.count(orders);
-    expect(defaultCount.decoder(42)).toBe(42);
-    expect(defaultCount.decoder("42")).toBe(42);
-    expect(defaultCount.decoder(42n)).toBe(42);
+    expect(asExpression(defaultCount).decoder(42)).toBe(42);
+    expect(asExpression(defaultCount).decoder("42")).toBe(42);
+    expect(asExpression(defaultCount).decoder(42n)).toBe(42);
 
     const unsafeCount = defaultCount.toUnsafe();
-    expect(unsafeCount.decoder("42")).toBe(42);
+    expect(asExpression(unsafeCount).decoder("42")).toBe(42);
 
     const safeCount = defaultCount.toSafe();
-    expect(safeCount.decoder("42")).toBe("42");
-    expect(safeCount.decoder(42)).toBe("42");
-    expect(safeCount.decoder(42n)).toBe("42");
+    expect(asExpression(safeCount).decoder("42")).toBe("42");
+    expect(asExpression(safeCount).decoder(42)).toBe("42");
+    expect(asExpression(safeCount).decoder(42n)).toBe("42");
 
     const mixedCount = defaultCount.toMixed();
-    expect(mixedCount.decoder("42")).toBe("42");
-    expect(mixedCount.decoder(42)).toBe(42);
-    expect(mixedCount.decoder(42n)).toBe("42");
+    expect(asExpression(mixedCount).decoder("42")).toBe("42");
+    expect(asExpression(mixedCount).decoder(42)).toBe(42);
+    expect(asExpression(mixedCount).decoder(42n)).toBe("42");
 
     for (const invalidValue of ["not-a-number", -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, true, {}, null]) {
-      expect(() => defaultCount.decoder(invalidValue)).toThrow("Failed to decode count() result");
-      expect(() => mixedCount.decoder(invalidValue)).toThrow("Failed to decode count() result");
+      expect(() => asExpression(defaultCount).decoder(invalidValue)).toThrow("Failed to decode count() result");
+      expect(() => asExpression(mixedCount).decoder(invalidValue)).toThrow("Failed to decode count() result");
     }
 
     for (const invalidValue of ["01", "1.5", Number.MAX_SAFE_INTEGER + 1, true, {}, null]) {
-      expect(() => safeCount.decoder(invalidValue)).toThrow("Failed to decode count() result");
+      expect(() => asExpression(safeCount).decoder(invalidValue)).toThrow("Failed to decode count() result");
     }
 
-    expect(() => defaultCount.decoder(10n ** 400n)).toThrow("Failed to decode count() result");
+    expect(() => asExpression(defaultCount).decoder(10n ** 400n)).toThrow("Failed to decode count() result");
 
     const countFailure = new Error("count failure");
     const countDb = createQueryClient({
@@ -1507,10 +1526,8 @@ describe("ck-orm query extras", function describeClickHouseORMQueryExtras() {
       runner: {
         async execute<TResult extends Record<string, unknown>>(compiled: { statement: string }) {
           compiledStatements.push(compiled.statement);
-          if (compiled.statement.includes("count()")) {
-            return [{ value: 2 }] as TResult[];
-          }
-          return [{ id: 1 }] as TResult[];
+          const rows: Record<string, unknown>[] = compiled.statement.includes("count()") ? [{ value: 2 }] : [{ id: 1 }];
+          return rows as TResult[];
         },
         async *iterator() {},
         async command() {
@@ -1582,10 +1599,10 @@ describe("ck-orm query extras", function describeClickHouseORMQueryExtras() {
       orm_param1: "%AL%",
       orm_param2: "%bot%",
     });
-    expect(like(orders.name, "%AL%").decoder(1)).toBe(true);
-    expect(notLike(orders.name, "%bot%").decoder(0)).toBe(false);
-    expect(ilike(orders.name, "%AL%").decoder(1)).toBe(true);
-    expect(notIlike(orders.name, "%bot%").decoder(0)).toBe(false);
+    expect(asExpression(like(orders.name, "%AL%")).decoder(1)).toBe(true);
+    expect(asExpression(notLike(orders.name, "%bot%")).decoder(0)).toBe(false);
+    expect(asExpression(ilike(orders.name, "%AL%")).decoder(1)).toBe(true);
+    expect(asExpression(notIlike(orders.name, "%bot%")).decoder(0)).toBe(false);
   });
 
   it("covers literal-text pattern helpers", function testLiteralTextPatternHelpers() {
@@ -2176,21 +2193,17 @@ describe("ck-orm bare SelectBuilder as subquery source", function describeBareBu
       )
       [compileQuerySymbol]();
 
-    // `inArray(col, [a,b,c])` expands into one parameter per element so the
-    // server can plan it like a literal IN; the trailing `gte` adds one more.
-    // The point of the assertion is that both the params *and* paramTypes
-    // for every position in the nested SELECT survive the outer INSERT wrap.
+    // `inArray(col, [a,b,c])` binds one Array parameter; the trailing `gte`
+    // adds one more. The point of the assertion is that both the params *and*
+    // paramTypes for every position in the nested SELECT survive the outer
+    // INSERT wrap.
     expect(compiled.params).toEqual({
-      orm_param1: 10,
-      orm_param2: 20,
-      orm_param3: 30,
-      orm_param4: 100,
+      orm_param1: [10, 20, 30],
+      orm_param2: 100,
     });
     expect(compiled.paramTypes).toEqual({
-      orm_param1: "Int32",
-      orm_param2: "Int32",
-      orm_param3: "Int32",
-      orm_param4: "Float64",
+      orm_param1: "Array(Int32)",
+      orm_param2: "Float64",
     });
   });
 
@@ -2230,24 +2243,25 @@ describe("ck-orm bare SelectBuilder as subquery source", function describeBareBu
     const base = createInsertBuilder(orders);
     const oneRow = base.values({ id: 1, name: "alice", amount: 1 });
     const compiledOne = buildCompiled(oneRow[compileQuerySymbol]());
-    expect(compiledOne.query).toContain("values ({orm_param1:Int32}, {orm_param2:String}, {orm_param3:Float64})");
+    expect(compiledOne.query).toContain("format Values");
+    expect(compiledOne.params).toEqual({});
+    expect(base.values({ id: 1, name: "alice", amount: 1 })[compileQuerySymbol]().body).toBe("(1,'alice',1)");
 
     // .values() on the original `base` should not see the row inserted into
     // `oneRow`'s state — it must compile a fresh 1-row VALUES with the new
     // payload only.
     const otherRow = base.values({ id: 2, name: "bob", amount: 2 });
     const compiledOther = buildCompiled(otherRow[compileQuerySymbol]());
-    expect(compiledOther.params).toEqual({
-      orm_param1: 2,
-      orm_param2: "bob",
-      orm_param3: 2,
-    });
+    expect(compiledOther.params).toEqual({});
+    expect(otherRow[compileQuerySymbol]().body).toBe("(2,'bob',2)");
   });
 
   it("nests a CTE chain inside insert.fromSelect — multiple $with stages survive the wrap", function testInsertFromSelectMultiStageCte() {
     const db = createQueryClient();
     const a = db.$with("stage_a").as(db.select({ id: orders.id }).from(orders));
-    const b = db.$with("stage_b").as(db.select({ id: orders.id, doubled: fn.multiply(orders.amount, 2) }).from(orders));
+    const b = db
+      .$with("stage_b")
+      .as(db.select({ id: orders.id, doubled: fn.multiply<number>(orders.amount, 2) }).from(orders));
 
     const compiled = buildCompiled(
       db
@@ -2668,6 +2682,87 @@ describe("ck-orm anonymous CTE via $with()", function describeAnonymousCte() {
 
     expect(normalizeSql(built.query)).toContain("with `__cte_1` as (select `orders`.`id` as `id` from `orders`)");
     expect(normalizeSql(built.query)).toContain("select `__cte_1`.`id` as `id`");
+    expect(normalizeSql(built.query)).toContain("from `__cte_1`");
+  });
+
+  it("rejects using the same anonymous CTE twice as a source", function testAnonCteUsedTwice() {
+    const db = createQueryClient();
+    const totals = db.$with().as(db.select({ id: orders.id }).from(orders));
+
+    expect(() =>
+      db
+        .with(totals)
+        .select({ id: orders.id })
+        .from(orders)
+        .leftJoin(totals, eq(orders.id, totals.id))
+        .leftJoin(totals, eq(orders.id, totals.id))
+        [compileQuerySymbol](),
+    ).toThrow(
+      /Anonymous CTE used twice[\s\S]*auto-alias "__cte_1"[\s\S]*Every column ref compiles to that same alias[\s\S]*two db\.\$with\(\)\.as\(\.\.\.\) calls[\s\S]*two named CTEs with different names/,
+    );
+
+    expect(() =>
+      db
+        .with(totals)
+        .select({ id: totals.id })
+        .from(totals)
+        .leftJoin(totals, eq(totals.id, totals.id))
+        [compileQuerySymbol](),
+    ).toThrow(
+      /Anonymous CTE used twice[\s\S]*auto-alias "__cte_1"[\s\S]*Every column ref compiles to that same alias[\s\S]*two db\.\$with\(\)\.as\(\.\.\.\) calls[\s\S]*two named CTEs with different names/,
+    );
+  });
+
+  it("compiles two anonymous CTEs built from the same query shape", function testTwoAnonymousCtes() {
+    const db = createQueryClient();
+    const define = () => db.select({ id: orders.id }).from(orders);
+    const first = db.$with().as(define());
+    const second = db.$with().as(define());
+
+    const built = buildCompiled(
+      db
+        .with(first, second)
+        .select({ firstId: first.id, secondId: second.id })
+        .from(first)
+        .leftJoin(second, eq(first.id, second.id))
+        [compileQuerySymbol](),
+    );
+
+    expect(normalizeSql(built.query)).toContain("`__cte_1`");
+    expect(normalizeSql(built.query)).toContain("`__cte_2`");
+  });
+
+  it("still compiles a named CTE used twice and tables aliased twice", function testNamedCteAndAliasedTablesTwice() {
+    const db = createQueryClient();
+    const totals = db.$with("totals").as(db.select({ id: orders.id }).from(orders));
+    const named = buildCompiled(
+      db
+        .with(totals)
+        .select({ id: totals.id })
+        .from(totals)
+        .leftJoin(totals, eq(totals.id, totals.id))
+        [compileQuerySymbol](),
+    );
+    expect(normalizeSql(named.query)).toContain("from `totals`");
+    expect(normalizeSql(named.query)).toContain("left join `totals`");
+
+    const left = ckAlias(orders, "o1");
+    const right = ckAlias(orders, "o2");
+    const aliased = buildCompiled(
+      db.select({ id: left.id }).from(left).leftJoin(right, eq(left.id, right.id))[compileQuerySymbol](),
+    );
+    expect(normalizeSql(aliased.query)).toContain("`o1`");
+    expect(normalizeSql(aliased.query)).toContain("`o2`");
+  });
+
+  it("compiles an anonymous CTE used in a nested CTE body and the outer FROM", function testAnonCteNestedBodyAndOuterFrom() {
+    const db = createQueryClient();
+    const totals = db.$with().as(db.select({ id: orders.id }).from(orders));
+    const derived = db.$with().as(db.select({ id: totals.id }).from(totals));
+
+    const built = buildCompiled(db.with(totals, derived).select({ id: totals.id }).from(totals)[compileQuerySymbol]());
+
+    expect(normalizeSql(built.query)).toContain("`__cte_2` as (select `__cte_1`.`id` as `id` from `__cte_1`)");
     expect(normalizeSql(built.query)).toContain("from `__cte_1`");
   });
 
@@ -3102,5 +3197,749 @@ describe("ck-orm anonymous CTE via $with()", function describeAnonymousCte() {
     // The CRITICAL assertion: coalesce references __cte_2.amount, not __cte_1.amount.
     expect(normalizeSql(built.query)).toContain("coalesce(`__cte_2`.`amount`, 0) as `fallback`");
     expect(normalizeSql(built.query)).toContain("left join `__cte_2` on `__cte_1`.`id` = `__cte_2`.`id`");
+  });
+});
+
+describe("ck-orm parameter binding", function describeParameterBinding() {
+  const moments = ckTable("moments", {
+    id: int32(),
+    shanghaiAt: dateTime64("shanghai_at", { precision: 3, timezone: "Asia/Shanghai" }),
+    plainAt: dateTime("plain_at"),
+    maybeAt: nullable("maybe_at", dateTime64({ precision: 6 })),
+    history: array(dateTime64({ precision: 3, timezone: "Asia/Shanghai" })),
+  });
+
+  it("binds JS Date values as UTC DateTime64(3) so column and session timezones cannot shift the instant", function testDateParamsBindAsUtc() {
+    const db = createQueryClient();
+    const moment = new Date("2026-06-15T00:00:00.123Z");
+
+    const inserted = db
+      .insert(moments)
+      .values({ id: 1, shanghaiAt: moment, plainAt: moment, maybeAt: moment, history: [moment] })
+      [compileQuerySymbol]();
+    expect(inserted.params).toEqual({});
+    expect(inserted.body).toBe("(1,1781481600123,1781481600,1781481600123000,[1781481600123])");
+
+    const filtered = db
+      .select({ id: moments.id })
+      .from(moments)
+      .where(eq(moments.shanghaiAt, moment), has(moments.history, moment))
+      [compileQuerySymbol]();
+    expect(filtered.paramTypes).toEqual({ orm_param1: "DateTime64(3, 'UTC')", orm_param2: "DateTime64(3, 'UTC')" });
+  });
+
+  it("binds JS Date keys of Map parameters as UTC", function testMapDateKeyParams() {
+    const db = createQueryClient();
+    const keyed = fn.cast(expr(sql`m`), "Map(DateTime('Asia/Shanghai'), String)");
+    const keyedList = fn.cast(expr(sql`ms`), "Array(Map(DateTime('Asia/Shanghai'), String))");
+    const whole = new Date("2026-06-15T00:00:00.000Z");
+    const precise = new Date("2026-06-15T00:00:00.123Z");
+
+    const compiled = db
+      .select({ id: orders.id })
+      .from(orders)
+      .where(
+        eq(keyed, new Map([[whole, "x"]])),
+        eq(keyed, new Map([[precise, "x"]])),
+        eq(keyedList, [new Map([[whole, "x"]])]),
+      )
+      [compileQuerySymbol]();
+
+    expect(compiled.paramTypes).toEqual({
+      orm_param1: "Map(DateTime('UTC'), String)",
+      orm_param2: "Map(DateTime64(3, 'UTC'), String)",
+      orm_param3: "Array(Map(DateTime('UTC'), String))",
+    });
+    expect(() =>
+      db
+        .select({ id: orders.id })
+        .from(orders)
+        .where(
+          eq(
+            keyed,
+            new Map<unknown, string>([
+              [whole, "x"],
+              ["2026-06-15 08:00:00", "y"],
+            ]),
+          ),
+        )
+        [compileQuerySymbol](),
+    ).toThrow("mixes JS Date values with datetime strings");
+  });
+
+  it("binds JS Dates inside Tuple and Map columns as UTC and leaves non-datetime composites alone", function testTupleDateParams() {
+    const db = createQueryClient();
+    const stamped = ckTable("stamped", {
+      event: tuple(string(), dateTime64({ precision: 3, timezone: "Asia/Shanghai" })),
+      deadlines: map(string(), dateTime()),
+      location: point(),
+    });
+    const moment = new Date("2026-06-15T00:00:00.000Z");
+    const compiled = db
+      .insert(stamped)
+      .values({ event: ["login", moment], deadlines: { review: moment }, location: [1, 2] })
+      [compileQuerySymbol]();
+
+    expect(compiled.params).toEqual({});
+    expect(compiled.body).toBe("(('login',1781481600000),{'review':1781481600},[1,2])");
+  });
+
+  it("binds whole-second Dates at DateTime positions as DateTime('UTC') and drops LowCardinality", function testWholeSecondDateTimeParams() {
+    const db = createQueryClient();
+    const wholeSecond = new Date("2026-06-15T00:00:00Z");
+    const withMilliseconds = new Date("2026-06-15T00:00:00.500Z");
+    const events = ckTable("events", {
+      ts: dateTime(),
+    });
+    const filtered = db
+      .select({ ts: events.ts })
+      .from(events)
+      .where(inArray(events.ts, [wholeSecond]))
+      [compileQuerySymbol]();
+    expect(filtered.paramTypes).toEqual({ orm_param1: "Array(DateTime('UTC'))" });
+
+    const stored = ckTable("stored_instants", {
+      id: int32(),
+      lc: lowCardinality(dateTime()),
+      saf: simpleAggregateFunction<Date>("max", dateTime()),
+      maybe: nullable(dateTime()),
+      lcMaybe: lowCardinality(nullable(dateTime())),
+      history: array(dateTime()),
+    });
+    const inserted = db
+      .insert(stored)
+      .values({
+        id: 1,
+        lc: wholeSecond,
+        saf: wholeSecond,
+        maybe: withMilliseconds,
+        lcMaybe: wholeSecond,
+        history: [wholeSecond, withMilliseconds],
+      })
+      [compileQuerySymbol]();
+    expect(inserted.params).toEqual({});
+    expect(inserted.body).toBe("(1,1781481600,1781481600,1781481600,1781481600,[1781481600,1781481600])");
+
+    const labels = ckTable("labels", { note: string() });
+    const unchanged = db
+      .insert(labels)
+      .values({ note: wholeSecond as never })
+      [compileQuerySymbol]();
+    expect(unchanged.params).toEqual({});
+    expect(unchanged.body).toBe("('2026-06-15 00:00:00')");
+  });
+
+  it("keeps the column type for datetime strings, which ClickHouse reads in the column timezone", function testDateStringsKeepColumnType() {
+    const db = createQueryClient();
+    const inserted = db
+      .insert(moments)
+      // DateTime columns are typed as Date, but the encoder also passes strings and Unix timestamps through.
+      .values({
+        id: 1,
+        shanghaiAt: "2026-06-15 08:00:00" as never,
+        plainAt: 1781481600 as never,
+        maybeAt: null,
+        history: [],
+      })
+      [compileQuerySymbol]();
+    expect(inserted.params).toEqual({});
+    expect(inserted.body).toBe("(1,'2026-06-15 08:00:00','1781481600',NULL,[])");
+  });
+
+  it("encodes a Date and a datetime string in one array as ticks and quoted text", function testMixedDateArrayLiteral() {
+    const db = createQueryClient();
+    const compiled = db
+      .insert(moments)
+      .values({
+        id: 1,
+        shanghaiAt: new Date("2026-06-15T00:00:00.000Z"),
+        plainAt: new Date("2026-06-15T00:00:00.000Z"),
+        maybeAt: null,
+        history: [new Date("2026-06-15T00:00:00.000Z"), "2026-06-15 08:00:00" as never],
+      })
+      [compileQuerySymbol]();
+    expect(compiled.body).toBe("(1,1781481600000,1781481600,NULL,[1781481600000,'2026-06-15 08:00:00'])");
+  });
+
+  it("encodes nested dates and datetime strings independently", function testNestedDateStringLiterals() {
+    const db = createQueryClient();
+    const moment = new Date("2026-06-15T00:00:00Z");
+    const shanghaiString = "2026-06-15 08:00:00";
+    const nestedArrays = ckTable("nested_arrays", {
+      slots: array(array(dateTime64({ precision: 3, timezone: "Asia/Shanghai" }))),
+    });
+    const tupleArrays = ckTable("tuple_arrays", {
+      events: array(tuple(dateTime(), string())),
+    });
+    const pairs = ckTable("pairs", {
+      span: tuple(dateTime(), dateTime()),
+    });
+    const bodyOf = (table: object, row: Record<string, unknown>) =>
+      db
+        .insert(table as never)
+        .values(row as never)
+        [compileQuerySymbol]().body;
+
+    expect(bodyOf(nestedArrays, { slots: [[moment], [shanghaiString]] as never })).toBe(
+      "([[1781481600000],['2026-06-15 08:00:00']])",
+    );
+    expect(
+      bodyOf(tupleArrays, {
+        events: [
+          [moment, "d"],
+          [shanghaiString, "s"],
+        ] as never,
+      }),
+    ).toBe("([(1781481600,'d'),('2026-06-15 08:00:00','s')])");
+    expect(bodyOf(nestedArrays, { slots: [[shanghaiString], [shanghaiString]] as never })).toBe(
+      "([['2026-06-15 08:00:00'],['2026-06-15 08:00:00']])",
+    );
+    expect(bodyOf(nestedArrays, { slots: [[moment], [moment]] })).toBe("([[1781481600000],[1781481600000]])");
+    expect(bodyOf(tupleArrays, { events: [[shanghaiString, "s"]] as never })).toBe("([('2026-06-15 08:00:00','s')])");
+    expect(bodyOf(tupleArrays, { events: [[moment, "d"]] })).toBe("([(1781481600,'d')])");
+    expect(bodyOf(pairs, { span: [moment, shanghaiString] as never })).toBe("((1781481600,'2026-06-15 08:00:00'))");
+  });
+
+  it("rewrites every DateTime position in an Array or Map element when any element holds a Date", function testElementTypeRewritten() {
+    const moment = new Date("2026-06-15T00:00:00Z");
+
+    expect(
+      bindDatesAsUtc(
+        "Array(Tuple(Nullable(DateTime64(3, 'Asia/Shanghai')), Nullable(DateTime64(3, 'Asia/Shanghai'))))",
+        [
+          [moment, null],
+          [null, moment],
+        ],
+      ),
+    ).toBe("Array(Tuple(Nullable(DateTime64(3, 'UTC')), Nullable(DateTime64(3, 'UTC'))))");
+    expect(
+      bindDatesAsUtc("Map(String, Tuple(Nullable(DateTime('Asia/Shanghai')), Nullable(DateTime('Asia/Shanghai'))))", {
+        a: [moment, null],
+        b: [null, moment],
+      }),
+    ).toBe("Map(String, Tuple(Nullable(DateTime('UTC')), Nullable(DateTime('UTC'))))");
+    expect(bindDatesAsUtc("Array(Array(DateTime('Asia/Shanghai')))", [[moment], []])).toBe(
+      "Array(Array(DateTime('UTC')))",
+    );
+    expect(bindDatesAsUtc("Array(Map(String, DateTime('Asia/Shanghai')))", [{ a: moment }, {}])).toBe(
+      "Array(Map(String, DateTime('UTC')))",
+    );
+    expect(() =>
+      bindDatesAsUtc("Array(Map(String, DateTime('Asia/Shanghai')))", [{ a: moment }, { b: "2026-06-15 08:00:00" }]),
+    ).toThrow("mixes JS Date values with datetime strings");
+    expect(bindDatesAsUtc("Array(DateTime('Asia/Shanghai'))", [moment, 1781481600, null])).toBe(
+      "Array(DateTime('UTC'))",
+    );
+    expect(bindDatesAsUtc("Array(String)", [moment])).toBe("Array(String)");
+    expect(bindDatesAsUtc("Array(DateTime('UTC'))", [new Date("2026-06-15T00:00:00.123Z")])).toBe(
+      "Array(DateTime64(3, 'UTC'))",
+    );
+    expect(bindDatesAsUtc("Tuple(DateTime('Asia/Shanghai'), String)", [moment, "x"])).toBe(
+      "Tuple(DateTime('UTC'), String)",
+    );
+    expect(bindDatesAsUtc("Tuple(String, Int32)", ["x", 1])).toBe("Tuple(String, Int32)");
+    expect(bindDatesAsUtc("Point", [1, 2])).toBe("Point");
+  });
+
+  it("infers UTC DateTime64(3) for Date values interpolated into raw SQL", function testRawSqlDateInference() {
+    const moment = new Date("2026-06-15T00:00:00.123Z");
+    const built = compileSql(sql`select ${moment}, ${[moment]}, ${{ at: moment }}`);
+    expect(Object.values(built.paramTypes)).toEqual([
+      "DateTime64(3, 'UTC')",
+      "Array(DateTime64(3, 'UTC'))",
+      "Map(String, DateTime64(3, 'UTC'))",
+    ]);
+  });
+});
+
+describe("ck-orm inArray parameters", function describeInArrayParameters() {
+  // ClickHouse caps an HTTP request at 1,000 form fields, so value lists must
+  // not cost one query parameter per element.
+  const ids = Array.from({ length: 2_000 }, (_, index) => index);
+
+  it("binds a tuple value list as one Array(Tuple) parameter", function testInArrayTupleParam() {
+    const db = createQueryClient();
+    const pairs = [
+      [1, "a"],
+      [2, "b"],
+    ];
+    const compiled = db
+      .select({ id: orders.id })
+      .from(orders)
+      .where(inArray(fn.tuple(orders.id, orders.name), pairs))
+      [compileQuerySymbol]();
+
+    expect(normalizeSql(compiled.statement)).toContain(
+      "tuple(`orders`.`id`, `orders`.`name`) in {orm_param1:Array(Tuple(Int32, String))}",
+    );
+    expect(compiled.params).toEqual({ orm_param1: pairs });
+  });
+
+  it("binds a value list as one Array parameter of the column type", function testInArraySingleParam() {
+    const db = createQueryClient();
+    const compiled = db
+      .select({ id: orders.id })
+      .from(orders)
+      .where(inArray(orders.id, ids), notInArray(orders.name, ["a", "b"]))
+      [compileQuerySymbol]();
+
+    expect(normalizeSql(compiled.statement)).toContain(
+      "where (`orders`.`id` in {orm_param1:Array(Int32)} and `orders`.`name` not in {orm_param2:Array(String)})",
+    );
+    expect(compiled.params).toEqual({ orm_param1: ids, orm_param2: ["a", "b"] });
+  });
+
+  it("infers the Array parameter type for an untyped left side with uniform values", function testInArrayInferredType() {
+    const db = createQueryClient();
+    const compiled = db
+      .select({ id: orders.id })
+      .from(orders)
+      .where(inArray(expr(sql`toInt64(id)`), ids))
+      [compileQuerySymbol]();
+
+    expect(normalizeSql(compiled.statement)).toContain("toInt64(id) in {orm_param1:Array(Int64)}");
+  });
+
+  it("keeps one parameter per element when an untyped left side gets mixed value types", function testInArrayMixedUntyped() {
+    const db = createQueryClient();
+    const compiled = db
+      .select({ id: orders.id })
+      .from(orders)
+      .where(inArray(expr(sql`toString(id)`), [1, "two"]))
+      [compileQuerySymbol]();
+
+    expect(normalizeSql(compiled.statement)).toContain("toString(id) in ({orm_param1:Int64}, {orm_param2:String})");
+  });
+
+  it("keeps one parameter per element when the list contains SQL expressions", function testInArrayWithExpressions() {
+    const db = createQueryClient();
+    const compiled = db
+      .select({ id: orders.id })
+      .from(orders)
+      .where(inArray(orders.id, [1, sql`2`]))
+      [compileQuerySymbol]();
+
+    expect(normalizeSql(compiled.statement)).toContain("`orders`.`id` in ({orm_param1:Int32}, 2)");
+  });
+
+  it("splits long value lists into arrayConcat of Array parameters under the form-field limit", function testInArrayChunkedParams() {
+    const db = createQueryClient();
+    const values = Array.from({ length: 2_000 }, (_, index) => index.toString().padStart(50, "a"));
+    const compiled = db
+      .select({ id: orders.id })
+      .from(orders)
+      .where(inArray(orders.name, values))
+      [compileQuerySymbol]();
+
+    expect(normalizeSql(compiled.statement)).toContain(
+      "in arrayConcat({orm_param1:Array(String)}, {orm_param2:Array(String)}, {orm_param3:Array(String)})",
+    );
+    expect(Object.keys(compiled.params)).toEqual(["orm_param1", "orm_param2", "orm_param3"]);
+    const chunks = [compiled.params.orm_param1, compiled.params.orm_param2, compiled.params.orm_param3] as string[][];
+    expect(chunks.flat()).toEqual(values);
+    for (const chunk of chunks) {
+      expect(formatQueryParamValue(chunk, "Array(String)").length).toBeLessThanOrEqual(40_000);
+    }
+
+    const excluded = db
+      .select({ id: orders.id })
+      .from(orders)
+      .where(notInArray(orders.name, values))
+      [compileQuerySymbol]();
+    expect(normalizeSql(excluded.statement)).toContain("not in arrayConcat(");
+  });
+});
+
+describe("ck-orm insert defaults", function describeInsertDefaults() {
+  const rows = ckTable("t", {
+    id: int32(),
+    note: string().default(sql`concat('n-', toString(id))`),
+    maybe: nullable(string()).default(sql`'fallback'`),
+    dt: dateTime(),
+    dt3: dateTime64({ precision: 3 }),
+    dt6: dateTime64({ precision: 6 }),
+    dt1: dateTime64({ precision: 1 }),
+    dtNum: dateTime64({ precision: 3 }),
+    tags: array(string()),
+    scores: map(string(), int32()),
+    pair: tuple(string(), int32()),
+    lines: nested({ sku: string() }),
+  });
+  const nanos = ckTable("nanos", {
+    at: dateTime64({ precision: 9 }),
+    before: dateTime64({ precision: 9 }),
+  });
+
+  it("sends literal FORMAT Values rows with per-row DEFAULT and datetime ticks", function testInsertValuesLiterals() {
+    const db = createQueryClient();
+    const fractional = new Date("2026-06-15T00:00:00.123Z");
+    const almostSecond = new Date("2026-06-15T00:00:00.999Z");
+    const compiled = db
+      .insert(rows)
+      .values([
+        {
+          id: 1,
+          note: "a'b\\c",
+          maybe: null,
+          dt: almostSecond,
+          dt3: fractional,
+          dt6: fractional,
+          dt1: almostSecond,
+          dtNum: 1781481600 as never,
+          tags: ["a'b", "c\\d"],
+          scores: { n: 2 },
+          pair: ["x", 3],
+          lines: [{ sku: "s" }],
+        },
+        { id: 2 } as never,
+      ])
+      [compileQuerySymbol]();
+
+    expect(normalizeSql(compiled.statement)).toBe(
+      "insert into `t` (`id`, `note`, `maybe`, `dt`, `dt3`, `dt6`, `dt1`, `dtNum`, `tags`, `scores`, `pair`, `lines`.`sku`) format Values",
+    );
+    expect(compiled.params).toEqual({});
+    expect(compiled.paramTypes).toEqual({});
+    expect(compiled.body).toBe(
+      "(1,'a\\'b\\\\c',NULL,1781481600,1781481600123,1781481600123000,17814816009,'1781481600',['a\\'b','c\\\\d'],{'n':2},('x',3),['s']), (2,DEFAULT,DEFAULT,DEFAULT,DEFAULT,DEFAULT,DEFAULT,DEFAULT,DEFAULT,DEFAULT,DEFAULT,DEFAULT)",
+    );
+    expect(compiled.forcedSettings).toEqual({
+      input_format_values_interpret_expressions: 0,
+      input_format_values_deduce_templates_of_expressions: 0,
+    });
+  });
+
+  it("formats DateTime64(9) ticks with BigInt for post-epoch and pre-1970 dates", function testInsertValuesDateTime64NanoTicks() {
+    const db = createQueryClient();
+    const compiled = db
+      .insert(nanos)
+      .values({
+        at: new Date("2026-06-15T00:00:00.123Z"),
+        before: new Date("1969-12-31T23:59:59.500Z"),
+      })
+      [compileQuerySymbol]();
+
+    expect(compiled.body).toBe("(1781481600123000000,-500000000)");
+  });
+
+  it("rejects a SQL fragment cell", function testInsertValuesRejectsSqlFragment() {
+    const db = createQueryClient();
+    expect(() =>
+      db
+        .insert(rows)
+        .values({ id: 1, note: sql`lower('X')` as never } as never)
+        [compileQuerySymbol](),
+    ).toThrow("insert().fromSelect()");
+  });
+});
+
+describe("ck-orm left join nullability", function describeLeftJoinNullability() {
+  const unmatchedRow = { name: "no orders", spent: null };
+
+  it("decodes unmatched rows of a left-joined subquery without .as() as null", function testBareSubqueryLeftJoin() {
+    const db = createQueryClient();
+    const totals = db
+      .select({ customerId: orders.id, spent: fn.sum(orders.amount) })
+      .from(orders)
+      .groupBy(orders.id);
+    const compiled = db
+      .select({ name: orders.name, spent: totals.spent })
+      .from(orders)
+      .leftJoin(totals, eq(orders.id, totals.customerId))
+      [compileQuerySymbol]();
+
+    expect(decodeRow(unmatchedRow, compiled.selection)).toEqual(unmatchedRow);
+  });
+
+  it("decodes unmatched rows of a left-joined anonymous CTE as null", function testAnonymousCteLeftJoin() {
+    const db = createQueryClient();
+    const totals = db.$with().as(
+      db
+        .select({ customerId: orders.id, spent: fn.sum(orders.amount) })
+        .from(orders)
+        .groupBy(orders.id),
+    );
+    const compiled = db
+      .with(totals)
+      .select({ name: orders.name, spent: totals.spent })
+      .from(orders)
+      .leftJoin(totals, eq(orders.id, totals.customerId))
+      [compileQuerySymbol]();
+
+    expect(decodeRow(unmatchedRow, compiled.selection)).toEqual(unmatchedRow);
+  });
+
+  it("decodes unmatched rows of a bare-builder ref after .as() as null", function testBareSubqueryAliasRef() {
+    const db = createQueryClient();
+    const totals = db
+      .select({ customerId: orders.id, spent: fn.sum(orders.amount) })
+      .from(orders)
+      .groupBy(orders.id);
+    const compiled = db
+      .select({ name: orders.name, spent: totals.spent.as("spent_alias") })
+      .from(orders)
+      .leftJoin(totals, eq(orders.id, totals.customerId))
+      [compileQuerySymbol]();
+
+    expect(decodeRow({ name: "no orders", spent_alias: null }, compiled.selection)).toEqual(unmatchedRow);
+  });
+
+  it("decodes unmatched rows of a bare-builder ref after .mapWith() as null without calling the mapper", function testBareSubqueryMapWithRef() {
+    const db = createQueryClient();
+    const seen: unknown[] = [];
+    const totals = db
+      .select({ customerId: orders.id, spent: fn.sum(orders.amount) })
+      .from(orders)
+      .groupBy(orders.id);
+    const compiled = db
+      .select({
+        name: orders.name,
+        spent: totals.spent.mapWith((value) => {
+          seen.push(value);
+          return Number(value) * 2;
+        }),
+      })
+      .from(orders)
+      .leftJoin(totals, eq(orders.id, totals.customerId))
+      [compileQuerySymbol]();
+
+    expect(decodeRow(unmatchedRow, compiled.selection)).toEqual(unmatchedRow);
+    expect(seen).toEqual([]);
+  });
+
+  it("decodes unmatched rows of an anonymous CTE ref after .as() as null", function testAnonymousCteAliasRef() {
+    const db = createQueryClient();
+    const totals = db.$with().as(
+      db
+        .select({ customerId: orders.id, spent: fn.sum(orders.amount) })
+        .from(orders)
+        .groupBy(orders.id),
+    );
+    const compiled = db
+      .with(totals)
+      .select({ name: orders.name, spent: totals.spent.as("spent_alias") })
+      .from(orders)
+      .leftJoin(totals, eq(orders.id, totals.customerId))
+      [compileQuerySymbol]();
+
+    expect(decodeRow({ name: "no orders", spent_alias: null }, compiled.selection)).toEqual(unmatchedRow);
+  });
+
+  const leftJoinedOrders = () => {
+    const db = createQueryClient();
+    const totals = db
+      .select({ customerId: orders.id, spent: fn.sum(orders.amount) })
+      .from(orders)
+      .groupBy(orders.id);
+    const inner = db
+      .select({ id: orders.id, spent: totals.spent })
+      .from(orders)
+      .leftJoin(totals, eq(orders.id, totals.customerId));
+    return { db, inner };
+  };
+
+  it("keeps left-join nulls when the query is selected from as a bare builder", function testNestedBareLeftJoinNulls() {
+    const { db, inner } = leftJoinedOrders();
+    const compiled = db.select({ id: inner.id, spent: inner.spent }).from(inner)[compileQuerySymbol]();
+    expect(decodeRow({ id: 1, spent: null }, compiled.selection)).toEqual({ id: 1, spent: null });
+    expect(decodeRow({ id: 2, spent: 4 }, compiled.selection)).toEqual({ id: 2, spent: 4 });
+  });
+
+  it("keeps left-join nulls when the query is selected from as a named subquery", function testNestedNamedSubqueryLeftJoinNulls() {
+    const { db, inner } = leftJoinedOrders();
+    const named = inner.as("inner");
+    const compiled = db.select({ id: named.id, spent: named.spent }).from(named)[compileQuerySymbol]();
+    expect(decodeRow({ id: 1, spent: null }, compiled.selection)).toEqual({ id: 1, spent: null });
+  });
+
+  it("keeps left-join nulls when the query is selected from as a named CTE", function testNestedNamedCteLeftJoinNulls() {
+    const { db, inner } = leftJoinedOrders();
+    const cte = db.$with("inner").as(inner);
+    const compiled = db.with(cte).select({ id: cte.id, spent: cte.spent }).from(cte)[compileQuerySymbol]();
+    expect(decodeRow({ id: 1, spent: null }, compiled.selection)).toEqual({ id: 1, spent: null });
+  });
+
+  it("keeps a flat default projection when the only join is an anonymous CTE", function testAnonymousCteDefaultProjection() {
+    const db = createQueryClient();
+    const anonCte = db.$with().as(
+      db
+        .select({ customerId: orders.id, spent: fn.sum(orders.amount) })
+        .from(orders)
+        .groupBy(orders.id),
+    );
+    const compiled = db
+      .with(anonCte)
+      .select()
+      .from(orders)
+      .leftJoin(anonCte, eq(orders.id, anonCte.customerId))
+      [compileQuerySymbol]();
+
+    expect(compiled.selection.map((item) => item.path)).toEqual([["id"], ["name"], ["amount"]]);
+    expect(decodeRow({ id: 1, name: "solo", amount: 2 }, compiled.selection)).toEqual({
+      id: 1,
+      name: "solo",
+      amount: 2,
+    });
+  });
+
+  it("collapses an unmatched left-joined group when its array and map fields are empty", function testLeftJoinEmptyContainers() {
+    const db = createQueryClient();
+    const users = ckTable("users", {
+      id: int32(),
+      name: string(),
+    });
+    const profiles = ckTable("profiles", {
+      user_id: int32(),
+      tags: array(string()),
+      attrs: map(string(), string()),
+      labels: lowCardinality(array(string())),
+      events: nested({ name: string() }),
+      rolled: simpleAggregateFunction("groupArrayArray", array(string())),
+    });
+    const compiled = db.select().from(users).leftJoin(profiles, eq(users.id, profiles.user_id))[compileQuerySymbol]();
+    const raw = (values: Record<string, unknown>) => {
+      const row: Record<string, unknown> = {};
+      for (const item of compiled.selection) {
+        const [group, field] = item.path;
+        row[item.sqlAlias] = values[field === undefined ? group : `${group}.${field}`];
+      }
+      return row;
+    };
+
+    expect(
+      decodeRow(
+        raw({
+          "users.id": 1,
+          "users.name": "solo",
+          "profiles.user_id": null,
+          "profiles.tags": [],
+          "profiles.attrs": {},
+          "profiles.labels": [],
+          "profiles.events": [],
+          "profiles.rolled": [],
+        }),
+        compiled.selection,
+      ),
+    ).toEqual({
+      users: { id: 1, name: "solo" },
+      profiles: null,
+    });
+
+    expect(
+      decodeRow(
+        raw({
+          "users.id": 2,
+          "users.name": "matched",
+          "profiles.user_id": 2,
+          "profiles.tags": ["a"],
+          "profiles.attrs": { k: "v" },
+          "profiles.labels": ["b"],
+          "profiles.events": [{ name: "n" }],
+          "profiles.rolled": ["c"],
+        }),
+        compiled.selection,
+      ),
+    ).toEqual({
+      users: { id: 2, name: "matched" },
+      profiles: {
+        user_id: 2,
+        tags: ["a"],
+        attrs: { k: "v" },
+        labels: ["b"],
+        events: [{ name: "n" }],
+        rolled: ["c"],
+      },
+    });
+
+    expect(
+      decodeRow(
+        raw({
+          "users.id": 3,
+          "users.name": "empty-tags",
+          "profiles.user_id": 3,
+          "profiles.tags": [],
+          "profiles.attrs": {},
+          "profiles.labels": [],
+          "profiles.events": [],
+          "profiles.rolled": [],
+        }),
+        compiled.selection,
+      ),
+    ).toEqual({
+      users: { id: 3, name: "empty-tags" },
+      profiles: {
+        user_id: 3,
+        tags: [],
+        attrs: {},
+        labels: [],
+        events: [],
+        rolled: [],
+      },
+    });
+  });
+
+  it("decodes NULL from a computed left-join expression as null", function testComputedLeftJoinNull() {
+    const db = createQueryClient();
+    const bareTotals = db
+      .select({ customerId: orders.id, spent: fn.sum(orders.amount) })
+      .from(orders)
+      .groupBy(orders.id);
+    const namedTotals = db
+      .select({ customerId: orders.id, cnt: fn.count(orders.id) })
+      .from(orders)
+      .groupBy(orders.id)
+      .as("totals");
+    const compiled = db
+      .select({
+        v: fn.plus<number>(bareTotals.spent, 1),
+        label: fn.toString(namedTotals.cnt),
+      })
+      .from(orders)
+      .leftJoin(bareTotals, eq(orders.id, bareTotals.customerId))
+      .leftJoin(namedTotals, eq(orders.id, namedTotals.customerId))
+      [compileQuerySymbol]();
+
+    expect(decodeRow({ v: null, label: null }, compiled.selection)).toEqual({ v: null, label: null });
+  });
+
+  it("decodes NULL from fn.plus over a nullable column as null", function testComputedNullableColumnNull() {
+    const db = createQueryClient();
+    const metrics = ckTable("metrics", {
+      id: int32(),
+      nullableInt: nullable(int32()),
+    });
+    const compiled = db
+      .select({ v: fn.plus<number>(metrics.nullableInt, 1) })
+      .from(metrics)
+      [compileQuerySymbol]();
+
+    expect(decodeRow({ v: "2" }, compiled.selection)).toEqual({ v: 2 });
+    expect(decodeRow({ v: 2 }, compiled.selection)).toEqual({ v: 2 });
+    expect(decodeRow({ v: null }, compiled.selection)).toEqual({ v: null });
+  });
+
+  it("keeps a computed mapWith result when the decoder accepts null", function testComputedMapWithNull() {
+    const db = createQueryClient();
+    const metrics = ckTable("metrics", {
+      nullableInt: nullable(int32()),
+    });
+    const compiled = db
+      .select({
+        v: fn.plus<number>(metrics.nullableInt, 1).mapWith((value) => (value === null ? 0 : Number(value))),
+      })
+      .from(metrics)
+      [compileQuerySymbol]();
+
+    expect(decodeRow({ v: null }, compiled.selection)).toEqual({ v: 0 });
+  });
+
+  it("still fails when a non-nullable column receives null", function testNonNullableColumnNullStaysLoud() {
+    const db = createQueryClient();
+    const metrics = ckTable("metrics", {
+      id: int32(),
+    });
+    const compiled = db.select({ id: metrics.id }).from(metrics)[compileQuerySymbol]();
+
+    expect(() => decodeRow({ id: null }, compiled.selection)).toThrow("Failed to decode column");
   });
 });

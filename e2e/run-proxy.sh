@@ -25,7 +25,7 @@ chmod 600 "$CERT_DIR/server.key"
 
 docker compose "${COMPOSE_ARGS[@]}" up -d --build --wait --wait-timeout 60 clickhouse proxy-topology
 docker compose "${COMPOSE_ARGS[@]}" run --rm --build seed
-docker compose "${COMPOSE_ARGS[@]}" run --rm --no-deps e2e \
+docker compose "${COMPOSE_ARGS[@]}" run --rm --no-deps --build e2e \
   bun test e2e/write-paths.e2e.test.ts \
   -t "writes array rows through insertJsonEachRow|uploads a production-sized async user scope" \
   --timeout 30000

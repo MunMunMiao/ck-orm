@@ -1,11 +1,11 @@
 import type { AnyColumn } from "./columns";
 import { createClientValidationError, createInternalError } from "./errors";
-import { getArrayElementType, unwrapNullableLowCardinalityType } from "./internal/clickhouse-type";
+import { getArrayElementType, unwrapNullableLowCardinalityType, unwrapStorageType } from "./internal/clickhouse-type";
 import { isColumnLike } from "./internal/column";
 import { type CountMode, type CountModeResult, getCountDecoder, getCountSqlType, wrapCountSql } from "./internal/count";
 import { isPlainObject } from "./internal/predicates";
 import { createUuid } from "./platform";
-import type { InferSelectionResult, NoJoinedSources, SelectionRecord } from "./query/types";
+import type { AnonymousSourceKey, InferSelectionResult, NoJoinedSources, SelectionRecord } from "./query/types";
 import {
   type BuildContext,
   compileValue,
@@ -13,6 +13,7 @@ import {
   type Decoder,
   decodeValue,
   ensureExpression,
+  expressionOriginSymbol,
   getExpressionSourceKey,
   isExpression,
   joinSqlParts,
@@ -25,11 +26,13 @@ import {
   wrapSql,
 } from "./query-shared";
 import type { ClickHouseBaseQueryOptions } from "./runtime";
+import { formatQueryParamValue } from "./runtime/config";
 import type { ClickHouseSettings, ClickHouseSettingValue } from "./runtime/settings";
 import type { AllInsertableKeys, AnyTable, InsertDataOf, RequiredInsertKeys, Table } from "./schema";
 import { renderTableIdentifier } from "./schema";
 import {
   compileSql,
+  inferPrimitiveType,
   isSqlFragment,
   type QueryParamTypes,
   quoteIdentifier,
@@ -60,8 +63,6 @@ const SQL_FINAL = sql.raw(" final");
 const SQL_FINAL_PAREN_AS = sql.raw(" final) as ");
 const SQL_INNER_JOIN = sql.raw("inner join ");
 const SQL_LEFT_JOIN = sql.raw("left join ");
-const SQL_DEFAULT = sql.raw("DEFAULT");
-const SQL_NULL = sql.raw("NULL");
 const SQL_COUNT = sql.raw("count()");
 const SQL_WITH = sql.raw("with ");
 const SQL_EXISTS_OPEN = sql.raw("exists (");
@@ -71,6 +72,8 @@ const SQL_DESC = sql.raw(" DESC");
 const SQL_LEADING_FROM = sql.raw(" from ");
 const SQL_BETWEEN = sql.raw(" between ");
 const SQL_AND = sql.raw(" and ");
+const SQL_IN = sql.raw(" in ");
+const SQL_NOT_IN = sql.raw(" not in ");
 const SQL_IN_OPEN = sql.raw(" in (");
 const SQL_NOT_IN_OPEN = sql.raw(" not in (");
 const SQL_FALSE_LITERAL = sql.raw("0");
@@ -194,8 +197,17 @@ type AddJoinedSource<
   TSource extends KnownQuerySource,
   TNullable extends boolean,
 > = TSources & {
-  [K in SourceKey<TSource>]: {
+  [K in TSource extends { readonly kind: "cte"; readonly name: undefined } ? AnonymousSourceKey : SourceKey<TSource>]: {
     readonly row: SourceResult<TSource>;
+    readonly nullable: TNullable;
+  };
+};
+
+// A joined bare builder has no source key; record it under the shared
+// anonymous key so its column refs pick up the join's nullability.
+type AddAnonymousJoinedSource<TSources extends JoinedSources, TNullable extends boolean> = TSources & {
+  readonly [K in AnonymousSourceKey]: {
+    readonly row: Record<string, unknown>;
     readonly nullable: TNullable;
   };
 };
@@ -207,18 +219,17 @@ type NullableSourceMap<
   [K in keyof TJoinedSources]: TJoinedSources[K]["nullable"];
 };
 
-type DefaultJoinedResult<
-  TRootSource extends KnownQuerySource,
-  TJoinedSources extends JoinedSources,
-> = keyof TJoinedSources extends never
-  ? SourceResult<TRootSource>
-  : {
-      [K in SourceKey<TRootSource>]: SourceResult<TRootSource>;
-    } & {
-      [K in keyof TJoinedSources]: TJoinedSources[K]["nullable"] extends true
-        ? TJoinedSources[K]["row"] | null
-        : TJoinedSources[K]["row"];
-    };
+type DefaultJoinedResult<TRootSource extends KnownQuerySource, TJoinedSources extends JoinedSources> =
+  Exclude<keyof TJoinedSources, AnonymousSourceKey> extends never
+    ? SourceResult<TRootSource>
+    : {
+        [K in SourceKey<TRootSource>]: SourceResult<TRootSource>;
+      } & {
+        // Anonymous sources contribute no columns to the default projection.
+        [K in Exclude<keyof TJoinedSources, AnonymousSourceKey>]: TJoinedSources[K]["nullable"] extends true
+          ? TJoinedSources[K]["row"] | null
+          : TJoinedSources[K]["row"];
+      };
 
 /**
  * Resolves the row shape of a SELECT after a join is added.
@@ -280,6 +291,7 @@ export interface CompiledQuery<_TResult = Record<string, unknown>> {
   readonly selection: readonly SelectionMeta[];
   readonly forcedSettings?: ForcedSettings;
   readonly metadata?: CompiledQueryMetadata;
+  readonly body?: string;
 }
 
 interface PreparedRunner {
@@ -392,6 +404,10 @@ const FORBIDDEN_SUBQUERY_COLUMN_KEYS = {
   columns: true,
 } as const satisfies Record<string, true>;
 
+// Type-level mirror of the guards above: colliding keys keep their metadata type on CTEs and subqueries.
+type ForbiddenCteColumnKeys = keyof typeof FORBIDDEN_CTE_COLUMN_KEYS;
+type ForbiddenSubqueryColumnKeys = keyof typeof FORBIDDEN_SUBQUERY_COLUMN_KEYS;
+
 // Attaches each column ref as a non-enumerable own property of `target`,
 // skipping keys that collide with the target's own metadata fields. Shared by
 // CTE / Subquery / bare-SelectBuilder auto-attach paths — each supplies its
@@ -408,15 +424,29 @@ const attachSafeColumnRefs = (target: object, columns: SourceColumns, forbiddenK
 // Anonymous CTEs (no user-supplied name) — alias resolved at compile time
 // like bare subqueries. WeakMap-cached so the same CTE renders as the
 // same `__cte_N` across `renderCtes` (WITH definition) and `renderSource`
-// (FROM/JOIN reference) within one compile. CTEs intentionally lack the
-// `usedAsSource` first-use check: SQL allows referencing a CTE multiple
-// times.
+// (FROM/JOIN reference) within one compile. Named CTEs may be referenced
+// more than once. A second FROM/JOIN of the same anonymous CTE in one
+// SELECT is rejected in `renderSource`: every ref compiles to `__cte_N.col`.
 const resolveAnonymousCteAlias = (ctx: BuildContext, cte: AnyCte): string => {
   const state = getBareBuilderState(ctx);
   const cached = state.cteAliases.get(cte);
   if (cached) return cached;
   const alias = `__cte_${++state.cteCounter}`;
   state.cteAliases.set(cte, alias);
+  return alias;
+};
+
+// `usedInThisSelect` is the FROM + JOIN list of one SELECT. Nested queries
+// pass their own set, so a CTE referenced inside a subquery does not count
+// as a second source of the outer statement.
+const claimAnonymousCteSource = (ctx: BuildContext, cte: AnyCte, usedInThisSelect: WeakSet<AnyCte>): string => {
+  const alias = resolveAnonymousCteAlias(ctx, cte);
+  if (usedInThisSelect.has(cte)) {
+    throw createClientValidationError(
+      `Anonymous CTE used twice in the same query's source list (auto-alias "${alias}"). Every column ref compiles to that same alias, so a second join cannot name which one it means. Define two CTEs, one per join: two db.$with().as(...) calls, or two named CTEs with different names.`,
+    );
+  }
+  usedInThisSelect.add(cte);
   return alias;
 };
 
@@ -444,6 +474,7 @@ const createCompiledQuery = <TResult>(
   paramTypes?: QueryParamTypes,
   forcedSettings?: ForcedSettings,
   metadata?: CompiledQueryMetadata,
+  body?: string,
 ): CompiledQuery<TResult> => {
   return {
     kind: "compiled-query",
@@ -454,6 +485,7 @@ const createCompiledQuery = <TResult>(
     selection,
     forcedSettings,
     metadata,
+    ...(body === undefined ? {} : { body }),
   };
 };
 
@@ -643,12 +675,12 @@ const createInsertColumnEntries = (table: AnyTable): readonly InsertColumnEntry[
 const compileNestedInsertFieldValue = (
   row: Record<string, unknown>,
   entry: Extract<InsertColumnEntry, { kind: "nested-field" }>,
-  ctx: BuildContext,
-): SQLFragment => {
+): string => {
   const value = row[entry.key];
   if (value === undefined) {
-    return SQL_DEFAULT;
+    return "DEFAULT";
   }
+  rejectComputedInsertValue(value, entry.key);
   if (!Array.isArray(value)) {
     throw createClientValidationError(`Nested column "${entry.key}" expects an array of objects`);
   }
@@ -661,59 +693,51 @@ const compileNestedInsertFieldValue = (
         `Nested column "${entry.key}" item ${index + 1} is missing required field "${entry.fieldKey}"`,
       );
     }
+    rejectComputedInsertValue(item[entry.fieldKey], entry.key);
     return entry.fieldColumn.mapToDriverValue(item[entry.fieldKey] as never);
   });
-  return compileValue(encodedValues, ctx, entry.sqlType);
+  return formatInsertLiteral(encodedValues, entry.sqlType);
 };
 
-// ClickHouse parameterized VALUES inserts encode plain-object parameters as a
-// `Map(String,...)` literal (`{'k':'v',...}` with single quotes). That format
-// is not parseable as a `JSON` column value — CH rejects it with INCORRECT_DATA.
-// For NewJSON columns we route the encoded object through `JSON.stringify`
-// and downgrade the parameter type to `String`; ClickHouse implicitly casts
-// the resulting double-quoted JSON literal back to `JSON(...)` on the server
-// side. The read path is unaffected.
-//
-// Note: this stringify-then-CAST workaround applies only to `.values()` (the
-// parameterised VALUES path). `.fromSelect()` performs no `mapToDriverValue`
-// — JSON columns travel server-side as native JSON between SELECT output and
-// INSERT input, so there is no analogous wire-format step. Both paths reach
-// the same logical result, but if you ever need to introspect what ck-orm
-// sent over the wire, expect the two paths to look different.
+// JSON columns are a quoted JSON string. ClickHouse parses that literal into the column.
 const isJsonInsertSqlType = (sqlType: string): boolean => sqlType === "JSON" || sqlType.startsWith("JSON(");
 
-const compileInsertColumnValue = (
-  row: Record<string, unknown>,
-  entry: InsertColumnEntry,
-  ctx: BuildContext,
-): SQLFragment => {
+const VALUES_LITERAL_OPTIONS = {
+  wrapStringInQuotes: true,
+  printNullAsKeyword: true,
+  nested: true,
+  valuesDateTime: true,
+} as const;
+
+const rejectComputedInsertValue = (value: unknown, column: string): void => {
+  if (isSqlFragment(value) || isExpression(value)) {
+    throw createClientValidationError(
+      `insert().values() column "${column}" takes data values only; SQL expressions are not evaluated. Use insert().fromSelect() for computed values.`,
+    );
+  }
+};
+
+const formatInsertLiteral = (encoded: unknown, sqlType: string): string => {
+  if (isJsonInsertSqlType(unwrapNullableLowCardinalityType(sqlType)) && encoded !== null && encoded !== undefined) {
+    return formatQueryParamValue(JSON.stringify(encoded), "String", VALUES_LITERAL_OPTIONS);
+  }
+  return formatQueryParamValue(encoded, sqlType, VALUES_LITERAL_OPTIONS);
+};
+
+const formatInsertCell = (row: Record<string, unknown>, entry: InsertColumnEntry): string => {
   if (entry.kind === "nested-field") {
-    return compileNestedInsertFieldValue(row, entry, ctx);
+    return compileNestedInsertFieldValue(row, entry);
   }
 
   const value = row[entry.key];
   if (value === undefined) {
-    return SQL_DEFAULT;
+    return "DEFAULT";
   }
+  rejectComputedInsertValue(value, entry.key);
   if (value === null) {
-    return SQL_NULL;
+    return "NULL";
   }
-  const encoded = entry.column.mapToDriverValue(value as never);
-  // Unwrap Nullable / LowCardinality before checking for JSON — keeps this
-  // defensive path future-proof if ClickHouse ever permits `LowCardinality(JSON)`
-  // or a similar wrapper. The wire-format step (stringify + cast) is identical
-  // regardless of the outer wrapper.
-  if (
-    isJsonInsertSqlType(unwrapNullableLowCardinalityType(entry.sqlType)) &&
-    encoded !== null &&
-    encoded !== undefined
-  ) {
-    // Stringify the encoded plain object so the server-side String→JSON
-    // implicit cast can handle it. `mapToDriverValue` already validated the
-    // shape, so the stringify call is purely a wire-format step.
-    return compileValue(JSON.stringify(encoded), ctx, "String");
-  }
-  return compileValue(encoded, ctx, entry.sqlType);
+  return formatInsertLiteral(entry.column.mapToDriverValue(value as never), entry.sqlType);
 };
 
 const normalizeInsertRows = <TTable extends AnyTable>(
@@ -786,19 +810,46 @@ const createReferenceExpression = <TData, TSourceKey extends string>(
 // SelectBuilder subqueries, anonymous CTEs). The resolver closure looks up
 // the per-BuildContext alias so `subq.x` / `cte.x` and the source's WITH
 // definition / FROM rendering all share the same `__sub_N` / `__cte_N`.
-// sourceKey is deliberately omitted — without a stable string key, callers
-// that rely on it (nullable-join tracking) skip these refs.
+// sourceKey is deliberately omitted — there is no stable string key — so
+// nullable-join tracking identifies these refs by their source object instead.
 const createLazyAliasReferenceExpression = <TData>(
+  source: AnySelectBuilder | AnyCte,
   resolveAlias: (ctx: BuildContext) => string,
   columnName: string,
   decoder: Decoder<TData>,
   sqlType?: string,
-): SqlSelection<TData, string> =>
-  createExpression<TData, string>({
+): SqlSelection<TData, string> => {
+  // `origin` stands in for the missing sourceKey and survives `.as()` / `.mapWith()`.
+  return createExpression<TData, string>({
     compile: (ctx) => sql.identifier({ table: resolveAlias(ctx), column: columnName }),
     decoder,
     sqlType,
+    origin: source,
   });
+};
+
+const getLazyReferenceSource = (expression: object): unknown =>
+  (expression as { [expressionOriginSymbol]?: unknown })[expressionOriginSymbol];
+
+// Column and subquery/CTE references keep a source key or a lazy origin.
+// Everything else (`fn.*`, `ck.expr`, typed `ckSql`) is computed and follows
+// ClickHouse NULL propagation at decode time.
+const isComputedExpression = (expression: object): boolean => {
+  if (isColumnLike(expression)) {
+    return false;
+  }
+  return getExpressionSourceKey(expression) === undefined && getLazyReferenceSource(expression) === undefined;
+};
+
+// A column that is nullable inside its own query (a left join) must still
+// accept NULL when a later query reads that column through a ref.
+const referenceDecoder = (item: SelectionItem): Decoder<unknown> => {
+  const decoder = item.expression.decoder;
+  if (!item.nullable) {
+    return decoder;
+  }
+  return (value) => (value === null || value === undefined ? null : decoder(value));
+};
 
 const buildReferenceColumns = <TRow extends SelectionRecord, TSourceKey extends string>(
   sourceAlias: TSourceKey,
@@ -821,7 +872,7 @@ const buildReferenceColumns = <TRow extends SelectionRecord, TSourceKey extends 
     columns[item.key as keyof TRow] = createReferenceExpression(
       sourceAlias,
       item.sqlAlias,
-      item.expression.decoder,
+      referenceDecoder(item),
       item.expression.sqlType,
       propagatedNestedShape,
     ) as ReferenceColumns<TRow, TSourceKey>[keyof TRow];
@@ -830,7 +881,7 @@ const buildReferenceColumns = <TRow extends SelectionRecord, TSourceKey extends 
   return columns;
 };
 
-const renderSource = (source: AnySource, ctx: BuildContext): SQLFragment => {
+const renderSource = (source: AnySource, ctx: BuildContext, anonymousCteSources: WeakSet<AnyCte>): SQLFragment => {
   if (isSelectBuilder(source)) {
     const { alias, isFirstUse } = claimSourceBuilder(ctx, source);
     if (!isFirstUse) {
@@ -848,7 +899,9 @@ const renderSource = (source: AnySource, ctx: BuildContext): SQLFragment => {
     case "subquery":
       return sql`${SQL_OPEN_PAREN}${sql.raw(compileNestedQuery(source.query, ctx).statement)}${SQL_PAREN_AS}${sql.identifier(source.alias)}`;
     case "cte":
-      return sql.identifier(source.name ?? resolveAnonymousCteAlias(ctx, source));
+      return sql.identifier(
+        source.name === undefined ? claimAnonymousCteSource(ctx, source, anonymousCteSources) : source.name,
+      );
     case "table-function":
       return source.compileSource(ctx);
   }
@@ -879,9 +932,15 @@ const renderTableFinalSubquery = (table: AnyTable): SQLFragment => {
   return fragment;
 };
 
-const renderRootSource = (source: AnySource, ctx: BuildContext, useFinal: boolean, hasJoins: boolean): SQLFragment => {
+const renderRootSource = (
+  source: AnySource,
+  ctx: BuildContext,
+  useFinal: boolean,
+  hasJoins: boolean,
+  anonymousCteSources: WeakSet<AnyCte>,
+): SQLFragment => {
   if (!useFinal) {
-    return renderSource(source, ctx);
+    return renderSource(source, ctx, anonymousCteSources);
   }
 
   if (isSelectBuilder(source) || source.kind !== "table") {
@@ -952,14 +1011,14 @@ const renderSelection = (selectionItems: readonly SelectionItem[], ctx: BuildCon
 
 const normalizeSelectionRecord = (
   selection: SelectionRecord,
-  nullableSources: ReadonlySet<string>,
+  nullableSources: ReadonlySet<unknown>,
 ): SelectionItem[] => {
   const selectionItems: SelectionItem[] = [];
   const usedSqlAliases = new Set<string>();
 
   for (const [key, rawValue] of Object.entries(selection)) {
     const expression = ensureExpression(rawValue);
-    const sourceKey = getExpressionSourceKey(expression);
+    const source = getExpressionSourceKey(expression) ?? getLazyReferenceSource(expression);
     const sqlAlias = expression.outputAlias ?? key;
     if (usedSqlAliases.has(sqlAlias)) {
       throw createClientValidationError(`Duplicate SQL selection alias "${sqlAlias}"`);
@@ -971,7 +1030,8 @@ const normalizeSelectionRecord = (
       expression,
       decoder: expression.decoder,
       path: [key],
-      nullable: sourceKey ? nullableSources.has(sourceKey) : false,
+      nullable: source !== undefined && nullableSources.has(source),
+      ...(isComputedExpression(expression) ? { computed: true } : {}),
     });
   }
 
@@ -1107,6 +1167,7 @@ const buildCountStatement = (
     outputAlias?: string;
   },
 ): SQLFragment => {
+  const anonymousCteSources = new WeakSet<AnyCte>();
   const queryParts: SQLFragment[] = [];
   const cteFragment = renderCtes(config.ctes ?? [], ctx);
 
@@ -1119,7 +1180,7 @@ const buildCountStatement = (
       ? sql`${SQL_SELECT}${renderCountExpression(config.mode)}${SQL_AS}${sql.identifier(config.outputAlias)}`
       : sql`${SQL_SELECT}${renderCountExpression(config.mode)}`,
   );
-  queryParts.push(sql`${SQL_FROM}${renderSource(config.source, ctx)}`);
+  queryParts.push(sql`${SQL_FROM}${renderSource(config.source, ctx, anonymousCteSources)}`);
 
   if (config.condition) {
     queryParts.push(sql`${SQL_WHERE}${config.condition.compile(ctx)}`);
@@ -1456,38 +1517,38 @@ export interface SelectBuilder<
     source: TSource,
     on: Predicate,
   ): SelectBuilderWithRefs<
-    TSource extends KnownQuerySource
-      ? InferJoinResult<
-          TSelection,
-          TResult,
-          TRootSource,
-          AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>
-        >
-      : TResult,
+    InferJoinResult<
+      TSelection,
+      TResult,
+      TRootSource,
+      TSource extends KnownQuerySource
+        ? AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>
+        : AddAnonymousJoinedSource<TJoinedSources, TJoinUseNulls extends 1 ? true : false>
+    >,
     TSelection,
     TRootSource,
     TSource extends KnownQuerySource
       ? AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>
-      : TJoinedSources,
+      : AddAnonymousJoinedSource<TJoinedSources, TJoinUseNulls extends 1 ? true : false>,
     TJoinUseNulls
   >;
   leftJoin<TSource extends KnownQuerySource | AnySelectBuilderLike>(
     source: TSource,
     on: (joined: TSource) => Predicate,
   ): SelectBuilderWithRefs<
-    TSource extends KnownQuerySource
-      ? InferJoinResult<
-          TSelection,
-          TResult,
-          TRootSource,
-          AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>
-        >
-      : TResult,
+    InferJoinResult<
+      TSelection,
+      TResult,
+      TRootSource,
+      TSource extends KnownQuerySource
+        ? AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>
+        : AddAnonymousJoinedSource<TJoinedSources, TJoinUseNulls extends 1 ? true : false>
+    >,
     TSelection,
     TRootSource,
     TSource extends KnownQuerySource
       ? AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>
-      : TJoinedSources,
+      : AddAnonymousJoinedSource<TJoinedSources, TJoinUseNulls extends 1 ? true : false>,
     TJoinUseNulls
   >;
   where(
@@ -1568,11 +1629,13 @@ export const createSelectBuilder = <
   // instance — both are called multiple times in a single use (auto-attach,
   // `.as()`, `compileWithContextSymbol`, `db.$with().as()`,
   // `insert.fromSelect()` etc.). Cache them in closure-private slots.
-  let memoNullableSources: ReadonlySet<string> | undefined;
+  let memoNullableSources: ReadonlySet<unknown> | undefined;
   let memoSelectionItems: SelectionItem[] | undefined;
 
-  const computeNullableSources = (): ReadonlySet<string> => {
-    const result = new Set<string>();
+  // String keys for named sources; the source object itself for bare builders
+  // and anonymous CTEs, matching `getLazyReferenceSource` on their column refs.
+  const computeNullableSources = (): ReadonlySet<unknown> => {
+    const result = new Set<unknown>();
     if (!isNullableJoinEnabled()) {
       return result;
     }
@@ -1580,15 +1643,12 @@ export const createSelectBuilder = <
       if (join.type !== "left") {
         continue;
       }
-      const sourceKey = getSourceKey(join.source);
-      if (sourceKey) {
-        result.add(sourceKey);
-      }
+      result.add(getSourceKey(join.source) ?? join.source);
     }
     return result;
   };
 
-  const getNullableSources = (): ReadonlySet<string> => {
+  const getNullableSources = (): ReadonlySet<unknown> => {
     if (memoNullableSources) return memoNullableSources;
     memoNullableSources = computeNullableSources();
     return memoNullableSources;
@@ -1614,7 +1674,7 @@ export const createSelectBuilder = <
     }
 
     const selectionItems: SelectionItem[] = [];
-    const hasJoins = state.joins.some((join) => getSourceColumns(join.source));
+    const hasJoins = state.joins.some((join) => getSourceKey(join.source) && getSourceColumns(join.source));
     const nullableJoinEnabled = isNullableJoinEnabled();
     let nextIndex = 0;
 
@@ -1622,6 +1682,7 @@ export const createSelectBuilder = <
       for (const [fieldKey, expression] of Object.entries(sourceColumns)) {
         nextIndex += 1;
         const expressionAsSql = expression as SqlSelection<unknown>;
+        const sqlType = expressionAsSql.sqlType;
         selectionItems.push({
           key: fieldKey,
           sqlAlias: hasJoins ? `__orm_${nextIndex}` : fieldKey,
@@ -1630,6 +1691,7 @@ export const createSelectBuilder = <
           path: hasJoins ? [sourceKey, fieldKey] : [fieldKey],
           nullable: groupNullable,
           groupNullable: hasJoins ? groupNullable : false,
+          ...(sqlType !== undefined && isEmptyMissingContainerType(sqlType) ? { container: true } : {}),
         });
       }
     };
@@ -1865,6 +1927,7 @@ export const createSelectBuilder = <
     },
 
     [compileWithContextSymbol](ctx: BuildContext): CompiledQuery<TResult> {
+      const anonymousCteSources = new WeakSet<AnyCte>();
       const { result, forcedSettings: nestedForcedSettings } = withCompileState(ctx, () => {
         const selectionItems = buildSelectionItems();
         const queryParts: SQLFragment[] = [];
@@ -1876,14 +1939,22 @@ export const createSelectBuilder = <
         queryParts.push(sql`${SQL_SELECT}${renderSelection(selectionItems, ctx)}`);
 
         if (state.fromSource) {
-          const fromSource = renderRootSource(state.fromSource, ctx, state.useFinal, state.joins.length > 0);
+          const fromSource = renderRootSource(
+            state.fromSource,
+            ctx,
+            state.useFinal,
+            state.joins.length > 0,
+            anonymousCteSources,
+          );
           queryParts.push(sql`${SQL_FROM}${fromSource}`);
         }
 
         if (state.joins.length > 0) {
           for (const join of state.joins) {
             const joinKeyword = join.type === "inner" ? SQL_INNER_JOIN : SQL_LEFT_JOIN;
-            queryParts.push(sql`${joinKeyword}${renderSource(join.source, ctx)}${SQL_ON}${join.on.compile(ctx)}`);
+            queryParts.push(
+              sql`${joinKeyword}${renderSource(join.source, ctx, anonymousCteSources)}${SQL_ON}${join.on.compile(ctx)}`,
+            );
           }
         }
 
@@ -2011,9 +2082,10 @@ export const createSelectBuilder = <
     const autoRefs: SourceColumns = {};
     for (const item of buildSelectionItems()) {
       autoRefs[item.key] = createLazyAliasReferenceExpression(
+        builder,
         (ctx) => resolveAutoSubqueryAlias(ctx, builder),
         item.sqlAlias,
-        item.expression.decoder,
+        referenceDecoder(item),
         item.expression.sqlType,
       );
     }
@@ -2105,39 +2177,41 @@ type InsertBuilderState<TTable extends AnyTable> =
   | { readonly kind: "values"; readonly rows: readonly InsertRowInput<TTable>[] }
   | { readonly kind: "from_select"; readonly query: AnySelectBuilder };
 
+// ClickHouse still evaluates Values text as expressions through template
+// deduction when only the first setting is off. Both stay forced so cells
+// are data; DEFAULT and NULL remain valid.
+const INSERT_VALUES_SETTINGS = {
+  input_format_values_interpret_expressions: 0,
+  input_format_values_deduce_templates_of_expressions: 0,
+} as const;
+
 const compileInsertValues = <TTable extends AnyTable>(
   table: TTable,
   rows: readonly InsertRowInput<TTable>[],
 ): CompiledQuery<never> => {
   const columnEntries = createInsertColumnEntries(table);
-  const ctx: BuildContext = {
-    params: {},
-    paramTypes: {},
-    nextParamIndex: 0,
-  };
-  const valueRows = rows.map(
-    (row) =>
-      sql`(${joinSqlParts(
-        columnEntries.map((entry) => compileInsertColumnValue(row as Record<string, unknown>, entry, ctx)),
-        ", ",
-      )})`,
-  );
+  const body = rows
+    .map(
+      (row) => `(${columnEntries.map((entry) => formatInsertCell(row as Record<string, unknown>, entry)).join(",")})`,
+    )
+    .join(", ");
   const statement = sql`insert into ${renderTableIdentifier(table)} (${joinSqlParts(
     columnEntries.map((entry) => renderInsertColumnIdentifier(entry)),
     ", ",
-  )}) values ${joinSqlParts(valueRows, ", ")}`;
-  const compiled = compileSql(statement, ctx);
+  )}) format Values`;
+  const compiled = compileSql(statement);
   return createCompiledQuery(
     compiled.query,
     [],
     "command",
-    { ...compiled.params },
-    { ...compiled.paramTypes },
-    undefined,
+    {},
+    {},
+    INSERT_VALUES_SETTINGS,
     {
       rootSourceName: table.originalName,
       tableName: table.originalName,
     },
+    body,
   );
 };
 
@@ -2455,7 +2529,7 @@ export type Subquery<
   readonly alias: TAlias;
   readonly query: AnySelectBuilder<TResult>;
   readonly columns: ReferenceColumns<TResult, TAlias>;
-} & ReferenceColumns<TResult, TAlias>;
+} & Omit<ReferenceColumns<TResult, TAlias>, ForbiddenSubqueryColumnKeys>;
 
 export type AnySubquery = {
   readonly kind: "subquery";
@@ -2469,7 +2543,7 @@ export type Cte<TResult extends Record<string, unknown> = Record<string, unknown
   readonly name: TName;
   readonly query: AnySelectBuilder<TResult>;
   readonly columns: ReferenceColumns<TResult, TName>;
-} & ReferenceColumns<TResult, TName>;
+} & Omit<ReferenceColumns<TResult, TName>, ForbiddenCteColumnKeys>;
 
 type SelectBuilderRow<TQuery> = TQuery extends {
   execute(options?: ClickHouseBaseQueryOptions): Promise<Array<infer TResult>>;
@@ -2484,7 +2558,7 @@ type CteFromQuery<TQuery, TName extends string> = {
   readonly name: TName;
   readonly query: AnySelectBuilder<SelectBuilderRow<TQuery>>;
   readonly columns: ReferenceColumns<SelectBuilderRow<TQuery>, TName>;
-} & ReferenceColumns<SelectBuilderRow<TQuery>, TName>;
+} & Omit<ReferenceColumns<SelectBuilderRow<TQuery>, TName>, ForbiddenCteColumnKeys>;
 
 // Anonymous CTE — name is assigned per-compile (`__cte_N`) instead of by
 // the user. Column refs use the same lazy-alias mechanism as bare
@@ -2495,7 +2569,7 @@ type CteFromAnonymousQuery<TQuery> = {
   readonly name: undefined;
   readonly query: AnySelectBuilder<SelectBuilderRow<TQuery>>;
   readonly columns: ReferenceColumns<SelectBuilderRow<TQuery>, string>;
-} & ReferenceColumns<SelectBuilderRow<TQuery>, string>;
+} & Omit<ReferenceColumns<SelectBuilderRow<TQuery>, string>, ForbiddenCteColumnKeys>;
 
 export type AnyCte = {
   readonly kind: "cte";
@@ -2598,9 +2672,10 @@ export const createQueryClient = <TJoinUseNulls extends JoinUseNulls = 1>(
             };
             for (const item of selectionItems) {
               columns[item.key] = createLazyAliasReferenceExpression(
+                cte,
                 (ctx) => resolveAnonymousCteAlias(ctx, cte),
                 item.sqlAlias,
-                item.expression.decoder,
+                referenceDecoder(item),
                 item.expression.sqlType,
               );
             }
@@ -2999,6 +3074,39 @@ export const hasAll = makeArrayContainmentPredicate("hasAll");
 export const hasAny = makeArrayContainmentPredicate("hasAny");
 export const hasSubstr = makeArrayContainmentPredicate("hasSubstr");
 
+const inferUniformType = (values: readonly unknown[]): string | undefined => {
+  const types = new Set(values.map(inferPrimitiveType));
+  return types.size === 1 ? types.values().next().value : undefined;
+};
+
+// ponytail: 40_000 UTF-16 units keeps each Array parameter under the 128KB form field.
+// 26.3 allows ~1,000 parameters per request; 25.8's analyzer rejects a folded set above ~1MB.
+// Bigger sets belong in a temporary table or external data.
+const IN_VALUE_CHUNK_BUDGET = 40_000;
+
+const chunkInValues = (values: readonly unknown[], elementType: string): unknown[][] => {
+  const chunks: unknown[][] = [];
+  let chunk: unknown[] = [];
+  let size = 0;
+  for (const value of values) {
+    const cost =
+      formatQueryParamValue(value, elementType, {
+        wrapStringInQuotes: true,
+        printNullAsKeyword: true,
+        nested: true,
+      }).length + 1;
+    if (chunk.length > 0 && size + cost > IN_VALUE_CHUNK_BUDGET) {
+      chunks.push(chunk);
+      chunk = [];
+      size = 0;
+    }
+    chunk.push(value);
+    size += cost;
+  }
+  chunks.push(chunk);
+  return chunks;
+};
+
 const createInExpression = (
   negate: boolean,
   left: unknown,
@@ -3020,6 +3128,23 @@ const createInExpression = (
       if (Array.isArray(right)) {
         if (right.length === 0) {
           return emptyArrayFragment;
+        }
+        // One Array parameter for the whole list: ClickHouse rejects requests
+        // with more than 1,000 HTTP form fields, one per query parameter. Long
+        // lists are split into a few Array parameters; see IN_VALUE_CHUNK_BUDGET.
+        if (!right.some((value) => isExpression(value) || isSqlFragment(value))) {
+          const encoded = right.map((value) => encodePredicateValue(left, value));
+          const elementType = leftExpression.sqlType ?? inferUniformType(encoded);
+          if (elementType !== undefined) {
+            const chunks = chunkInValues(encoded, elementType);
+            const arrayType = `Array(${elementType})`;
+            const operator = negate ? SQL_NOT_IN : SQL_IN;
+            if (chunks.length === 1) {
+              return sql`${leftExpression.compile(ctx)}${operator}${compileValue(chunks[0], ctx, arrayType)}`;
+            }
+            const parts = chunks.map((chunk) => compileValue(chunk, ctx, arrayType));
+            return sql`${leftExpression.compile(ctx)}${operator}arrayConcat(${joinSqlParts(parts, ", ")})`;
+          }
         }
         const parts = right.map((value) => compilePredicateValue(left, value, ctx, leftExpression.sqlType));
         return sql`${leftExpression.compile(ctx)}${operatorFragment}${joinSqlParts(parts, ", ")}${SQL_CLOSE_PAREN}`;
@@ -3096,9 +3221,37 @@ type NestedGroupAccumulator = {
 
 const isNullish = (value: unknown): value is null | undefined => value === null || value === undefined;
 
+// Array and Map cannot be Nullable. Nested arrives as an array. Under
+// join_use_nulls an unmatched row therefore sends [] / {} for those fields
+// while scalars are NULL. A matched row whose scalars are all NULL and whose
+// containers are all empty is indistinguishable and collapses the same way.
+const isEmptyMissingContainerType = (sqlType: string): boolean => {
+  const unwrapped = unwrapStorageType(sqlType);
+  return unwrapped.startsWith("Array(") || unwrapped.startsWith("Map(") || unwrapped.startsWith("Nested(");
+};
+
+const isEmptyContainerValue = (value: unknown): boolean =>
+  (Array.isArray(value) && value.length === 0) ||
+  (typeof value === "object" && value !== null && !Array.isArray(value) && Object.keys(value).length === 0);
+
+const missingForGroupCollapse = (item: SelectionMeta, rawValue: unknown): boolean => {
+  if (isNullish(rawValue)) {
+    return true;
+  }
+  return item.container === true && isEmptyContainerValue(rawValue);
+};
+
 const decodeFlatField = (item: SelectionMeta, rawValue: unknown): unknown => {
   if (item.nullable && isNullish(rawValue)) {
     return null;
+  }
+  if (item.computed && isNullish(rawValue)) {
+    try {
+      return item.decoder(rawValue);
+    } catch {
+      // The decoder rejected NULL. ClickHouse propagated it through the expression.
+      return null;
+    }
   }
   return decodeValue(item.decoder, rawValue, item.sqlAlias);
 };
@@ -3119,7 +3272,7 @@ const applyNestedField = (
       nullable: Boolean(item.groupNullable),
       allNull: true,
     } satisfies NestedGroupAccumulator);
-  existing.allNull = existing.allNull && isNullish(rawValue);
+  existing.allNull = existing.allNull && missingForGroupCollapse(item, rawValue);
   existing.fields[fieldKey] = decodeFlatField(item, rawValue);
   nestedGroups.set(groupKey, existing);
 };
@@ -3140,10 +3293,11 @@ const finalizeNestedGroup = (group: NestedGroupAccumulator): Record<string, unkn
  * flags.
  *
  * Nested-group all-null collapse rule:
- * when every field of a nested group is null/undefined AND the group itself is declared
+ * when every field of a nested group is missing AND the group itself is declared
  * nullable (`groupNullable === true`), the whole group collapses to `null` rather than
- * `{ field: null, ... }`. This matches ClickHouse's left-join-on-Nested semantics under
- * `join_use_nulls = 1`.
+ * `{ field: null, ... }`. Scalars are missing when null/undefined. Array, Map, and
+ * Nested fields are also missing when the raw value is empty, because ClickHouse
+ * cannot make those types Nullable under `join_use_nulls = 1`.
  *
  * Exposed via `public_api` for users post-processing raw rows from the streaming API.
  */

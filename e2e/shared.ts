@@ -77,7 +77,6 @@ export const hasTransportRoleFixtures =
 export const experimentalSettings = {
   allow_experimental_json_type: 1,
   allow_experimental_dynamic_type: 1,
-  allow_experimental_qbit_type: 1,
   enable_time_time64_type: 1,
 } as const;
 
@@ -254,11 +253,25 @@ export const schemaPrimitives = ckTable(
     uuid_value: ckType.uuid(),
     ipv4_value: ckType.ipv4(),
     ipv6_value: ckType.ipv6(),
-    json_value: ckType.json<{ id: number; label: string }>(),
+    json_value: ckType.json<{ id: string; label: string }>(),
     dynamic_value: ckType.dynamic<unknown>(),
-    qbit_value: ckType.qbit(ckType.float32(), { dimensions: 8 }),
     enum8_value: ckType.enum8({ active: 1, paused: 2 }),
     enum16_value: ckType.enum16({ bronze: 1000, silver: 2000 }),
+  },
+  (table) => ({
+    engine: "MergeTree",
+    orderBy: [table.id],
+  }),
+);
+
+// QBit is a normal type on 26.3 and absent on 25.8. It stays off schema_primitives
+// so that table can be created on both; seed and the round-trip test opt in
+// only when system.data_type_families includes QBit.
+export const schemaQbit = ckTable(
+  "schema_qbit",
+  {
+    id: ckType.int32(),
+    qbit_value: ckType.qbit(ckType.float32(), { dimensions: 8 }),
   },
   (table) => ({
     engine: "MergeTree",
@@ -292,7 +305,7 @@ export const schemaAggregates = ckTable(
   {
     id: ckType.uint32(),
     agg_sum_state: ckType.aggregateFunction<string>("sum", ckType.uint64()),
-    simple_sum_value: ckType.simpleAggregateFunction<number>("sum", ckType.int64()),
+    simple_sum_value: ckType.simpleAggregateFunction<string>("sum", ckType.int64()),
   },
   (table) => ({
     engine: "AggregatingMergeTree",
@@ -335,7 +348,7 @@ export const schemaJsonAdvanced = ckTable(
       skip: ["debug"],
       skipRegexp: ["^_tmp"],
     }),
-    payload_with_default: ckType.json<{ note: string }>("payload_with_default").default(ckSql`'{}'`),
+    payload_with_default: ckType.json<{ note?: string }>("payload_with_default").default(ckSql`'{}'`),
   },
   (table) => ({
     engine: "MergeTree",
@@ -455,6 +468,7 @@ export const e2eSchema = {
   auditEvents,
   writePathBigInts,
   schemaPrimitives,
+  schemaQbit,
   schemaCompound,
   schemaAggregates,
   schemaGeo,
@@ -515,6 +529,41 @@ export const createAdminDb = () => {
     password: config.password,
     clickhouse_settings: experimentalSettings,
   });
+};
+
+// Returns false without connecting when the e2e env is absent, so `bun test e2e`
+// can skip. QBit has no setting to probe: 26.3 marks allow_experimental_qbit_type
+// obsolete, and 25.8 rejects that setting as unknown.
+export const serverSupportsQBit = async () => {
+  if (!hasE2EEnv) {
+    return false;
+  }
+  const db = createAdminDb();
+  const rows = await db.execute(ckSql`SELECT name FROM system.data_type_families WHERE name = 'QBit' LIMIT 1`);
+  return rows.length > 0;
+};
+
+// Returns false without connecting when the e2e env is absent, same as
+// `serverSupportsQBit`. `system.functions` is the capability check: 25.8 has
+// no `arrayExcept` or `arrayRemove`.
+export const serverSupportsFunction = async (functionName: string) => {
+  if (!hasE2EEnv) {
+    return false;
+  }
+  const db = createAdminDb();
+  const rows = await db.execute(ckSql`SELECT name FROM system.functions WHERE name = ${functionName} LIMIT 1`);
+  return rows.length > 0;
+};
+
+// ck-orm forces `date_time_output_format=iso`. 25.8 then appends `Z` to Time64
+// JSON (`12:34:56.789123Z`); 26.3 leaves the time string unchanged.
+export const serverSupportsBareTime64Json = async () => {
+  if (!hasE2EEnv) {
+    return false;
+  }
+  const db = createAdminDb();
+  const rows = await db.execute(ckSql`SELECT toTime64('12:34:56.789123', 6) AS t`);
+  return rows[0]?.t === "12:34:56.789123";
 };
 
 export const createTempTableName = (prefix: string) => {

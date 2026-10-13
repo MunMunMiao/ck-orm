@@ -480,6 +480,21 @@ const createDateTime64Cast = (expression: unknown, scale: unknown, timezone?: un
   });
 };
 
+// arrayEnumerate*Ranked returns UInt32 arrays nested like the input down to maxArrayDepth (2 gives number[][]).
+// ponytail: depths above 3 type as unknown[]; extend the lookup if deeper ranked enumerations show up.
+type RankedEnumeration<TDepth> = TDepth extends 1 | 1n
+  ? number[]
+  : TDepth extends 2 | 2n
+    ? number[][]
+    : TDepth extends 3 | 3n
+      ? number[][][]
+      : unknown[];
+
+const rankedEnumerationSqlType = (maxArrayDepth: unknown): string | undefined => {
+  const depth = Number(maxArrayDepth);
+  return Number.isInteger(depth) && depth > 0 ? `${"Array(".repeat(depth)}UInt32${")".repeat(depth)}` : undefined;
+};
+
 const arrayDecoder = <TData>(label: string, itemDecoder?: Decoder<TData>): Decoder<TData[]> => {
   return (value) => {
     if (!Array.isArray(value)) {
@@ -553,11 +568,7 @@ const buildDecimalAwareSumIf = (expression: unknown, condition: unknown): Select
   return buildDecimalAwareAggregate("sumIf", expression, [expression, condition], { widenForSum: true });
 };
 
-const createArrayExpression = <TData>(
-  name: string,
-  args: readonly unknown[],
-  sqlType = "Array",
-): Selection<TData[]> => {
+const createArrayExpression = <TData>(name: string, args: readonly unknown[], sqlType?: string): Selection<TData[]> => {
   return createFunctionExpression<TData[]>(name, args, {
     decoder: arrayDecoder<TData>(name),
     sqlType,
@@ -1095,14 +1106,41 @@ function withParams(name: string, parameters: readonly unknown[], ...args: unkno
   const decoder = isSingleGroupArray ? arrayDecoder("groupArray", ensureExpression(args[0]).decoder) : undefined;
   return createParameterizedFunctionExpression(name, parameters, args, {
     decoder,
-    sqlType: isSingleGroupArray ? "Array" : undefined,
+    sqlType: isSingleGroupArray ? groupArraySqlType(args[0]) : undefined,
   });
 }
+
+// groupArray skips NULLs, so Nullable(T) becomes Array(T). Other wrappers stay
+// in the element type. A bare Array is not a valid parameter type.
+const groupArraySqlType = (value: unknown): string | undefined => {
+  if (!isExpression(value) || value.sqlType === undefined) {
+    return undefined;
+  }
+  const elementType = value.sqlType.startsWith("Nullable(")
+    ? unwrapNullableLowCardinalityType(value.sqlType)
+    : value.sqlType;
+  return `Array(${elementType})`;
+};
+
+// Tuple(T1, T2) only when every item type is known. A bare Tuple is not a
+// valid parameter type, so callers fall back to inference instead.
+const tupleSqlType = (args: readonly unknown[]): string | undefined => {
+  const types = args.map((argument) => {
+    if (isExpression(argument)) {
+      return argument.sqlType;
+    }
+    if (isSqlFragment(argument) || argument === null || argument === undefined) {
+      return undefined;
+    }
+    return inferPrimitiveType(argument);
+  });
+  return types.every((type) => type !== undefined) ? `Tuple(${types.join(", ")})` : undefined;
+};
 
 const tuple = <const TArgs extends readonly unknown[]>(...args: TArgs): Selection<TupleData<TArgs>> => {
   return createFunctionExpression<TupleData<TArgs>>("tuple", args, {
     decoder: tupleDecoder(args),
-    sqlType: "Tuple",
+    sqlType: tupleSqlType(args),
   });
 };
 
@@ -1115,7 +1153,7 @@ function arrayReverseSort<TData = unknown>(first: unknown, ...rest: unknown[]): 
   const decoder = arrayDecoder<TData>("arrayReverseSort");
   return createFunctionExpression<TData[]>("arrayReverseSort", [first, ...rest], {
     decoder: input ? (value) => input.decoder(decoder(value)) : decoder,
-    sqlType: input?.sqlType ?? "Array",
+    sqlType: input?.sqlType,
   });
 }
 
@@ -1865,7 +1903,11 @@ const scalarFns = {
   arrayEnumerateDense(array: unknown): Selection<number[]> {
     return createArrayExpression<number>("arrayEnumerateDense", [array], "Array(UInt32)");
   },
-  arrayEnumerateDenseRanked(clearDepth: unknown, array: unknown, maxArrayDepth: unknown): Selection<number[]> {
+  arrayEnumerateDenseRanked<TDepth>(
+    clearDepth: unknown,
+    array: unknown,
+    maxArrayDepth: TDepth,
+  ): Selection<RankedEnumeration<TDepth>> {
     return createExpression({
       compile: (ctx) =>
         sql`arrayEnumerateDenseRanked(${joinSqlParts(
@@ -1876,14 +1918,18 @@ const scalarFns = {
           ],
           ", ",
         )})`,
-      decoder: arrayDecoder<number>("arrayEnumerateDenseRanked"),
-      sqlType: "Array(UInt32)",
+      decoder: arrayDecoder("arrayEnumerateDenseRanked") as Decoder<RankedEnumeration<TDepth>>,
+      sqlType: rankedEnumerationSqlType(maxArrayDepth),
     });
   },
   arrayEnumerateUniq(...arrays: unknown[]): Selection<number[]> {
     return createArrayExpression<number>("arrayEnumerateUniq", arrays, "Array(UInt32)");
   },
-  arrayEnumerateUniqRanked(clearDepth: unknown, array: unknown, maxArrayDepth: unknown): Selection<number[]> {
+  arrayEnumerateUniqRanked<TDepth>(
+    clearDepth: unknown,
+    array: unknown,
+    maxArrayDepth: TDepth,
+  ): Selection<RankedEnumeration<TDepth>> {
     return createExpression({
       compile: (ctx) =>
         sql`arrayEnumerateUniqRanked(${joinSqlParts(
@@ -1894,8 +1940,8 @@ const scalarFns = {
           ],
           ", ",
         )})`,
-      decoder: arrayDecoder<number>("arrayEnumerateUniqRanked"),
-      sqlType: "Array(UInt32)",
+      decoder: arrayDecoder("arrayEnumerateUniqRanked") as Decoder<RankedEnumeration<TDepth>>,
+      sqlType: rankedEnumerationSqlType(maxArrayDepth),
     });
   },
   arrayExcept<TData = unknown>(source: unknown, except: unknown): Selection<TData[]> {
@@ -2305,6 +2351,31 @@ function maxIf<TData = unknown>(expression: unknown, condition: unknown): Select
   });
 }
 
+// min/max keep the input's type, like maxIf: the result decodes with the input's decoder.
+function min<TData>(expression: Selection<TData> | SQLFragment<TData>): Selection<TData>;
+function min<TData = unknown>(expression: unknown): Selection<TData>;
+function min<TData = unknown>(expression: unknown): Selection<TData> {
+  const decimalAware = buildDecimalAwareAggregate("min", expression, [expression]);
+  if (decimalAware) return decimalAware as Selection<TData>;
+  const wrapped = ensureExpression<TData>(expression);
+  return createFunctionExpression<TData>("min", [expression], {
+    decoder: wrapped.decoder,
+    sqlType: wrapped.sqlType,
+  });
+}
+
+function max<TData>(expression: Selection<TData> | SQLFragment<TData>): Selection<TData>;
+function max<TData = unknown>(expression: unknown): Selection<TData>;
+function max<TData = unknown>(expression: unknown): Selection<TData> {
+  const decimalAware = buildDecimalAwareAggregate("max", expression, [expression]);
+  if (decimalAware) return decimalAware as Selection<TData>;
+  const wrapped = ensureExpression<TData>(expression);
+  return createFunctionExpression<TData>("max", [expression], {
+    decoder: wrapped.decoder,
+    sqlType: wrapped.sqlType,
+  });
+}
+
 const aggregateFns = {
   count(expression?: unknown): CountSelection {
     const args = expression === undefined ? [] : [expression];
@@ -2329,24 +2400,8 @@ const aggregateFns = {
       sqlType: "Float64",
     });
   },
-  min<TData = unknown>(expression: unknown): Selection<TData> {
-    const decimalAware = buildDecimalAwareAggregate("min", expression, [expression]);
-    if (decimalAware) return decimalAware as Selection<TData>;
-    const wrapped = ensureExpression<TData>(expression);
-    return createFunctionExpression<TData>("min", [expression], {
-      decoder: wrapped.decoder,
-      sqlType: wrapped.sqlType,
-    });
-  },
-  max<TData = unknown>(expression: unknown): Selection<TData> {
-    const decimalAware = buildDecimalAwareAggregate("max", expression, [expression]);
-    if (decimalAware) return decimalAware as Selection<TData>;
-    const wrapped = ensureExpression<TData>(expression);
-    return createFunctionExpression<TData>("max", [expression], {
-      decoder: wrapped.decoder,
-      sqlType: wrapped.sqlType,
-    });
-  },
+  min,
+  max,
   argMax<TData = unknown>(arg: unknown, val: unknown): Selection<TData> {
     const wrapped = ensureExpression<TData>(arg);
     return createFunctionExpression<TData>("argMax", [arg, val], {

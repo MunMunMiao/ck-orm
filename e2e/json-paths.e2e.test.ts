@@ -6,9 +6,9 @@ import { describeE2E, expectPresent } from "./test-helpers";
 describeE2E("ck-orm e2e NewJSON path access", function describeJsonPathAccess() {
   it("renders parameterized JSON DDL with typeHints, SKIP, and SKIP REGEXP", async function testJsonDdlInSystemTables() {
     const db = createE2EDb();
-    const rows = await db.execute<{ create_table_query: string }>(
+    const rows = (await db.execute(
       ckSql`SELECT create_table_query FROM system.tables WHERE name = 'schema_json_advanced'`,
-    );
+    )) as Array<{ create_table_query: string }>;
     const row = expectPresent(rows[0], "system.tables row");
     // typed paths and SKIP rules survive into the on-server DDL exactly as
     // ck-orm rendered them. ClickHouse may re-quote dotted typed paths with

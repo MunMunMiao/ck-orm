@@ -50,6 +50,7 @@ export interface FetchClickHouseTransport {
     options?: ClickHouseBaseQueryOptions,
     query_params?: Record<string, unknown>,
     query_param_types?: QueryParamTypes,
+    body?: RequestBody,
   ): Promise<void>;
   insertJsonEachRow(
     tableName: string,
@@ -84,6 +85,7 @@ export const createFetchClickHouseTransport = (config: NormalizedClientConfig): 
     readonly body?: RequestBody;
     readonly duplex?: "half";
     readonly sendQueryInBody: boolean;
+    readonly streaming?: boolean;
     readonly ignoreErrorResponse?: boolean;
   }): Promise<RequestHandle> => {
     const mergedOptions = mergeOptions(input.options);
@@ -97,7 +99,12 @@ export const createFetchClickHouseTransport = (config: NormalizedClientConfig): 
     }
     const auth = config.authSource === "databaseUrl" ? config.auth : (mergedOptions.auth ?? config.auth);
     const clickhouseSettings = normalizeTransportSettings({
+      // ClickHouse 26.3 compresses HTTP responses by default, and fetch always
+      // advertises Accept-Encoding, so a sparse stream waits on a compression
+      // block. Streams ask for plain output unless the caller set the setting
+      // or compression.response is on.
       settings: mergeClickHouseSettings(
+        input.streaming && !config.compression.response ? { enable_http_compression: 0 } : undefined,
         mergedOptions.clickhouse_settings,
         config.compression.response ? { enable_http_compression: 1 } : undefined,
       ),
@@ -158,7 +165,7 @@ export const createFetchClickHouseTransport = (config: NormalizedClientConfig): 
         init.duplex = "half";
       }
 
-      const response = await (config.fetch ?? globalThis.fetch)(buildRequestUrl(config.url, searchParams), init);
+      const response = await config.fetch(new Request(buildRequestUrl(config.url, searchParams), init));
       const ignoreErrorResponse = mergedOptions.ignore_error_response ?? false;
       return {
         response,
@@ -222,6 +229,7 @@ export const createFetchClickHouseTransport = (config: NormalizedClientConfig): 
         format,
         parseMode: "json_each_row",
         sendQueryInBody: true,
+        streaming: true,
       });
       try {
         if (!request.response.ok) {
@@ -252,14 +260,16 @@ export const createFetchClickHouseTransport = (config: NormalizedClientConfig): 
       options?: ClickHouseBaseQueryOptions,
       query_params?: Record<string, unknown>,
       query_param_types?: QueryParamTypes,
+      body?: RequestBody,
     ) {
       const request = await send({
         statement,
         query_params,
         query_param_types,
         options,
+        body,
         parseMode: "text",
-        sendQueryInBody: true,
+        sendQueryInBody: body === undefined,
         ignoreErrorResponse: options?.ignore_error_response,
       });
       try {
@@ -308,11 +318,13 @@ export const createFetchClickHouseTransport = (config: NormalizedClientConfig): 
       const { signal, cleanup } = createAbortController(config.request_timeout, mergedOptions.abort_signal);
 
       try {
-        const response = await (config.fetch ?? globalThis.fetch)(buildEndpointUrl(config.url, path), {
-          method,
-          headers,
-          signal,
-        });
+        const response = await config.fetch(
+          new Request(buildEndpointUrl(config.url, path), {
+            method,
+            headers,
+            signal,
+          }),
+        );
         await readValidatedResponseText({
           response,
           queryId,

@@ -21,6 +21,8 @@ import {
   schemaGeo,
   schemaJsonAdvanced,
   schemaPrimitives,
+  schemaQbit,
+  serverSupportsQBit,
   tradeFills,
   userDailySummary,
   userProfileTyped,
@@ -240,9 +242,20 @@ const insertSchemaPrimitives = async () => {
       toIPv6('2001:db8::1'),
       CAST('{"id":1,"label":"json-value"}' AS JSON),
       CAST('dynamic-value' AS Dynamic),
-      CAST([1, 2, 3, 4, 5, 6, 7, 8] AS QBit(Float32, 8)),
       CAST('active' AS Enum8('active' = 1, 'paused' = 2)),
       CAST('silver' AS Enum16('bronze' = 1000, 'silver' = 2000))
+  `);
+};
+
+const insertSchemaQbit = async () => {
+  const db = createE2EDb();
+  await db.command(sql(buildDropTableStatement(schemaQbit.originalName)));
+  await db.command(sql(buildCreateTableStatement(schemaQbit)));
+  await db.command(ckSql`
+    INSERT INTO schema_qbit
+    SELECT
+      toInt32(1),
+      CAST([1, 2, 3, 4, 5, 6, 7, 8] AS QBit(Float32, 8))
   `);
 };
 
@@ -431,6 +444,9 @@ const seed = async () => {
   await insertTradeFills();
   await insertQuoteSnapshots();
   await insertSchemaPrimitives();
+  if (await serverSupportsQBit()) {
+    await insertSchemaQbit();
+  }
   await insertSchemaCompound();
   await insertSchemaAggregates();
   await insertSchemaGeo();

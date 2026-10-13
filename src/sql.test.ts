@@ -99,7 +99,7 @@ describe("ck-orm sql", function describeClickHouseORMSql() {
           ["a", 1],
           ["b", 2],
         ],
-      )} and mixed_map = ${new Map([
+      )} and mixed_map = ${new Map<string, number | string>([
         ["a", 1],
         ["b", "two"],
       ])} and object_map = ${{ a: 1, b: "two" }}`,
@@ -109,7 +109,7 @@ describe("ck-orm sql", function describeClickHouseORMSql() {
     expect(built.query).toContain("{orm_param2:Int64}");
     expect(built.query).toContain("{orm_param3:Bool}");
     expect(built.query).toContain("{orm_param4:Float64}");
-    expect(built.query).toContain("{orm_param5:DateTime64(3)}");
+    expect(built.query).toContain("{orm_param5:DateTime64(3, 'UTC')}");
     expect(built.query).toContain("{orm_param6:Array(String)}");
     expect(built.query).toContain("{orm_param7:Array(String)}");
     expect(built.query).toContain("{orm_param8:Map(String, String)}");
@@ -129,7 +129,7 @@ describe("ck-orm sql", function describeClickHouseORMSql() {
         ["a", 1],
         ["b", 2],
       ]),
-      orm_param10: new Map([
+      orm_param10: new Map<string, number | string>([
         ["a", 1],
         ["b", "two"],
       ]),

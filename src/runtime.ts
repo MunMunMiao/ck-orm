@@ -27,7 +27,7 @@ export type {
   ClickHouseSettingValue,
 } from "./runtime/settings";
 
-export const clickhouseClient = <TSettings extends ClickHouseSettings | undefined = undefined>(
+export const clickhouseClient = <const TSettings extends ClickHouseSettings | undefined = undefined>(
   config: ClickHouseClientConfig & {
     readonly clickhouse_settings?: TSettings;
   },

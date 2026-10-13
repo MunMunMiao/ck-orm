@@ -177,4 +177,100 @@ describeE2E("ck-orm e2e session concurrency", function describeSessionConcurrenc
     });
     expect((rejectedError as Error).message).toContain("SESSION_IS_LOCKED");
   });
+
+  it("lets the next same-session request run right after breaking out of a session stream", async function testSessionStreamBreak() {
+    const db = createE2EDb();
+
+    const result = await db.runInSession(async (session) => {
+      const seen: unknown[] = [];
+      for await (const row of session.stream(ckSql`select number from numbers(1000000000)`)) {
+        seen.push(row.number);
+        if (seen.length === 3) break;
+      }
+      const [next] = await session.execute(ckSql`select 1 as one`);
+      return { seen, next };
+    });
+
+    expect(result).toEqual({ seen: ["0", "1", "2"], next: { one: 1 } });
+  });
+
+  it("cancels a sparse session stream so the next request runs before the deadline", async function testSparseStreamKillBeforeNextRequest() {
+    const queryId = createId("sparse_kill");
+    const db = createE2EDb({ request_timeout: 15_000 });
+    const started = Date.now();
+    try {
+      await db.runInSession(async (session) => {
+        for await (const _row of session.stream(
+          ckSql`select number, randomPrintableASCII(200) as pad from numbers_mt(300000000000) where number < 60000 or intHash64(number) = 0 settings max_threads = 2, max_execution_time = 20`,
+          { query_id: queryId },
+        )) {
+          break;
+        }
+        const [next] = await session.execute(ckSql`select 1 as one`);
+        expect(next).toEqual({ one: 1 });
+      });
+      expect(Date.now() - started).toBeLessThan(5_000);
+      const running = await db.execute(ckSql`select query_id from system.processes where query_id = ${queryId}`);
+      expect(running).toEqual([]);
+    } finally {
+      await db.command(ckSql`KILL QUERY WHERE query_id = ${queryId} SYNC`).catch(() => undefined);
+    }
+  }, 25_000);
+
+  it("exits after breaking a sparse session stream without waiting out the poll", async function testSparseStreamBreakExits() {
+    const queryId = createId("sparse_break");
+    const db = createE2EDb();
+    const entry = `${import.meta.dir}/ck-orm.ts`;
+    const sparseSql =
+      "select number, randomPrintableASCII(200) as pad from numbers_mt(300000000000) where number < 60000 or intHash64(number) = 0 settings max_threads = 2, max_execution_time = 40";
+    const child = Bun.spawn(
+      [
+        "bun",
+        "-e",
+        `import { clickhouseClient, ckSql } from ${JSON.stringify(entry)};
+const db = clickhouseClient({
+  host: process.env.CLICKHOUSE_E2E_URL,
+  database: process.env.CLICKHOUSE_E2E_DATABASE,
+  username: process.env.CLICKHOUSE_E2E_USERNAME,
+  password: process.env.CLICKHOUSE_E2E_PASSWORD,
+});
+await db.runInSession(async (session) => {
+  for await (const _row of session.stream(ckSql\`${sparseSql}\`, { query_id: process.env.SPARSE_QUERY_ID })) {
+    break;
+  }
+});
+`,
+      ],
+      {
+        cwd: `${import.meta.dir}/..`,
+        env: {
+          ...process.env,
+          SPARSE_QUERY_ID: queryId,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+
+    let timedOut = false;
+    try {
+      const code = await Promise.race([
+        child.exited,
+        Bun.sleep(5_000).then(() => {
+          timedOut = true;
+          return null;
+        }),
+      ]);
+      if (timedOut) {
+        child.kill();
+        await child.exited;
+      }
+      const stderr = timedOut ? "" : await new Response(child.stderr).text();
+      expect(timedOut, stderr).toBe(false);
+      expect(code, stderr).toBe(0);
+    } finally {
+      child.kill();
+      await db.command(ckSql`KILL QUERY WHERE query_id = ${queryId} SYNC`).catch(() => undefined);
+    }
+  }, 20_000);
 });

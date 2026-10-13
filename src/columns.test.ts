@@ -47,7 +47,7 @@ import {
 } from "./columns";
 import { type ClickHouseORMError, type DecodeError, isClickHouseORMError, isDecodeError } from "./errors";
 import type { StandardSchemaV1 } from "./internal/standard-schema";
-import { compileSql, sql } from "./sql";
+import { compileSql, type SQLFragment, sql } from "./sql";
 
 const buildContext = () => ({
   params: {} as Record<string, unknown>,
@@ -120,6 +120,9 @@ describe("ck-orm columns", function describeClickHouseORMColumns() {
     expect(time64({ precision: 3 }).mapFromDriverValue("12:34:56.789")).toBe("12:34:56.789");
     expect(time64({ precision: 6 }).mapFromDriverValue("12:34:56.789123")).toBe("12:34:56.789123");
     expect(time64({ precision: 9 }).mapFromDriverValue("12:34:56.789123456")).toBe("12:34:56.789123456");
+    // ClickHouse 25.8 appends `Z` to Time/Time64 under the forced `date_time_output_format=iso`.
+    expect(time().mapFromDriverValue("-01:30:00Z")).toBe("-01:30:00");
+    expect(time64({ precision: 3 }).mapFromDriverValue("12:34:56.789Z")).toBe("12:34:56.789");
     // Time/Time64 mapToDriverValue 接受字符串和数字直通；拒 Date
     expect(time().mapToDriverValue("12:34:56")).toBe("12:34:56");
     expect(time().mapToDriverValue(5400 as never)).toBe(5400);
@@ -288,7 +291,8 @@ describe("ck-orm columns", function describeClickHouseORMColumns() {
     const namedQBit = qbit("embedding", float32(), { dimensions: 8 });
     expect(namedQBit.configuredName).toBe("embedding");
     expect(namedQBit.mapToDriverValue([1, 2, 3])).toEqual([1, 2, 3]);
-    expect(() => qbit("embedding", float32() as never)).toThrow("qbit() requires two values after the column name");
+    // @ts-expect-error qbit(name, inner) without config is rejected at runtime
+    expect(() => qbit("embedding", float32())).toThrow("qbit() requires two values after the column name");
 
     const bound = rewardPoints.bind({
       key: "rewardPoints",
@@ -612,7 +616,8 @@ describe("ck-orm columns", function describeClickHouseORMColumns() {
     // $type still wins for branded/aliased domain types on top of inferred enum keys
     const branded = enum8({ active: 1 }).$type<"branded">();
     expect(branded.sqlType).toBe("Enum8('active' = 1)");
-    expect(branded.mapFromDriverValue("active")).toBe("active");
+    // $type is compile-time only: the decoded runtime value is still the raw enum key.
+    expect<string>(branded.mapFromDriverValue("active")).toBe("active");
   });
 
   it("$validator wraps decode/encode with a Standard Schema synchronously", function testValidator() {
@@ -854,7 +859,7 @@ describe("ck-orm columns", function describeClickHouseORMColumns() {
     expect((encoded.meta.ts as Date).getTime()).toBe(sourceTs.getTime());
 
     // missing hint paths are tolerated (NewJSON allows path absence)
-    expect(col.mapFromDriverValue({ meta: { ip: "1.2.3.4" } })).toEqual({ meta: { ip: "1.2.3.4" } });
+    expect<unknown>(col.mapFromDriverValue({ meta: { ip: "1.2.3.4" } })).toEqual({ meta: { ip: "1.2.3.4" } });
 
     // bind preserves hint decoders
     const bound = col.bind({ key: "p", name: "p", tableName: "t" });
@@ -912,8 +917,7 @@ describe("ck-orm columns", function describeClickHouseORMColumns() {
       }),
     };
 
-    const render = (frag: ReturnType<typeof tbl.p.path>) =>
-      normalizeSql(compileSql(frag as unknown as ReturnType<typeof sql>).query);
+    const render = (frag: SQLFragment<unknown>) => normalizeSql(compileSql(frag).query);
 
     expect(render(tbl.p.path("c"))).toMatch(/`t`\.`p`\.c\b/);
     expect(render(tbl.p.path("a.b"))).toMatch(/`t`\.`p`\.a\.b\b/);

@@ -1,5 +1,10 @@
 import { createClientValidationError } from "../errors";
-import { getArrayElementType, getTupleElementTypes } from "../internal/clickhouse-type";
+import {
+  getArrayElementType,
+  getMapKeyValueTypes,
+  getTupleElementTypes,
+  unwrapNullableLowCardinalityType,
+} from "../internal/clickhouse-type";
 import { formatClickHouseDateTime } from "../internal/datetime";
 import type {
   ClickHouseORMInstrumentation,
@@ -105,7 +110,7 @@ export interface Session<TJoinUseNulls extends 0 | 1 = 1>
   command(query: RawQueryInput, options?: ClickHouseBaseQueryOptions): Promise<void>;
   ping(options?: ClickHouseEndpointOptions): Promise<void>;
   replicasStatus(options?: ClickHouseEndpointOptions): Promise<void>;
-  withSettings<TSettings extends ClickHouseSettings>(
+  withSettings<const TSettings extends ClickHouseSettings>(
     settings: TSettings,
   ): Session<ResolveJoinUseNulls<TSettings, TJoinUseNulls>>;
   insertJsonEachRow(
@@ -155,8 +160,11 @@ type StructuredConnectionConfig = {
 };
 
 type SharedClientConfigOptions = {
-  /** Fetch implementation used for every HTTP request made by this client. */
-  readonly fetch?: typeof globalThis.fetch;
+  /**
+   * Handler for every HTTP request made by this client: it receives a `Request` and returns its `Response`.
+   * Any fetch implementation fits, as do server handlers and test fakes. Defaults to the platform `fetch`.
+   */
+  readonly fetch?: (request: Request) => Response | Promise<Response>;
   /**
    * Optional per-request timeout in milliseconds. When set, the
    * request is aborted after this many milliseconds regardless of
@@ -222,7 +230,7 @@ export type RawQueryInput = SQLFragment;
 
 export type NormalizedClientConfig = {
   readonly url: URL;
-  readonly fetch?: typeof globalThis.fetch;
+  readonly fetch: (request: Request) => Response | Promise<Response>;
   readonly request_timeout: number | undefined;
   readonly compression: {
     readonly response: boolean;
@@ -410,6 +418,71 @@ export const assertValidQueryId = (id: string): void => assertValidQueryOrSessio
 
 export const assertValidSessionId = (id: string): void => assertValidQueryOrSessionId("session_id", id);
 
+const NUMERIC_SQL_TYPE = /^(?:U?Int\d+|Float\d+|BFloat16|Decimal\d*)(?:\(|$)/;
+const NESTED_NUMERIC_LITERAL = /^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
+
+type InstantKind = { readonly kind: "datetime" } | { readonly kind: "datetime64"; readonly precision: number };
+
+const instantKind = (sqlType: string): InstantKind | undefined => {
+  const inner = unwrapNullableLowCardinalityType(sqlType);
+  if (inner.startsWith("DateTime64(")) {
+    const precision = /^DateTime64\((\d+)/.exec(inner)?.[1];
+    return precision === undefined ? undefined : { kind: "datetime64", precision: Number(precision) };
+  }
+  if (inner === "DateTime" || inner.startsWith("DateTime(")) {
+    return { kind: "datetime" };
+  }
+  return undefined;
+};
+
+const formatInstantLiteral = (value: Date, kind: InstantKind): string => {
+  const ms = value.getTime();
+  if (Number.isNaN(ms)) {
+    throw createClientValidationError("Cannot format invalid Date as ClickHouse date-time");
+  }
+  if (kind.kind === "datetime") {
+    return Math.trunc(ms / 1000).toString();
+  }
+  const ticks = BigInt(ms);
+  if (kind.precision >= 3) {
+    return (ticks * 10n ** BigInt(kind.precision - 3)).toString();
+  }
+  return (ticks / 10n ** BigInt(3 - kind.precision)).toString();
+};
+
+/**
+ * Replace JS Dates at DateTime/DateTime64 positions of a JSONEachRow value with
+ * the same integer ticks `.values()` sends. ClickHouse reads a JSON number there
+ * as ticks of the column type, so no datetime text parser (and none of its
+ * timezone or `best_effort` quirks) is involved. A Date carries milliseconds, so
+ * the tick text has at most 14 significant digits followed by zeros; anything
+ * under 16 significant digits survives the round trip through a JS number.
+ */
+export const encodeJsonEachRowInstants = (value: unknown, sqlType: string): unknown => {
+  if (value instanceof Date) {
+    const kind = instantKind(sqlType);
+    return kind ? Number(formatInstantLiteral(value, kind)) : value;
+  }
+  if (typeof value !== "object" || value === null) {
+    return value;
+  }
+  const tupleTypes = getTupleElementTypes(sqlType);
+  if (tupleTypes && Array.isArray(value)) {
+    return value.map((item, index) => encodeJsonEachRowInstants(item, tupleTypes[index] ?? ""));
+  }
+  const elementType = getArrayElementType(sqlType);
+  if (elementType && Array.isArray(value)) {
+    return value.map((item) => encodeJsonEachRowInstants(item, elementType));
+  }
+  const valueType = getMapKeyValueTypes(sqlType)?.[1];
+  if (valueType && !Array.isArray(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, encodeJsonEachRowInstants(item, valueType)]),
+    );
+  }
+  return value;
+};
+
 export const formatQueryParamValue = (
   value: unknown,
   sqlTypeOrOptions?:
@@ -418,15 +491,17 @@ export const formatQueryParamValue = (
         wrapStringInQuotes?: boolean;
         printNullAsKeyword?: boolean;
         nested?: boolean;
+        valuesDateTime?: boolean;
       },
   maybeOptions?: {
     wrapStringInQuotes?: boolean;
     printNullAsKeyword?: boolean;
     nested?: boolean;
+    valuesDateTime?: boolean;
   },
 ): string => {
   const sqlType = typeof sqlTypeOrOptions === "string" ? sqlTypeOrOptions : undefined;
-  const options = typeof sqlTypeOrOptions === "string" ? maybeOptions : sqlTypeOrOptions;
+  const options = typeof sqlTypeOrOptions === "object" ? sqlTypeOrOptions : maybeOptions;
   const wrapStringInQuotes = options?.wrapStringInQuotes ?? false;
   const printNullAsKeyword = options?.printNullAsKeyword ?? false;
   const nested = options?.nested ?? false;
@@ -434,7 +509,19 @@ export const formatQueryParamValue = (
     wrapStringInQuotes: true,
     printNullAsKeyword: true,
     nested: true,
+    valuesDateTime: options?.valuesDateTime,
   };
+  // `.values()` sends Dates as integer ticks and numbers at DateTime positions
+  // as quoted Unix seconds. Query parameters keep the text format below.
+  if (options?.valuesDateTime && sqlType) {
+    const kind = instantKind(sqlType);
+    if (kind && value instanceof Date) {
+      return formatInstantLiteral(value, kind);
+    }
+    if (kind && (typeof value === "number" || typeof value === "bigint")) {
+      return `'${String(value)}'`;
+    }
+  }
 
   if (value === null || value === undefined) {
     return printNullAsKeyword ? "NULL" : "\\N";
@@ -459,13 +546,25 @@ export const formatQueryParamValue = (
     return value ? "1" : "0";
   }
   if (typeof value === "string") {
+    // Inside Array/Map/Tuple text, ClickHouse reads numbers only unquoted, so
+    // exact 64-bit and Decimal strings go out bare. Anything that is not a
+    // plain numeric literal stays quoted and cannot change the structure.
+    if (
+      nested &&
+      sqlType !== undefined &&
+      NESTED_NUMERIC_LITERAL.test(value) &&
+      NUMERIC_SQL_TYPE.test(unwrapNullableLowCardinalityType(sqlType))
+    ) {
+      return value;
+    }
     const escaped = escapeQueryParamString(value);
     return wrapStringInQuotes ? `'${escaped}'` : escaped;
   }
   if (value instanceof Date) {
     // Use ms precision when present, second precision otherwise — keeps the
     // wire format as terse as possible without losing information.
-    return formatClickHouseDateTime(value, value.getUTCMilliseconds() === 0 ? 0 : 3);
+    const formatted = formatClickHouseDateTime(value, value.getUTCMilliseconds() === 0 ? 0 : 3);
+    return wrapStringInQuotes ? `'${formatted}'` : formatted;
   }
   if (Array.isArray(value)) {
     const tupleElementTypes = getTupleElementTypes(sqlType);
@@ -488,11 +587,7 @@ export const formatQueryParamValue = (
     const arrayElementType = getArrayElementType(sqlType);
     const parts: string[] = [];
     for (const item of value) {
-      parts.push(
-        arrayElementType === undefined
-          ? formatQueryParamValue(item, nestedOptions)
-          : formatQueryParamValue(item, arrayElementType, nestedOptions),
-      );
+      parts.push(formatQueryParamValue(item, arrayElementType, nestedOptions));
     }
     return `[${parts.join(",")}]`;
   }
@@ -507,9 +602,12 @@ export const formatQueryParamValue = (
   // directly (skipping `[...value.entries()]`'s materialised intermediate
   // array); fall back to `Object.entries` for plain objects.
   const entries: Iterable<readonly [unknown, unknown]> = value instanceof Map ? value : Object.entries(value);
+  const [keyType, valueType] = getMapKeyValueTypes(sqlType) ?? [];
   const parts: string[] = [];
   for (const [key, entryValue] of entries) {
-    parts.push(`${formatQueryParamValue(key, nestedOptions)}:${formatQueryParamValue(entryValue, nestedOptions)}`);
+    parts.push(
+      `${formatQueryParamValue(key, keyType, nestedOptions)}:${formatQueryParamValue(entryValue, valueType, nestedOptions)}`,
+    );
   }
   return `{${parts.join(",")}}`;
 };
@@ -704,7 +802,7 @@ export const normalizeClientConfig = (config: ClickHouseFetchConfigOptions): Nor
 
   return {
     url: resolvedConnection.url,
-    fetch: config.fetch,
+    fetch: config.fetch ?? platformFetch,
     request_timeout: requestTimeout,
     compression: {
       response: config.compression?.response ?? false,
@@ -725,6 +823,10 @@ export const normalizeClientConfig = (config: ClickHouseFetchConfigOptions): Nor
     },
   };
 };
+
+// The built-in handler: the platform fetch behind the same Request → Response contract as a custom one.
+// globalThis.fetch is read on every call, so code that replaces it (polyfills, tests) keeps working.
+const platformFetch = (request: Request) => globalThis.fetch(request);
 
 export const buildRequestUrl = (baseUrl: URL, searchParams: URLSearchParams) => {
   const next = new URL(baseUrl);

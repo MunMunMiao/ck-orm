@@ -490,15 +490,32 @@ const unwrapTypeCall = (value: string, names: readonly string[]): string => {
       return current;
     }
     const parts = splitTopLevelTypeList(args);
-    if (parts.length !== 1) {
+    // SimpleAggregateFunction(f, T) stores values as T. It has two or more
+    // arguments; every other wrapper still unwraps only a single argument.
+    const useLastArgument = name === "SimpleAggregateFunction";
+    if (useLastArgument ? parts.length < 2 : parts.length !== 1) {
       return current;
     }
-    current = parts[0].trim();
+    current = (useLastArgument ? parts[parts.length - 1] : parts[0]).trim();
   }
 };
 
+/**
+ * Peel `Nullable`, `LowCardinality`, and `SimpleAggregateFunction` to the value
+ * type. `SimpleAggregateFunction(f, T)` unwraps to its last argument `T`.
+ * Array/Map/Tuple element lookup, numeric and float detection, `nullIf`,
+ * `coalesce`, and JSON insert detection all want that value type.
+ */
 export const unwrapNullableLowCardinalityType = (value: string): string => {
-  return unwrapTypeCall(value, ["Nullable", "LowCardinality"]);
+  return unwrapTypeCall(value, ["Nullable", "LowCardinality", "SimpleAggregateFunction"]);
+};
+
+/**
+ * Peel storage-only wrappers `LowCardinality` and `SimpleAggregateFunction`.
+ * `Nullable` stays, including when it wraps one of those.
+ */
+export const unwrapStorageType = (value: string): string => {
+  return unwrapTypeCall(value, ["LowCardinality", "SimpleAggregateFunction"]);
 };
 
 export const getArrayElementType = (sqlType: string | undefined): string | undefined => {
@@ -512,6 +529,18 @@ export const getArrayElementType = (sqlType: string | undefined): string | undef
   }
   const parts = splitTopLevelTypeList(args);
   return parts.length === 1 ? parts[0] : undefined;
+};
+
+export const getMapKeyValueTypes = (sqlType: string | undefined): readonly [string, string] | undefined => {
+  if (!sqlType) {
+    return undefined;
+  }
+  const { name, args } = splitTypeCall(unwrapNullableLowCardinalityType(sqlType));
+  if (name !== "Map" || args === undefined) {
+    return undefined;
+  }
+  const parts = splitTopLevelTypeList(args);
+  return parts.length === 2 ? [parts[0].trim(), parts[1].trim()] : undefined;
 };
 
 export const getTupleElementTypes = (sqlType: string | undefined): readonly string[] | undefined => {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+  type AnyColumn,
   type array,
   decimal,
   type int16,
@@ -179,7 +180,8 @@ const cteReferenceSelection = typeDb
   .with(typedUsersCte)
   .select({
     userId: typedUsersCte.userId,
-    name: typedUsersCte.name,
+    // `name` collides with the CTE's own name, so its column ref lives under `columns`.
+    name: typedUsersCte.columns.name,
   })
   .from(typedUsersCte);
 const subqueryReferenceLeftJoin = typeDb
@@ -347,11 +349,19 @@ describe("ck-orm query compile", function describeClickHouseORMQueryCompile() {
       true,
     ]);
     expect(typeof assertPublicClientRuntimeTypes).toBe("function");
-    expect(orderRewardLog.options.orderBy?.map((column) => column.name)).toEqual(["user_id", "created_at", "id"]);
+    expect(orderRewardLog.options.orderBy?.map((column) => (column as AnyColumn).name)).toEqual([
+      "user_id",
+      "created_at",
+      "id",
+    ]);
     expect(orderRewardLog.options.versionColumn?.name).toBe("_peerdb_version");
 
     const aliasedLog = ckAlias(orderRewardLog, "orl");
-    expect(aliasedLog.options.orderBy?.map((column) => column.tableAlias)).toEqual(["orl", "orl", "orl"]);
+    expect(aliasedLog.options.orderBy?.map((column) => (column as AnyColumn).tableAlias)).toEqual([
+      "orl",
+      "orl",
+      "orl",
+    ]);
     expect(aliasedLog.options.versionColumn?.tableAlias).toBe("orl");
 
     const db = createQueryClient();
@@ -379,15 +389,14 @@ describe("ck-orm query compile", function describeClickHouseORMQueryCompile() {
     expect(normalizeSql(built.query)).toContain("from `order_reward_log` final) as `orl`");
     expect(normalizeSql(built.query)).not.toContain("as `orl` final");
     expect(normalizeSql(built.query)).toContain(
-      "where (`orl`.`user_id` = {orm_param1:String} and `orl`.`channel` in ({orm_param2:Int32}, {orm_param3:Int32}))",
+      "where (`orl`.`user_id` = {orm_param1:String} and `orl`.`channel` in {orm_param2:Array(Int32)})",
     );
     expect(normalizeSql(built.query)).toContain("order by `orl`.`created_at` DESC");
     expect(normalizeSql(built.query)).toContain("limit 20");
     expect(normalizeSql(built.query)).toContain("offset 40");
     expect(built.params).toEqual({
       orm_param1: "u_100",
-      orm_param2: 1,
-      orm_param3: 2,
+      orm_param2: [1, 2],
     });
   });
 
@@ -524,8 +533,9 @@ describe("ck-orm query compile", function describeClickHouseORMQueryCompile() {
     );
 
     expect(normalizeSql(built.query)).toContain("insert into `order_reward_log`");
-    expect(normalizeSql(built.query)).toContain("{orm_param1:Int32}");
-    expect(normalizeSql(built.query)).toContain("{orm_param9:Int32}");
+    expect(normalizeSql(built.query)).toContain("format Values");
+    expect(built.query).not.toContain("{orm_param");
+    expect(built.params).toEqual({});
   });
 
   it("stringifies JSON-column inserts so the server-side String→JSON cast can apply", function testCompileJsonInsert() {
@@ -550,12 +560,14 @@ describe("ck-orm query compile", function describeClickHouseORMQueryCompile() {
     );
 
     expect(normalizeSql(built.query)).toContain("insert into `event_log`");
-    // Non-null JSON value is stringified and bound as a String param so
-    // the server-side String→JSON implicit cast can ingest it (query.ts:609).
-    expect(built.params).toEqual({
-      orm_param1: 1,
-      orm_param2: '{"kind":"purchase","count":3}',
-    });
+    expect(normalizeSql(built.query)).toContain("format Values");
+    expect(built.params).toEqual({});
+    expect(
+      db
+        .insert(eventLog)
+        .values({ id: 1, payload: { kind: "purchase", count: 3 } })
+        [compileQuerySymbol]().body,
+    ).toBe(`(1,'{"kind":"purchase","count":3}')`);
   });
 
   it("compiles physical column names while decoding and inserting logical keys", function testLogicalAndPhysicalNames() {
@@ -600,13 +612,10 @@ describe("ck-orm query compile", function describeClickHouseORMQueryCompile() {
       [compileQuerySymbol]();
 
     expect(normalizeSql(insert.statement)).toContain(
-      "insert into `order_reward_log` (`user_id`, `reward_points`, `created_at`)",
+      "insert into `order_reward_log` (`user_id`, `reward_points`, `created_at`) format Values",
     );
-    expect(insert.params).toEqual({
-      orm_param1: "u_1",
-      orm_param2: "2.50000",
-      orm_param3: 1710000000,
-    });
+    expect(insert.params).toEqual({});
+    expect(insert.body).toBe("('u_1',2.50000,1710000000)");
   });
 
   it("supports drizzle-style orderBy(column, desc(expr)) and nested default left-join selection", function testOrderByAndJoinShape() {

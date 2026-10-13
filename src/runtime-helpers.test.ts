@@ -505,6 +505,25 @@ describe("ck-orm runtime/config validation", function describeConfigValidation()
     expect(() => assertValidQueryParamKey(key)).toThrow();
   });
 
+  it("formats nested query param values by their element type", function testNestedQueryParamTypes() {
+    const moment = new Date("2026-06-15T00:00:00.123Z");
+
+    expect(formatQueryParamValue(["18446744073709551615", "1"], "Array(UInt64)")).toBe("[18446744073709551615,1]");
+    expect(formatQueryParamValue(["18446744073709551615"], "Array(SimpleAggregateFunction(sum, UInt64))")).toBe(
+      "[18446744073709551615]",
+    );
+    expect(formatQueryParamValue(["-3.50", "1e2"], "Array(Nullable(Decimal(18, 2)))")).toBe("[-3.50,1e2]");
+    expect(formatQueryParamValue({ total: "18446744073709551615" }, "Map(String, UInt64)")).toBe(
+      "{'total':18446744073709551615}",
+    );
+    expect(formatQueryParamValue({ "7": "seven" }, "Map(UInt64, String)")).toBe("{7:'seven'}");
+    expect(formatQueryParamValue(["9007199254740993", "x"], "Tuple(Int64, String)")).toBe("(9007199254740993,'x')");
+    expect(formatQueryParamValue([moment], "Array(DateTime64(3, 'UTC'))")).toBe("['2026-06-15 00:00:00.123']");
+    expect(formatQueryParamValue({ at: moment })).toBe("{'at':'2026-06-15 00:00:00.123'}");
+    // Only plain numeric literals are unquoted, so a string cannot add array elements.
+    expect(formatQueryParamValue(["1],[2", "+1"], "Array(UInt64)")).toBe("['1],[2','+1']");
+  });
+
   it("formats special query params and search params for transport helpers", function testQueryParamFormatting() {
     const wholeSecond = new Date("2026-04-21T00:00:00.000Z");
     const fractionalSecond = new Date("2026-04-21T00:00:00.123Z");
@@ -598,6 +617,36 @@ describe("ck-orm runtime/config validation", function describeConfigValidation()
 
     // Invalid Date is rejected at format time rather than producing "NaN-NaN-NaN"
     expect(() => formatQueryParamValue(new Date(Number.NaN))).toThrow(
+      "Cannot format invalid Date as ClickHouse date-time",
+    );
+  });
+
+  it("formats Dates as integer ticks only when valuesDateTime is set", function testValuesDateTimeLiterals() {
+    const whole = new Date("2026-06-15T00:00:00.000Z");
+    const fractional = new Date("2026-06-15T00:00:00.123Z");
+    const options = {
+      wrapStringInQuotes: true,
+      printNullAsKeyword: true,
+      nested: true,
+      valuesDateTime: true,
+    } as const;
+
+    expect(formatQueryParamValue(whole, "DateTime", options)).toBe("1781481600");
+    expect(formatQueryParamValue(whole, "DateTime('UTC')", options)).toBe("1781481600");
+    expect(formatQueryParamValue(fractional, "DateTime64(3, 'Asia/Shanghai')", options)).toBe("1781481600123");
+    expect(formatQueryParamValue(fractional, "Nullable(DateTime64(6, 'UTC'))", options)).toBe("1781481600123000");
+    expect(formatQueryParamValue(fractional, "DateTime64(9)", options)).toBe("1781481600123000000");
+    expect(formatQueryParamValue(new Date("1969-12-31T23:59:59.500Z"), "DateTime64(1, 'UTC')", options)).toBe("-5");
+    expect(formatQueryParamValue(1781481600, "DateTime64(3, 'UTC')", options)).toBe("'1781481600'");
+    expect(formatQueryParamValue("2026-06-15 08:00:00", "DateTime('Asia/Shanghai')", options)).toBe(
+      "'2026-06-15 08:00:00'",
+    );
+    expect(formatQueryParamValue([whole, "2026-06-15 08:00:00"], "Array(DateTime('UTC'))", options)).toBe(
+      "[1781481600,'2026-06-15 08:00:00']",
+    );
+    expect(formatQueryParamValue(whole, "DateTime64()", options)).toBe("'2026-06-15 00:00:00'");
+    expect(formatQueryParamValue(whole, "String", options)).toBe("'2026-06-15 00:00:00'");
+    expect(() => formatQueryParamValue(new Date(Number.NaN), "DateTime", options)).toThrow(
       "Cannot format invalid Date as ClickHouse date-time",
     );
   });

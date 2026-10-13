@@ -85,11 +85,10 @@ export interface Column<
   aliasExpr(
     expression: DdlFragmentInput,
   ): Column<TData, TSqlType, TTableName, TTableAlias> & ColumnIoMarker<never, true, false>;
-  comment(text: string): PreserveNestedBrand<this, TData, Column<TData, TSqlType, TTableName, TTableAlias>>;
-  codec(
-    expression: DdlFragmentInput,
-  ): PreserveNestedBrand<this, TData, Column<TData, TSqlType, TTableName, TTableAlias>>;
-  ttl(expression: DdlFragmentInput): PreserveNestedBrand<this, TData, Column<TData, TSqlType, TTableName, TTableAlias>>;
+  // DDL-only modifiers: the column keeps its type, including insert markers from `.default()` / `$type()` etc.
+  comment(text: string): this;
+  codec(expression: DdlFragmentInput): this;
+  ttl(expression: DdlFragmentInput): this;
   $type<TIo extends { select: unknown; insert?: unknown }>(): PreserveNestedBrand<
     this,
     TIo extends { insert: infer I } ? I : TIo["select"],
@@ -935,9 +934,9 @@ export interface JsonColumn<
   aliasExpr(
     expression: DdlFragmentInput,
   ): JsonColumn<TData, TTableName, TTableAlias> & ColumnIoMarker<never, true, false>;
-  comment(text: string): PreserveNestedBrand<this, TData, JsonColumn<TData, TTableName, TTableAlias>>;
-  codec(expression: DdlFragmentInput): PreserveNestedBrand<this, TData, JsonColumn<TData, TTableName, TTableAlias>>;
-  ttl(expression: DdlFragmentInput): PreserveNestedBrand<this, TData, JsonColumn<TData, TTableName, TTableAlias>>;
+  comment(text: string): this;
+  codec(expression: DdlFragmentInput): this;
+  ttl(expression: DdlFragmentInput): this;
   bind<TNextTableName extends string, TNextTableAlias extends string | undefined = undefined>(
     binding: ColumnBinding<TNextTableName, TNextTableAlias>,
   ): JsonColumn<TData, TNextTableName, TNextTableAlias>;
@@ -1154,10 +1153,14 @@ const createTimeEncoder = (columnLabel: "Time" | "Time64"): Encoder<string> => {
   };
 };
 
+// ClickHouse 25.8 appends `Z` to Time/Time64 under `date_time_output_format=iso`,
+// which ck-orm forces for DateTime; a time of day never carries a zone.
+const toTimeString = (value: unknown): string => toStringValue(value).replace(/Z$/, "");
+
 export const time = (name?: string): Time<string> =>
   createColumnFactory(
     withConfiguredName(
-      { sqlType: "Time", mapFromDriverValue: toStringValue, mapToDriverValue: createTimeEncoder("Time") },
+      { sqlType: "Time", mapFromDriverValue: toTimeString, mapToDriverValue: createTimeEncoder("Time") },
       name,
     ),
   );
@@ -1170,15 +1173,14 @@ export function time64(first: string | PrecisionConfig, second?: PrecisionConfig
   return createColumnFactory({
     configuredName: name,
     sqlType: `Time64(${precision})`,
-    mapFromDriverValue: toStringValue,
+    mapFromDriverValue: toTimeString,
     mapToDriverValue: createTimeEncoder("Time64"),
   });
 }
 /**
- * Encoder for `dateTime`/`dateTime64` columns. `Date` passes through unchanged
- * so `JSON.stringify` (in `insertJsonEachRow`) emits ISO 8601 with `Z`,
- * which `date_time_input_format=best_effort` (auto-injected by
- * `insertJsonEachRow`) accepts as a timezone-anchored UTC instant. Strings
+ * Encoder for `dateTime`/`dateTime64` columns. `Date` passes through
+ * unchanged: query parameters bind it as a UTC instant, and `.values()` and
+ * `insertJsonEachRow` send it as integer ticks of the column type. Strings
  * and numbers pass through for callers who already produce a
  * ClickHouse-acceptable literal or Unix timestamp.
  */

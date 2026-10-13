@@ -1,7 +1,7 @@
 import { expect, it } from "bun:test";
-import { ckSql, ckTable, ckType } from "./ck-orm";
+import { ck, ckSql, ckTable, ckType, fn } from "./ck-orm";
 import { createE2EDb, createTempTableName } from "./shared";
-import { describeE2E } from "./test-helpers";
+import { describeE2E, expectRejectsWithClickhouseError } from "./test-helpers";
 
 describeE2E("ck-orm e2e timezone", function describeTimezone() {
   it("round-trips DateTime64 across UTC, Asia/Shanghai and America/New_York", async function testTimezoneRoundTrip() {
@@ -280,5 +280,192 @@ describeE2E("ck-orm e2e timezone", function describeTimezone() {
     } finally {
       await db.command(ckSql`drop table if exists ${ckSql.identifier(tableName)}`);
     }
+  });
+
+  it("binds JS Date values as UTC instants regardless of column or session timezone", async function testDateParamsKeepInstant() {
+    const db = createE2EDb();
+    const tableName = createTempTableName("tz_date_params");
+    const table = ckTable(tableName, {
+      id: ckType.uint32(),
+      shanghaiAt: ckType.dateTime64("shanghai_at", { precision: 3, timezone: "Asia/Shanghai" }),
+      plainAt: ckType.dateTime("plain_at"),
+      history: ckType.array(ckType.dateTime64({ precision: 3, timezone: "Asia/Shanghai" })),
+    });
+    const moment = new Date("2026-06-15T00:00:00.123Z");
+    const shanghaiSession = { clickhouse_settings: { session_timezone: "Asia/Shanghai" } } as const;
+
+    try {
+      await db.command(ckSql`
+        create table ${ckSql.identifier(tableName)} (
+          id UInt32,
+          shanghai_at DateTime64(3, 'Asia/Shanghai'),
+          plain_at DateTime,
+          history Array(DateTime64(3, 'Asia/Shanghai'))
+        ) engine = Memory
+      `);
+
+      await db
+        .insert(table)
+        .values({ id: 1, shanghaiAt: moment, plainAt: moment, history: [moment] })
+        .execute(shanghaiSession);
+
+      const stored = await db.execute(ckSql`
+        select
+          toUnixTimestamp64Milli(shanghai_at) as shanghai_ms,
+          toUnixTimestamp(plain_at) as plain_s,
+          toUnixTimestamp64Milli(history[1]) as history_ms
+        from ${ckSql.identifier(tableName)}
+      `);
+      expect(stored).toEqual([
+        {
+          shanghai_ms: String(moment.getTime()),
+          plain_s: Math.floor(moment.getTime() / 1000),
+          history_ms: String(moment.getTime()),
+        },
+      ]);
+
+      const matched = await db
+        .select({ id: table.id })
+        .from(table)
+        .where(ck.eq(table.shanghaiAt, moment), ck.eq(table.plainAt, new Date("2026-06-15T00:00:00.000Z")))
+        .execute(shanghaiSession);
+      expect(matched).toEqual([{ id: 1 }]);
+
+      const interpolated = await db.execute(
+        ckSql`select toUnixTimestamp64Milli(${moment}) as ms, toUnixTimestamp64Milli(${[moment]}[1]) as array_ms`,
+        shanghaiSession,
+      );
+      expect(interpolated).toEqual([{ ms: String(moment.getTime()), array_ms: String(moment.getTime()) }]);
+    } finally {
+      await db.command(ckSql`drop table if exists ${ckSql.identifier(tableName)}`);
+    }
+  });
+
+  it("matches JS Dates with inArray on DateTime, Nullable, LowCardinality and SimpleAggregateFunction(max, DateTime) columns", async function testDateTimeInArrayBinding() {
+    const db = createE2EDb();
+    const tableName = createTempTableName("tz_dt_in");
+    const shanghaiDateTime = {
+      ...ckType.dateTime(),
+      sqlType: "DateTime('Asia/Shanghai')",
+    } as unknown as ReturnType<typeof ckType.dateTime>;
+    const table = ckTable(tableName, {
+      id: ckType.uint32(),
+      ts: ckType.dateTime("ts"),
+      tsn: ckType.nullable(ckType.dateTime("tsn")),
+      lc: ckType.lowCardinality(ckType.dateTime("lc")),
+      smax: ckType.simpleAggregateFunction<Date>("smax", {
+        name: "max",
+        value: shanghaiDateTime,
+      }),
+    });
+    const wholeSecond = new Date("2026-06-15T00:00:00Z");
+    const withMilliseconds = new Date("2026-06-15T00:00:01.999Z");
+
+    try {
+      await db.command(ckSql`
+        create table ${ckSql.identifier(tableName)} (
+          id UInt32,
+          ts DateTime('Asia/Shanghai'),
+          tsn Nullable(DateTime),
+          lc LowCardinality(DateTime),
+          smax SimpleAggregateFunction(max, DateTime('Asia/Shanghai'))
+        ) engine = Memory
+        settings allow_suspicious_low_cardinality_types = 1
+      `);
+
+      await db.insert(table).values([
+        { id: 1, ts: wholeSecond, tsn: wholeSecond, lc: wholeSecond, smax: wholeSecond },
+        { id: 2, ts: withMilliseconds, tsn: withMilliseconds, lc: withMilliseconds, smax: withMilliseconds },
+      ]);
+
+      const stored = await db.execute(ckSql`
+        select
+          id,
+          toUnixTimestamp(ts) as ts,
+          toUnixTimestamp(tsn) as tsn,
+          toUnixTimestamp(lc) as lc,
+          toUnixTimestamp(smax) as smax
+        from ${ckSql.identifier(tableName)}
+        order by id
+      `);
+      expect(stored).toEqual([
+        { id: 1, ts: 1781481600, tsn: 1781481600, lc: 1781481600, smax: 1781481600 },
+        { id: 2, ts: 1781481601, tsn: 1781481601, lc: 1781481601, smax: 1781481601 },
+      ]);
+
+      expect(
+        await db
+          .select({ id: table.id })
+          .from(table)
+          .where(ck.inArray(table.ts, [wholeSecond])),
+      ).toEqual([{ id: 1 }]);
+      expect(
+        await db
+          .select({ id: table.id })
+          .from(table)
+          .where(ck.inArray(table.tsn, [wholeSecond])),
+      ).toEqual([{ id: 1 }]);
+      expect(
+        await db
+          .select({ id: table.id })
+          .from(table)
+          .where(ck.inArray(table.lc, [wholeSecond])),
+      ).toEqual([{ id: 1 }]);
+      expect(
+        await db
+          .select({ id: table.id })
+          .from(table)
+          .where(ck.inArray(table.smax, [wholeSecond])),
+      ).toEqual([{ id: 1 }]);
+      expect(
+        await db
+          .select({ id: table.id })
+          .from(table)
+          .where(ck.notInArray(table.ts, [wholeSecond])),
+      ).toEqual([{ id: 2 }]);
+      expect(await db.select({ id: table.id }).from(table).where(ck.eq(table.lc, wholeSecond))).toEqual([{ id: 1 }]);
+      expect(
+        await db
+          .select({ id: table.id })
+          .from(table)
+          .where(ck.gte(table.ts, new Date("2026-06-15T00:00:00.500Z"))),
+      ).toEqual([{ id: 2 }]);
+
+      await expectRejectsWithClickhouseError(
+        db
+          .select({ id: table.id })
+          .from(table)
+          .where(ck.inArray(table.ts, [withMilliseconds]))
+          .execute(),
+        {
+          kind: "request_failed",
+          executionState: "rejected",
+          clickhouseCode: 53,
+          clickhouseName: "TYPE_MISMATCH",
+        },
+      );
+    } finally {
+      await db.command(ckSql`drop table if exists ${ckSql.identifier(tableName)}`);
+    }
+  });
+
+  it("compares JS Date keys of Map values as UTC instants", async function testMapDateKeyInstant() {
+    const db = createE2EDb();
+    const shanghaiKeyed = fn.cast(
+      ck.expr(ckSql`map(toDateTime64('2026-06-15 08:00:00.123', 3, 'Asia/Shanghai'), 'x')`),
+      "Map(DateTime64(3, 'Asia/Shanghai'), String)",
+    );
+    const secondKeyed = fn.cast(
+      ck.expr(ckSql`map(toDateTime('2026-06-15 08:00:00', 'Asia/Shanghai'), 'x')`),
+      "Map(DateTime('Asia/Shanghai'), String)",
+    );
+
+    const [row] = await db.execute(ckSql`
+      select
+        ${ck.eq(shanghaiKeyed, new Map([[new Date("2026-06-15T00:00:00.123Z"), "x"]]))} as precise_hit,
+        ${ck.eq(secondKeyed, new Map([[new Date("2026-06-15T00:00:00.000Z"), "x"]]))} as whole_hit
+    `);
+
+    expect(row).toEqual({ precise_hit: 1, whole_hit: 1 });
   });
 });

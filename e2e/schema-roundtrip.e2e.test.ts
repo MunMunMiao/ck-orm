@@ -7,9 +7,13 @@ import {
   schemaGeo,
   schemaJsonAdvanced,
   schemaPrimitives,
+  schemaQbit,
+  serverSupportsQBit,
   users,
 } from "./shared";
 import { describeE2E, expectDate, expectPresent } from "./test-helpers";
+
+const qbitSupported = await serverSupportsQBit();
 
 describeE2E("ck-orm e2e schema roundtrip", function describeSchemaRoundtrip() {
   it("round-trips all primitive schema factories against real clickhouse", async function testPrimitiveSchemaRoundtrip() {
@@ -45,10 +49,19 @@ describeE2E("ck-orm e2e schema roundtrip", function describeSchemaRoundtrip() {
     expect(presentRow.ipv6_value).toBe("2001:db8::1");
     expect(presentRow.json_value).toEqual({ id: "1", label: "json-value" });
     expect(presentRow.dynamic_value).toBe("dynamic-value");
-    expect(presentRow.qbit_value).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
     expect(presentRow.enum8_value).toBe("active");
     expect(presentRow.enum16_value).toBe("silver");
   });
+
+  it.skipIf(!qbitSupported)(
+    "round-trips the QBit schema factory when the server supports QBit",
+    async function testQBitSchemaRoundtrip() {
+      const db = createE2EDb();
+      const [row] = await db.select().from(schemaQbit).orderBy(schemaQbit.id).limit(1);
+
+      expect(expectPresent(row, "schemaQbit row").qbit_value).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    },
+  );
 
   it("round-trips compound schema factories including nested and variant", async function testCompoundSchemaRoundtrip() {
     const db = createE2EDb();

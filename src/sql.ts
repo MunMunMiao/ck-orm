@@ -1,5 +1,6 @@
 import { toStringValue } from "./coercion";
 import { createClientValidationError } from "./errors";
+import { bindDatesAsUtc, UTC_INSTANT_TYPE } from "./internal/datetime";
 import { assertDecimalParams, formatDecimalSqlType } from "./internal/decimal";
 import { assertValidSqlIdentifier } from "./internal/identifier";
 import { isRecord } from "./internal/predicates";
@@ -141,7 +142,7 @@ const inferPrimitiveTypeWithSeen = (value: unknown, seen: WeakSet<object>): stri
       return "String";
     default:
       if (value instanceof Date) {
-        return "DateTime64(3)";
+        return UTC_INSTANT_TYPE;
       }
       if (Array.isArray(value)) {
         return trackCycle(value, seen, "array", () => inferArrayType(value, seen));
@@ -285,7 +286,7 @@ export const allocParam = (ctx: BuildContext, value: unknown, sqlType?: string):
   }
   ctx.nextParamIndex += 1;
   const paramName = `orm_param${ctx.nextParamIndex}`;
-  const resolvedType = sqlType ?? inferPrimitiveType(value);
+  const resolvedType = sqlType === undefined ? inferPrimitiveType(value) : bindDatesAsUtc(sqlType, value);
   ctx.params[paramName] = value;
   ctx.paramTypes[paramName] = resolvedType;
   return `{${paramName}:${resolvedType}}`;

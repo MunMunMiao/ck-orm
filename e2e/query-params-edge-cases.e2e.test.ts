@@ -1,6 +1,6 @@
 import { expect, it } from "bun:test";
-import { ckSql } from "./ck-orm";
-import { createE2EDb } from "./shared";
+import { ck, ckSql, fn } from "./ck-orm";
+import { createE2EDb, datasetCounts, schemaAggregates, users } from "./shared";
 import {
   describeE2E,
   expectNoMutationAfterRejectedInjection,
@@ -91,5 +91,89 @@ describeE2E("ck-orm e2e query parameter edge cases", function describeQueryParam
     );
 
     await expectNoMutationAfterRejectedInjection();
+  });
+
+  it("filters rows with inArray, notInArray and eq on a typed tuple", async function testTupleInArray() {
+    const db = createE2EDb();
+    const pairs = [
+      [1, "alice"],
+      [2, "bob"],
+    ] as const;
+
+    const rows = await db
+      .select({ id: users.id, name: users.name })
+      .from(users)
+      .where(ck.inArray(fn.tuple(users.id, users.name), pairs))
+      .orderBy(users.id);
+    expect(rows).toEqual([
+      { id: 1, name: "alice" },
+      { id: 2, name: "bob" },
+    ]);
+
+    const [excluded] = await db
+      .select({ rows: fn.count() })
+      .from(users)
+      .where(ck.notInArray(fn.tuple(users.id, users.name), pairs));
+    expect(excluded?.rows).toBe(datasetCounts.users - 2);
+
+    const matched = await db
+      .select({ id: users.id, name: users.name })
+      .from(users)
+      .where(ck.eq(fn.tuple(users.id, users.name), [1, "alice"]));
+    expect(matched).toEqual([{ id: 1, name: "alice" }]);
+  });
+
+  it("filters with inArray/notInArray lists longer than ClickHouse's 1,000 HTTP form fields", async function testLargeInArrayLists() {
+    const db = createE2EDb();
+    const ids = Array.from({ length: 2_000 }, (_, index) => index + 1);
+
+    const [included] = await db.select({ rows: fn.count() }).from(users).where(ck.inArray(users.id, ids));
+    const [excluded] = await db.select({ rows: fn.count() }).from(users).where(ck.notInArray(users.id, ids));
+
+    expect(included?.rows).toBe(2_000);
+    expect(excluded?.rows).toBe(datasetCounts.users - 2_000);
+  });
+
+  it("filters SimpleAggregateFunction(sum, Int64) values with inArray of numeric strings", async function testSimpleAggregateInArray() {
+    const db = createE2EDb();
+    const rows = await db
+      .select({
+        id: schemaAggregates.id,
+        simpleSumValue: schemaAggregates.simple_sum_value,
+      })
+      .from(schemaAggregates)
+      .where(ck.inArray(schemaAggregates.simple_sum_value, ["11", "20"]));
+
+    expect(rows).toEqual([{ id: 1, simpleSumValue: "11" }]);
+  });
+
+  it("filters inArray and notInArray lists larger than one HTTP form field", async function testOversizedInArrayField() {
+    const db = createE2EDb();
+    const matchedIds = ["1", "2", "42"];
+    const longStrings = [
+      ...matchedIds,
+      ...Array.from({ length: 700 }, (_, index) => `${index.toString().padStart(3, "0")}${"x".repeat(197)}`),
+    ];
+    const uuidStrings = [
+      ...matchedIds,
+      ...Array.from({ length: 5_000 }, (_, index) => `00000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`),
+    ];
+
+    const [longMatch] = await db
+      .select({ rows: fn.count() })
+      .from(users)
+      .where(ck.inArray(fn.toString(users.id), longStrings));
+    const [uuidMatch] = await db
+      .select({ rows: fn.count() })
+      .from(users)
+      .where(ck.inArray(fn.toString(users.id), uuidStrings));
+    const [uuidMiss] = await db
+      .select({ rows: fn.count() })
+      .from(users)
+      .where(ck.notInArray(fn.toString(users.id), uuidStrings));
+
+    expect(longMatch?.rows).toBe(matchedIds.length);
+    expect(uuidMatch?.rows).toBe(matchedIds.length);
+    expect(uuidMiss?.rows).toBe(datasetCounts.users - matchedIds.length);
   });
 });
