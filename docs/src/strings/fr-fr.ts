@@ -47,9 +47,19 @@ export default {
     navLabel: "Navigation des exemples",
     heading: "Exemples",
     intro:
-      "Chaque exemple est un projet exécutable dans {folder} : un {main} et un {package}. Cette page affiche ce même fichier. L'onglet SQL liste chaque requête envoyée à ClickHouse ; le test unitaire de l'exemple vérifie ce SQL. Le commentaire de fin de fichier indique les lignes affichées.",
-    runIntro:
-      "Chaque exemple crée ses propres tables temporaires de session et s'exécute donc sur n'importe quel serveur ClickHouse :",
+      "Chaque exemple est un projet exécutable dans {folder} : un {main} et un {package}. Cette page affiche ce même fichier. La génération du site l'exécute avec ck-orm ; l'onglet SQL liste ainsi chaque requête reçue par ClickHouse. Le commentaire de fin de fichier indique les lignes affichées.",
+    details: {
+      "website-analytics":
+        "Compte les pages vues et le nombre exact de visiteurs distincts par chemin pour un seul site sur un intervalle UTC [start, end). Utilise des tables temporaires de session ; un même visiteur peut être compté sur plusieurs chemins.",
+      "usage-metering":
+        "Agrège l'utilisation par locataire, utilisateur et minute UTC sur plusieurs lots d'insertion. Exécutez cet exemple de manière séquentielle dans une base de données jetable avec les autorisations CREATE, SELECT, INSERT et DROP. Utilise des tables persistantes à noms fixes et une vue matérialisée, et ne supprime que les objets qu'il a créés avec succès. L'interruption du processus ou la perte d'une réponse CREATE peut laisser des objets à inspecter manuellement.",
+      "request-latency":
+        "Agrège le nombre de requêtes réussies, la latence moyenne pondérée et les percentiles p95/p99 exacts par locataire, opération et minute UTC. Exécutez cet exemple de manière séquentielle dans une base de données jetable avec les autorisations CREATE, SELECT, INSERT et DROP. Ne supprime que ses tables à noms fixes et sa vue matérialisée créées avec succès ; l'interruption du processus ou la perte d'une réponse CREATE peut laisser des objets. Les états de quantiles exacts conservent tous les échantillons : évaluez donc la consommation mémoire pour les charges de production.",
+      "asof-price":
+        "ASOF LEFT JOIN associe chaque transaction à la cotation la plus récente du même symbole dont l'horodatage est antérieur ou égal à celui de la transaction. Les prix Decimal restent des chaînes et, en l'absence de cotation historique, la valeur renvoyée est null. Utilise des tables temporaires de session.",
+      "dynamic-signals":
+        "Filtre les signaux évolutifs du modèle dans Map(String, Float64), en vérifiant l'existence de la clé avant d'appliquer un seuil inclusif. Un zéro stocké reste un véritable score. Utilise des tables temporaires de session.",
+    },
     tabsLabel: "{title} : code source et SQL",
   },
 } satisfies Strings;

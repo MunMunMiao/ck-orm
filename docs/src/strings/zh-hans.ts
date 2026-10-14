@@ -47,8 +47,19 @@ export default {
     navLabel: "示例导航",
     heading: "示例",
     intro:
-      "每个示例都是 {folder} 中一个可运行的项目，包含 {main} 和 {package}。这里展示的正是这个文件。SQL 标签页会列出它发给 ClickHouse 的每个请求，示例自己的单元测试会检查这些 SQL。每个文件末尾的注释会列出它打印的行。",
-    runIntro: "每个示例都会创建自己的会话临时表，因此可以在任何 ClickHouse 服务器上运行：",
+      "每个示例都是 {folder} 中一个可运行的项目，包含 {main} 和 {package}。这里展示的正是这个文件。构建会用 ck-orm 运行它，所以 SQL 标签页会列出 ClickHouse 收到的每个请求。每个文件末尾的注释会列出它打印的行。",
+    details: {
+      "website-analytics":
+        "在 UTC [start, end) 时间范围内，按路径统计单个站点的页面浏览量和精确独立访客数。使用会话临时表；不同路径的访客可能重叠。",
+      "usage-metering":
+        "按租户、用户和 UTC 分钟合并多个插入批次的用量。请在可随时清理的测试数据库内串行运行，并授予 CREATE、SELECT、INSERT 和 DROP 权限。使用固定名称的持久表及物化视图，仅清理已成功创建的对象。进程中断或 CREATE 响应丢失后，可能需要手动检查残留对象。",
+      "request-latency":
+        "按租户、操作和 UTC 分钟聚合成功请求数、加权平均延迟及精确 p95/p99。请在可随时清理的测试数据库内串行运行，并授予 CREATE、SELECT、INSERT 和 DROP 权限。仅清理已成功创建的固定名称表和物化视图；进程中断或 CREATE 响应丢失可能留下对象。精确分位数状态保留全部样本，生产使用时需评估内存占用。",
+      "asof-price":
+        "使用 ASOF LEFT JOIN 为每笔交易匹配同一交易品种在该时刻或之前的最新报价。Decimal 价格保持为字符串，缺少历史报价时返回 null。使用会话临时表。",
+      "dynamic-signals":
+        "筛选 Map(String, Float64) 中变化的模型信号，先检查键是否存在，再应用包含边界值的阈值。已存储的零仍然是真实分数。使用会话临时表。",
+    },
     tabsLabel: "{title}：源代码和 SQL",
   },
 } satisfies Strings;

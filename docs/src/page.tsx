@@ -460,7 +460,6 @@ const ExamplesPage = ({
     content: example.id,
     section: example.id,
   }));
-  const runCommand = `CLICKHOUSE_URL=http://localhost:8123 bun examples/${examples[0].id}/main.ts`;
   return (
     <Layout
       page="examples"
@@ -489,11 +488,6 @@ const ExamplesPage = ({
                 package: <code className="font-mono text-[0.9em] text-fg">package.json</code>,
               })}
             </p>
-            <p className="mt-6 max-w-[62ch] text-muted">{ui.examples.runIntro}</p>
-            <div className="mt-3 max-w-[48rem]">
-              <CodeBlock language="bash" html={highlight(runCommand, "bash")} copy={ui.code.copy} />
-            </div>
-
             {examples.map((example) => (
               <section key={example.id} aria-labelledby={example.id}>
                 <h2 id={example.id} data-section={example.id} className="section-title">
@@ -505,6 +499,16 @@ const ExamplesPage = ({
                 >
                   {example.path}
                 </a>
+                {ui.examples.details[example.id] && (
+                  <p className="mt-4 text-muted">{ui.examples.details[example.id]}</p>
+                )}
+                <div className="mt-4">
+                  <CodeBlock
+                    language="bash"
+                    html={highlight(`CLICKHOUSE_URL=http://localhost:8123 bun ${example.path}`, "bash")}
+                    copy={ui.code.copy}
+                  />
+                </div>
                 <div className="mt-4">
                   <CodeTabs
                     id={`example-${example.id}`}

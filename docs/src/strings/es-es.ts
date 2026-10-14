@@ -47,9 +47,19 @@ export default {
     navLabel: "Navegación de ejemplos",
     heading: "Ejemplos",
     intro:
-      "Cada ejemplo es un proyecto ejecutable en {folder}: un {main} y un {package}. Esta página muestra ese mismo archivo. La pestaña SQL recoge cada solicitud que envía a ClickHouse, y la prueba unitaria del ejemplo comprueba ese SQL. El comentario al final de cada archivo muestra las filas que imprime.",
-    runIntro:
-      "Cada ejemplo crea sus propias tablas temporales de sesión, así que funciona con cualquier servidor de ClickHouse:",
+      "Cada ejemplo es un proyecto ejecutable en {folder}: un {main} y un {package}. Esta página muestra ese mismo archivo. La compilación lo ejecuta mediante ck-orm, así que la pestaña SQL recoge cada solicitud que recibe ClickHouse. El comentario al final de cada archivo muestra las filas que imprime.",
+    details: {
+      "website-analytics":
+        "Cuenta las páginas vistas y el número exacto de visitantes únicos por ruta para un único sitio en un intervalo UTC [start, end). Usa tablas temporales de sesión; un mismo visitante puede contarse en varias rutas.",
+      "usage-metering":
+        "Agrega el uso por tenant, usuario y minuto UTC a lo largo de varios lotes de inserción. Ejecuta este ejemplo de forma secuencial en una base de datos desechable con permisos CREATE, SELECT, INSERT y DROP. Usa tablas persistentes con nombres fijos y una vista materializada, y solo elimina los objetos que ha creado correctamente. Si el proceso se interrumpe o se pierde la respuesta de CREATE, pueden quedar objetos que deban inspeccionarse manualmente.",
+      "request-latency":
+        "Agrega el número de solicitudes exitosas, la latencia media ponderada y los percentiles p95/p99 exactos por tenant, operación y minuto UTC. Ejecuta este ejemplo de forma secuencial en una base de datos desechable con permisos CREATE, SELECT, INSERT y DROP. Solo elimina las tablas con nombres fijos y la vista materializada que ha creado correctamente; si el proceso se interrumpe o se pierde la respuesta de CREATE, pueden quedar objetos. Los estados de cuantiles exactos conservan todas las muestras, por lo que debes evaluar el uso de memoria para las cargas de trabajo de producción.",
+      "asof-price":
+        "ASOF LEFT JOIN asocia cada operación con la cotización más reciente del mismo símbolo cuya marca de tiempo sea anterior o igual a la de la operación. Los precios Decimal se mantienen como cadenas y, si no hay una cotización histórica, se devuelve null. Usa tablas temporales de sesión.",
+      "dynamic-signals":
+        "Filtra las señales cambiantes del modelo en Map(String, Float64), comprobando que la clave exista antes de aplicar un umbral inclusivo. Un cero almacenado sigue contando como una puntuación real. Usa tablas temporales de sesión.",
+    },
     tabsLabel: "{title}: código y SQL",
   },
 } satisfies Strings;

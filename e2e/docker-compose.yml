@@ -54,7 +54,8 @@ services:
       CLICKHOUSE_E2E_ROLE_AUDITOR: ck_orm_e2e_role_auditor
       CLICKHOUSE_E2E_ROLE_USERNAME: ck_orm_e2e_transport
       CLICKHOUSE_E2E_ROLE_PASSWORD: ck_orm_e2e_transport_password
+      CLICKHOUSE_EXAMPLES_URL: http://e2e:e2e_password@clickhouse:8123/ck_orm_e2e
       # Heavy load tests stay skipped unless the caller sets CK_ORM_E2E_LOAD=1.
       CK_ORM_E2E_LOAD: ${CK_ORM_E2E_LOAD:-0}
       CK_ORM_E2E_LOAD_ROWS: ${CK_ORM_E2E_LOAD_ROWS:-1000000}
-    command: ["bun", "test", "e2e"]
+    command: ["bun", "test", "e2e", "examples"]

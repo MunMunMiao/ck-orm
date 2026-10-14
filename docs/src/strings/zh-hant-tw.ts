@@ -47,8 +47,19 @@ export default {
     navLabel: "範例導覽",
     heading: "範例",
     intro:
-      "每個範例都是 {folder} 中可執行的專案，裡面有 {main} 和 {package}。這頁顯示的就是同一份檔案。SQL 分頁會列出它送給 ClickHouse 的每個請求，範例自己的單元測試會檢查這些 SQL。檔案最後的註解則列出它輸出的資料列。",
-    runIntro: "每個範例都會建立自己的工作階段暫存資料表，因此可以在任何 ClickHouse 伺服器上執行：",
+      "每個範例都是 {folder} 中可執行的專案，裡面有 {main} 和 {package}。這頁顯示的就是同一份檔案。建置流程會用 ck-orm 執行它，因此 SQL 分頁會列出 ClickHouse 收到的每個請求。檔案最後的註解則列出它輸出的資料列。",
+    details: {
+      "website-analytics":
+        "在 UTC [start, end) 時間範圍內，依路徑統計單一網站的頁面瀏覽量和精確不重複訪客數。使用工作階段暫存資料表；不同路徑的訪客可能重疊。",
+      "usage-metering":
+        "依租戶、使用者和 UTC 分鐘合併多個插入批次的用量。請在可隨時清理的測試資料庫內循序執行，並授予 CREATE、SELECT、INSERT 和 DROP 權限。使用固定名稱的持久資料表及實體化檢視，僅清理已成功建立的物件。程序中斷或 CREATE 回應遺失後，可能需要手動檢查殘留物件。",
+      "request-latency":
+        "依租戶、操作和 UTC 分鐘彙總成功請求數、加權平均延遲及精確 p95/p99。請在可隨時清理的測試資料庫內循序執行，並授予 CREATE、SELECT、INSERT 和 DROP 權限。僅清理已成功建立的固定名稱資料表和實體化檢視；程序中斷或 CREATE 回應遺失可能留下物件。精確分位數狀態保留全部樣本，正式環境使用時需評估記憶體用量。",
+      "asof-price":
+        "使用 ASOF LEFT JOIN 為每筆交易配對同一交易商品在該時刻或之前的最新報價。Decimal 價格保持為字串，缺少歷史報價時回傳 null。使用工作階段暫存資料表。",
+      "dynamic-signals":
+        "篩選 Map(String, Float64) 中變動的模型訊號，先檢查鍵是否存在，再套用包含邊界值的門檻。已儲存的零仍然是真實分數。使用工作階段暫存資料表。",
+    },
     tabsLabel: "{title}：原始碼和 SQL",
   },
 } satisfies Strings;

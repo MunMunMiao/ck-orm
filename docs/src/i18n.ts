@@ -106,8 +106,8 @@ export type Strings = {
     heading: string;
     /** Examples introduction with {folder}, {main}, and {package} inline elements. */
     intro: string;
-    /** Sentence before the example run command, including its trailing colon; no placeholders. */
-    runIntro: string;
+    /** Optional per-example explanation and run requirements, keyed by folder name. */
+    details: Record<string, string>;
     /** Example tablist label with the example {title}. */
     tabsLabel: string;
   };
@@ -160,8 +160,19 @@ const EN: Strings = {
     navLabel: "Examples navigation",
     heading: "Examples",
     intro:
-      "Each example is a runnable project in {folder}: a {main} and a {package}. This page shows that same file. The SQL tab lists every request it sends to ClickHouse; the example's unit test checks that SQL. The comment at the end of each file shows the rows it prints.",
-    runIntro: "Each example creates its own session temporary tables, so it runs against any ClickHouse server:",
+      "Each example is a runnable project in {folder}: a {main} and a {package}. This page shows that same file. The build runs it through ck-orm, so the SQL tab lists every request ClickHouse receives. The comment at the end of each file shows the rows it prints.",
+    details: {
+      "website-analytics":
+        "Counts pageviews and exact distinct visitors by path for one site in a UTC [start, end) interval. Uses session temporary tables; visitor counts can overlap across paths.",
+      "usage-metering":
+        "Aggregates usage by tenant, user and UTC minute across insert batches. Run serially in a disposable database with CREATE, SELECT, INSERT and DROP permissions. Uses fixed-name persistent tables and a materialized view, and cleans up only objects it successfully created. An interrupted process or a lost CREATE response can leave objects for manual inspection.",
+      "request-latency":
+        "Aggregates successful request counts, weighted average latency and exact p95/p99 by tenant, operation and UTC minute. Run serially in a disposable database with CREATE, SELECT, INSERT and DROP permissions. Cleans up only its successfully created fixed-name tables and materialized view; an interrupted process or a lost CREATE response can leave objects. Exact quantile states retain all samples, so assess memory use for production workloads.",
+      "asof-price":
+        "ASOF LEFT JOIN matches each trade to the latest same-symbol quote at or before its time. Decimal prices remain strings and missing historical quotes return null. Uses session temporary tables.",
+      "dynamic-signals":
+        "Filters changing model signals in Map(String, Float64), checking that the key exists before applying an inclusive threshold. A stored zero remains a real score. Uses session temporary tables.",
+    },
     tabsLabel: "{title}: source and SQL",
   },
 };
