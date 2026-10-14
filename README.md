@@ -15,10 +15,6 @@
 </p>
 
 <p align="center">
-  <a href="https://deepwiki.com/MunMunMiao/ck-orm"><img src="https://img.shields.io/badge/Ask_DeepWiki-151A1F?style=flat-square&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHZpZXdCb3g9JzAgMCAzMiAzMic%2BPGcgZmlsbD0nI0Y4QzAwMCc%2BPGNpcmNsZSBjeD0nNi41JyBjeT0nMTYnIHI9JzUuMjUnLz48Y2lyY2xlIGN4PScxMS41JyBjeT0nOScgcj0nNScgb3BhY2l0eT0nLjg0Jy8%2BPGNpcmNsZSBjeD0nMjAnIGN5PSc3LjUnIHI9JzUnIG9wYWNpdHk9Jy43MicvPjxjaXJjbGUgY3g9JzI1LjUnIGN5PScxMy41JyByPSc1JyBvcGFjaXR5PScuODgnLz48Y2lyY2xlIGN4PScxNC41JyBjeT0nMTYuNScgcj0nNS4yNScvPjxjaXJjbGUgY3g9JzknIGN5PScyNCcgcj0nNScgb3BhY2l0eT0nLjc4Jy8%2BPGNpcmNsZSBjeD0nMTguNScgY3k9JzIzLjUnIHI9JzUnIG9wYWNpdHk9Jy44MicvPjxjaXJjbGUgY3g9JzI0JyBjeT0nMTknIHI9JzUnIG9wYWNpdHk9Jy43NCcvPjwvZz48L3N2Zz4%3D" alt="Ask DeepWiki"></a>
-</p>
-
-<p align="center">
   A typed ClickHouse query layer for modern JavaScript runtimes.
 </p>
 
@@ -34,13 +30,12 @@ It gives you:
 
 ```bash
 bun add ck-orm
-```
-
-```bash
 npm install ck-orm
+pnpm add ck-orm
+yarn add ck-orm @opentelemetry/api
 ```
 
-Yarn does not install peer dependencies, so add `@opentelemetry/api` yourself: `yarn add ck-orm @opentelemetry/api`.
+ck-orm has one peer dependency, `@opentelemetry/api`. Bun, npm and pnpm install it automatically; Yarn does not, so the Yarn command adds it explicitly.
 
 ## Example
 
