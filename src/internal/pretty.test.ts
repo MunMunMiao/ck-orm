@@ -82,6 +82,15 @@ describe("prettyStatement", () => {
     );
   });
 
+  it("does not count the and of a between as a condition", () => {
+    expect(prettyStatement("select a from t where (x between 1 and 2)")).toBe(
+      ["select", "  a", "from t", "where (x between 1 and 2)"].join("\n"),
+    );
+    expect(prettyStatement("select a from t where (x between 1 and 2 and y = 3)")).toBe(
+      ["select", "  a", "from t", "where (", "  x between 1 and 2", "  and y = 3", ")"].join("\n"),
+    );
+  });
+
   it("puts the select of an insert on its own line", () => {
     expect(prettyStatement("insert into t (a, b) select a, b from s")).toBe(
       ["insert into t (a, b)", "select", "  a,", "  b", "from s"].join("\n"),
@@ -122,6 +131,7 @@ describe("prettyStatement", () => {
       "select (1 from t",
       "select 1) from t",
       "select (1] from t",
+      "",
     ]) {
       expect(prettyStatement(statement)).toBe(statement);
     }
@@ -135,5 +145,15 @@ describe("prettyRows", () => {
 
   it("keeps a single row as it is", () => {
     expect(prettyRows("(1,'a')")).toBe("(1,'a')");
+  });
+
+  it("keeps the spaces inside a row", () => {
+    expect(prettyRows("(1, 'a b'), (2, 'c')")).toBe("(1, 'a b'),\n(2, 'c')");
+  });
+
+  it("returns the body unchanged when it cannot lay it out with certainty", () => {
+    for (const body of ["(1,'open), (2,'x')", "(1,2), (3,4", "(1,2)) , (3,4)"]) {
+      expect(prettyRows(body)).toBe(body);
+    }
   });
 });
