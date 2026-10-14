@@ -908,7 +908,7 @@ ck-orm impose à chaque requête un petit ensemble de paramètres du contrat d'�
 - si aucun identifiant n'est fourni, la valeur par défaut est `default` avec un mot de passe vide
 
 ## Constructeur de requêtes
-<!-- src:e5211074 -->
+<!-- src:5152d6ff -->
 
 Les exemples ci-dessous supposent que `db`, `probeTelemetry` et les fonctions utilitaires citées sont importés depuis `ck-orm`.
 
@@ -1202,6 +1202,55 @@ for await (const row of query.iterator()) {
 Dans les exemples d'application, utilisez `.execute()` si vous voulez rendre l'exécution évidente au premier coup d'œil. Le `await query` direct est pris en charge pour garder une ergonomie proche de celle de Drizzle ; il est pratique une fois que l'équipe a l'habitude des requêtes du constructeur qui se comportent comme des semi-promesses.
 
 `query.iterator()` suit les mêmes règles de concurrence liées aux sessions que `db.stream()` : si la requête vise une `session_id`, la place réservée à la requête reste occupée jusqu'à la fin de l'itération ou jusqu'à la fermeture anticipée de l'itérateur.
+
+### Inspecter le SQL avec `toSQL()`
+
+`toSQL()` compile un constructeur sans rien envoyer. Appelez-la sur le constructeur lui-même, car un await sur un constructeur l'exécute. Elle fonctionne avec les constructeurs `select()`, ainsi qu'avec `insert().values()` et `insert().fromSelect()`.
+
+```ts
+const query = db
+  .select({ id: probeTelemetry.id, status: probeTelemetry.status })
+  .from(probeTelemetry)
+  .where(
+    ck.and(
+      ck.eq(probeTelemetry.probeId, "probe_alpha"),
+      ck.gte(probeTelemetry.createdAt, 1710000000),
+    ),
+  )
+  .limit(10);
+
+const { sql, params } = query.toSQL();
+// params: { orm_param1: "probe_alpha", orm_param2: 1710000000 }
+```
+
+Le résultat contient ces champs :
+
+- `sql` est l'instruction sur une seule ligne, avec un espace réservé comme `{orm_param1:String}` à la place de chaque valeur. Elle n'inclut pas la clause `FORMAT`, qui est ajoutée à l'envoi de la requête.
+- `params` contient les valeurs JavaScript brutes des espaces réservés. Elles sont encodées et envoyées à part du SQL quand la requête s'exécute : elles ne sont donc jamais écrites dans `sql`.
+- `forcedSettings` liste les paramètres que le constructeur impose à la requête, comme `join_use_nulls: 1` pour `leftJoin()`. Ce champ est absent s'il n'y en a aucun.
+- `body` n'est défini que pour `insert().values()` : il contient les lignes en texte Values, tandis que `sql` contient l'instruction `INSERT INTO t (cols) FORMAT Values`. Il est absent dans tous les autres cas.
+
+Le résultat est une copie : le modifier n'a aucun effet sur le constructeur.
+
+Passez `{ pretty: true }` pour répartir `sql` et `body` sur plusieurs lignes, ce qui est pratique pour les journaux et le débogage :
+
+```ts
+console.log(query.toSQL({ pretty: true }).sql);
+```
+
+```sql
+select
+  `probe_telemetry`.`id` as `id`,
+  `probe_telemetry`.`status` as `status`
+from `probe_telemetry`
+where (
+  `probe_telemetry`.`probe_id` = {orm_param1:String}
+  and `probe_telemetry`.`created_at` >= {orm_param2:Int32}
+)
+limit 10
+```
+
+La mise en forme ne modifie que les espaces blancs. Chaque clause démarre sur une nouvelle ligne, les éléments du `select` sont placés un par ligne, les sous-requêtes et les CTE sont indentées, et les conditions d'un groupe `and` ou `or` sont placées une par ligne. Les arguments d'une fonction restent sur leur ligne, le texte entre guillemets n'est jamais modifié, et une instruction qui contient des commentaires SQL est renvoyée telle quelle. Dans le corps d'un `insert().values()`, chaque ligne insérée tient sur sa propre ligne. La mise en forme n'a jamais d'effet sur la requête envoyée.
 
 ### Sous-requêtes et CTE
 

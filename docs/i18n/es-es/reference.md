@@ -907,7 +907,7 @@ ck-orm fija en cada solicitud este pequeño conjunto de ajustes del contrato de 
 - si no pasas credenciales, el valor predeterminado es `default` con una contraseña vacía
 
 ## Constructor de consultas
-<!-- src:e5211074 -->
+<!-- src:5152d6ff -->
 
 Los fragmentos siguientes dan por hecho que has importado `db`, `probeTelemetry` y las funciones auxiliares indicadas desde `ck-orm`.
 
@@ -1201,6 +1201,55 @@ for await (const row of query.iterator()) {
 Usa `.execute()` en los ejemplos de aplicación cuando quieras dejar claro dónde se ejecuta la consulta. El `await query` directo también funciona, como en Drizzle, y resulta útil cuando el equipo ya está acostumbrado a que las consultas del constructor sean thenable.
 
 `query.iterator()` usa las mismas reglas de concurrencia asociadas a la sesión que `db.stream()`: si la consulta usa un `session_id`, el cupo de concurrencia sigue ocupado hasta que termina la iteración o se cierra el iterador antes de tiempo.
+
+### Inspeccionar el SQL con `toSQL()`
+
+`toSQL()` compila un constructor sin enviar nada. Llámalo sobre el propio constructor: si le haces await, la consulta se ejecuta. Funciona con los constructores de `select()` y con `insert().values()` e `insert().fromSelect()`.
+
+```ts
+const query = db
+  .select({ id: probeTelemetry.id, status: probeTelemetry.status })
+  .from(probeTelemetry)
+  .where(
+    ck.and(
+      ck.eq(probeTelemetry.probeId, "probe_alpha"),
+      ck.gte(probeTelemetry.createdAt, 1710000000),
+    ),
+  )
+  .limit(10);
+
+const { sql, params } = query.toSQL();
+// params: { orm_param1: "probe_alpha", orm_param2: 1710000000 }
+```
+
+El resultado tiene estos campos:
+
+- `sql` es la sentencia en una sola línea, con un marcador de posición como `{orm_param1:String}` en el lugar de cada valor. No incluye la cláusula `FORMAT`, que se añade al enviar la consulta.
+- `params` contiene los valores de JavaScript sin codificar para los marcadores de posición. Se codifican y se envían aparte del SQL al ejecutar la consulta, así que nunca se escriben directamente en `sql`.
+- `forcedSettings` recoge los ajustes que el constructor fuerza en la solicitud, como `join_use_nulls: 1` con `leftJoin()`. Si no hay ninguno, el campo no aparece.
+- `body` solo se rellena con `insert().values()`: son las filas como texto Values, y `sql` contiene la sentencia `INSERT INTO t (cols) FORMAT Values`. En los demás casos no aparece.
+
+El resultado es una copia, así que modificarlo no afecta al constructor.
+
+Pasa `{ pretty: true }` para repartir `sql` y `body` en varias líneas, pensado para registros y depuración:
+
+```ts
+console.log(query.toSQL({ pretty: true }).sql);
+```
+
+```sql
+select
+  `probe_telemetry`.`id` as `id`,
+  `probe_telemetry`.`status` as `status`
+from `probe_telemetry`
+where (
+  `probe_telemetry`.`probe_id` = {orm_param1:String}
+  and `probe_telemetry`.`created_at` >= {orm_param2:Int32}
+)
+limit 10
+```
+
+El formato legible solo cambia los espacios en blanco. Cada cláusula empieza en una línea nueva, los elementos de `select` van uno por línea, las subconsultas y los CTE llevan sangría, y las condiciones de un grupo `and` u `or` van una por línea. Los argumentos de las funciones se quedan en su línea, el texto entrecomillado no se modifica nunca y una sentencia con comentarios SQL se devuelve tal cual. En el cuerpo de un `insert().values()`, cada fila va en su propia línea. El formato legible nunca afecta a la consulta que se envía.
 
 ### Subconsultas y CTE
 

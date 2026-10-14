@@ -901,7 +901,7 @@ ck-orm은 모든 요청에 전송 계약에 필요한 최소 설정 집합을 �
 - 자격 증명을 지정하지 않으면 사용자 이름은 `default`이고 비밀번호는 빈 문자열입니다.
 
 ## 쿼리 빌더
-<!-- src:e5211074 -->
+<!-- src:5152d6ff -->
 
 아래 코드 조각에서는 `db`, `probeTelemetry`와 코드에 나오는 헬퍼를 `ck-orm`에서 가져왔다고 가정합니다.
 
@@ -1195,6 +1195,55 @@ for await (const row of query.iterator()) {
 애플리케이션 예제에서 실행 지점을 분명하게 보여 주려면 `.execute()`를 사용하세요. Drizzle 스타일의 편의성을 위해 `await query`도 지원합니다. 빌더 쿼리가 thenable이라는 데 익숙해진 뒤에는 이 방식이 편리합니다.
 
 `query.iterator()`도 `db.stream()`과 같은 세션 기반 동시성 규칙을 따릅니다. 쿼리에 `session_id`가 지정되면 반복이 끝나거나 이터레이터를 일찍 닫을 때까지 요청 슬롯을 점유합니다.
+
+### `toSQL()`로 SQL 확인하기
+
+`toSQL()`은 빌더를 컴파일할 뿐 아무것도 전송하지 않습니다. 빌더를 await하면 실행되므로 await하지 말고 빌더에서 바로 호출하세요. `select()` 빌더와 `insert().values()`, `insert().fromSelect()`에서 사용할 수 있습니다.
+
+```ts
+const query = db
+  .select({ id: probeTelemetry.id, status: probeTelemetry.status })
+  .from(probeTelemetry)
+  .where(
+    ck.and(
+      ck.eq(probeTelemetry.probeId, "probe_alpha"),
+      ck.gte(probeTelemetry.createdAt, 1710000000),
+    ),
+  )
+  .limit(10);
+
+const { sql, params } = query.toSQL();
+// params: { orm_param1: "probe_alpha", orm_param2: 1710000000 }
+```
+
+결과에는 다음 필드가 있습니다.
+
+- `sql`은 한 줄로 된 SQL 문이며, 값이 들어갈 자리마다 `{orm_param1:String}` 같은 자리 표시자가 들어 있습니다. `FORMAT` 절은 없습니다. 이 절은 쿼리를 전송할 때 붙습니다.
+- `params`에는 자리 표시자에 채울 JavaScript 값이 인코딩하기 전 그대로 들어 있습니다. 쿼리를 실행하면 ck-orm이 이 값을 인코딩해 SQL과 별도로 전송하므로 `sql`에 직접 들어가는 일은 없습니다.
+- `forcedSettings`는 빌더가 요청에 강제하는 설정 목록입니다. 예를 들어 `leftJoin()`은 `join_use_nulls: 1`을 강제합니다. 강제하는 설정이 없으면 이 필드는 없습니다.
+- `body`는 `insert().values()`에만 있습니다. 행을 Values 텍스트로 담고, 이때 `sql`에는 `INSERT INTO t (cols) FORMAT Values` 문이 들어 있습니다. 다른 경우에는 없습니다.
+
+반환값은 복사본이므로 수정해도 빌더에는 영향이 없습니다.
+
+로그나 디버깅용으로 `sql`과 `body`를 여러 줄로 나눠 보려면 `{ pretty: true }`를 넘기세요.
+
+```ts
+console.log(query.toSQL({ pretty: true }).sql);
+```
+
+```sql
+select
+  `probe_telemetry`.`id` as `id`,
+  `probe_telemetry`.`status` as `status`
+from `probe_telemetry`
+where (
+  `probe_telemetry`.`probe_id` = {orm_param1:String}
+  and `probe_telemetry`.`created_at` >= {orm_param2:Int32}
+)
+limit 10
+```
+
+pretty 출력은 공백만 바꿉니다. 절마다 새 줄에서 시작하고, `select` 항목은 한 줄에 하나씩 나오며, 서브쿼리와 CTE는 들여씁니다. `and`나 `or` 그룹의 조건도 한 줄에 하나씩 나옵니다. 함수 인수는 같은 줄에 그대로 두고, 따옴표로 감싼 텍스트는 절대 건드리지 않습니다. SQL 주석이 들어 있는 SQL 문은 손대지 않고 그대로 반환합니다. `insert().values()`의 본문에서는 행마다 한 줄을 씁니다. pretty 출력이 실제로 전송되는 쿼리에 영향을 주는 일은 없습니다.
 
 ### 서브쿼리와 CTE
 

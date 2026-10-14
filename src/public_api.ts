@@ -220,12 +220,14 @@ export type {
   ClickHouseORMTracingOptions,
 } from "./observability";
 export type {
+  BuiltQuery,
   CompiledQuery,
   CompiledQueryMetadata,
   FromSelectShapeConstraint,
   InsertBuilder,
   InsertFromSelectBuilder,
   InsertValuesBuilder,
+  ToSQLOptions,
 } from "./query";
 export type { Order, Predicate, Selection } from "./query-shared";
 export {

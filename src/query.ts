@@ -4,6 +4,7 @@ import { getArrayElementType, unwrapNullableLowCardinalityType, unwrapStorageTyp
 import { isColumnLike } from "./internal/column";
 import { type CountMode, type CountModeResult, getCountDecoder, getCountSqlType, wrapCountSql } from "./internal/count";
 import { isPlainObject } from "./internal/predicates";
+import { prettyRows, prettyStatement } from "./internal/pretty";
 import { createUuid } from "./platform";
 import type { AnonymousSourceKey, InferSelectionResult, NoJoinedSources, SelectionRecord } from "./query/types";
 import {
@@ -486,6 +487,32 @@ const createCompiledQuery = <TResult>(
     forcedSettings,
     metadata,
     ...(body === undefined ? {} : { body }),
+  };
+};
+
+/** What a builder sends to ClickHouse, for logging, debugging and tests. `params` holds the raw JS values, which are encoded when the request is sent. */
+export interface BuiltQuery {
+  /** The statement with `{orm_paramN:Type}` placeholders. The transport appends the response `FORMAT` clause when it sends a query. */
+  readonly sql: string;
+  readonly params: QueryParams;
+  /** Settings the builder forces on the request, such as `join_use_nulls`. */
+  readonly forcedSettings?: ForcedSettings;
+  /** The request body, set for `insert().values()` only. */
+  readonly body?: string;
+}
+
+export interface ToSQLOptions {
+  /** Lay `sql` and `body` out over several lines for reading. Only whitespace changes, so the query means the same. */
+  readonly pretty?: boolean;
+}
+
+const toBuiltQuery = (compiled: CompiledQuery<never>, options?: ToSQLOptions): BuiltQuery => {
+  const pretty = options?.pretty === true;
+  return {
+    sql: pretty ? prettyStatement(compiled.statement) : compiled.statement,
+    params: { ...compiled.params },
+    ...(compiled.forcedSettings === undefined ? {} : { forcedSettings: { ...compiled.forcedSettings } }),
+    ...(compiled.body === undefined ? {} : { body: pretty ? prettyRows(compiled.body) : compiled.body }),
   };
 };
 
@@ -1423,6 +1450,7 @@ const FORBIDDEN_AUTO_COLUMN_KEYS = {
   final: true,
   limitBy: true,
   as: true,
+  toSQL: true,
 } as const satisfies Record<string, true>;
 
 type ForbiddenAutoColumnKeys = keyof typeof FORBIDDEN_AUTO_COLUMN_KEYS;
@@ -1570,6 +1598,8 @@ export interface SelectBuilder<
   ): SelectBuilderWithRefs<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls>;
   [compileWithContextSymbol](ctx: BuildContext): CompiledQuery<TResult>;
   [compileQuerySymbol](): CompiledQuery<TResult>;
+  /** Compiles without executing. Awaiting the builder runs it; call this to see what it would send. */
+  toSQL(options?: ToSQLOptions): BuiltQuery;
   as<TAlias extends string>(alias: TAlias): Subquery<TResult, TAlias>;
 }
 
@@ -2045,6 +2075,10 @@ export const createSelectBuilder = <
       );
     },
 
+    toSQL(options?: ToSQLOptions): BuiltQuery {
+      return toBuiltQuery(builder[compileQuerySymbol]() as CompiledQuery<never>, options);
+    },
+
     [compileQuerySymbol](): CompiledQuery<TResult> {
       return builder[compileWithContextSymbol]({
         params: {},
@@ -2143,6 +2177,8 @@ export interface InsertBuilder<TTable extends AnyTable> extends PromiseLike<unde
   catch<TResult2 = never>(onrejected?: CatchHandler<TResult2>): Promise<undefined | TResult2>;
   finally(onfinally?: (() => void) | null): Promise<undefined>;
   [compileQuerySymbol](): CompiledQuery<never>;
+  /** Compiles without executing. Awaiting the builder runs it; call this to see what it would send. */
+  toSQL(options?: ToSQLOptions): BuiltQuery;
 }
 
 // After `.values(...)` only `.values(...)` (append more rows) remains; calling
@@ -2153,6 +2189,8 @@ export interface InsertValuesBuilder<TTable extends AnyTable> extends PromiseLik
   catch<TResult2 = never>(onrejected?: CatchHandler<TResult2>): Promise<undefined | TResult2>;
   finally(onfinally?: (() => void) | null): Promise<undefined>;
   [compileQuerySymbol](): CompiledQuery<never>;
+  /** Compiles without executing. Awaiting the builder runs it; call this to see what it would send. */
+  toSQL(options?: ToSQLOptions): BuiltQuery;
 }
 
 // After `.fromSelect(...)` neither `.values()` nor a second `.fromSelect()`
@@ -2168,6 +2206,8 @@ export interface InsertFromSelectBuilder<TTable extends AnyTable> extends Promis
   catch<TResult2 = never>(onrejected?: CatchHandler<TResult2>): Promise<undefined | TResult2>;
   finally(onfinally?: (() => void) | null): Promise<undefined>;
   [compileQuerySymbol](): CompiledQuery<never>;
+  /** Compiles without executing. Awaiting the builder runs it; call this to see what it would send. */
+  toSQL(options?: ToSQLOptions): BuiltQuery;
 }
 
 const insertFromSelectBuilderTableSymbol = Symbol("clickhouseORMInsertFromSelectBuilderTable");
@@ -2500,6 +2540,10 @@ export const createInsertBuilder = <TTable extends AnyTable>(
 
     finally(onfinally?: (() => void) | null): Promise<undefined> {
       return builder.execute().finally(onfinally ?? undefined);
+    },
+
+    toSQL(options?: ToSQLOptions): BuiltQuery {
+      return toBuiltQuery(builder[compileQuerySymbol](), options);
     },
 
     [compileQuerySymbol](): CompiledQuery<never> {

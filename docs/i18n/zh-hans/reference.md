@@ -847,7 +847,7 @@ ck-orm 会在每个请求中强制设置一小组传输契约参数：`http_writ
 - 未提供凭据时，默认用户名为 `default`，密码为空
 
 ## 查询构建器
-<!-- src:e5211074 -->
+<!-- src:5152d6ff -->
 
 下面的代码片段都假定 `db`、`probeTelemetry` 和文中用到的辅助函数已从 `ck-orm` 导入。
 
@@ -1141,6 +1141,55 @@ for await (const row of query.iterator()) {
 在应用示例里，如果想让执行位置一眼可见，就使用 `.execute()`。直接写 `await query` 也可以，符合 Drizzle 风格；等团队熟悉把构建器查询当作 thenable 使用后，这样写起来更顺手。
 
 `query.iterator()` 使用和 `db.stream()` 一样的会话相关并发规则：如果查询针对某个 `session_id`，这个槽位会一直被占用，直到迭代完成或迭代器提前关闭。
+
+### 用 `toSQL()` 查看 SQL
+
+`toSQL()` 只编译构建器，不会发送任何请求。请直接在构建器上调用它，因为对构建器 await 会执行查询。`select()` 构建器、`insert().values()` 和 `insert().fromSelect()` 都支持它。
+
+```ts
+const query = db
+  .select({ id: probeTelemetry.id, status: probeTelemetry.status })
+  .from(probeTelemetry)
+  .where(
+    ck.and(
+      ck.eq(probeTelemetry.probeId, "probe_alpha"),
+      ck.gte(probeTelemetry.createdAt, 1710000000),
+    ),
+  )
+  .limit(10);
+
+const { sql, params } = query.toSQL();
+// params: { orm_param1: "probe_alpha", orm_param2: 1710000000 }
+```
+
+返回结果包含这些字段：
+
+- `sql` 是单行语句，每个值的位置都是 `{orm_param1:String}` 这样的占位符。其中不含 `FORMAT` 子句，这个子句在发送查询时才会加上。
+- `params` 保存占位符对应的原始 JavaScript 值。查询执行时，这些值会单独编码，与 SQL 分开发送，所以绝不会内联到 `sql` 里。
+- `forcedSettings` 列出构建器强制加到请求上的设置，例如 `leftJoin()` 的 `join_use_nulls: 1`。没有这类设置时，不会出现这个字段。
+- `body` 只有 `insert().values()` 才有：它是 Values 文本形式的行数据，而 `sql` 里是 `INSERT INTO t (cols) FORMAT Values` 语句。其他情况下没有这个字段。
+
+返回的是副本，修改它不会影响构建器。
+
+传入 `{ pretty: true }` 可以把 `sql` 和 `body` 排成多行，方便写日志和调试：
+
+```ts
+console.log(query.toSQL({ pretty: true }).sql);
+```
+
+```sql
+select
+  `probe_telemetry`.`id` as `id`,
+  `probe_telemetry`.`status` as `status`
+from `probe_telemetry`
+where (
+  `probe_telemetry`.`probe_id` = {orm_param1:String}
+  and `probe_telemetry`.`created_at` >= {orm_param2:Int32}
+)
+limit 10
+```
+
+美化输出只改变空白。每个子句另起一行，`select` 的各项一项一行，子查询和 CTE 会缩进，`and` 或 `or` 组里的条件也是一个条件一行。函数参数仍在原来那一行，引号内的文本不会被改动，含有 SQL 注释的语句则原样返回。`insert().values()` 的请求体里，每一行数据各占一行。美化输出不会影响实际发送的查询。
 
 ### 子查询和 CTE
 

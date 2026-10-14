@@ -846,7 +846,7 @@ ck-ormは、すべてのリクエストでワイヤ契約に必要な少数の�
 - 資格情報を指定しない場合、デフォルトはパスワードが空の`default`です
 
 ## クエリビルダー
-<!-- src:e5211074 -->
+<!-- src:5152d6ff -->
 
 以下のコード例では、`db`、`probeTelemetry`、参照するヘルパーは`ck-orm`からインポート済みとします。
 
@@ -1140,6 +1140,55 @@ for await (const row of query.iterator()) {
 アプリケーション例で実行箇所を目で追いやすくしたいときは、`.execute()`を使います。直接`await query`する書き方も、Drizzle風の使い勝手のためにサポートしています。チームがビルダーのクエリをthenableとして扱うことに慣れれば、この書き方も便利です。
 
 `query.iterator()`には`db.stream()`と同じ、セッションを考慮した並行性ルールが適用されます。クエリが`session_id`を対象にする場合、反復処理が終わるか、イテレーターを途中で閉じるまで、そのスロットは空きません。
+
+### `toSQL()`でSQLを確認する
+
+`toSQL()`は、ビルダーを何も送信せずにコンパイルします。ビルダーをawaitすると実行されてしまうので、awaitする前のビルダーそのものに対して呼び出してください。`select()`のビルダーのほか、`insert().values()`と`insert().fromSelect()`でも使えます。
+
+```ts
+const query = db
+  .select({ id: probeTelemetry.id, status: probeTelemetry.status })
+  .from(probeTelemetry)
+  .where(
+    ck.and(
+      ck.eq(probeTelemetry.probeId, "probe_alpha"),
+      ck.gte(probeTelemetry.createdAt, 1710000000),
+    ),
+  )
+  .limit(10);
+
+const { sql, params } = query.toSQL();
+// params: { orm_param1: "probe_alpha", orm_param2: 1710000000 }
+```
+
+戻り値には次のフィールドがあります。
+
+- `sql`は1行にまとめたステートメントで、値が入る位置には`{orm_param1:String}`のようなプレースホルダーが入ります。`FORMAT`句は含まれず、クエリを送信するときに追加されます。
+- `params`は、プレースホルダーに対応する生のJavaScript値を保持します。クエリの実行時には、SQLとは別にエンコードして送信されるので、`sql`に埋め込まれることはありません。
+- `forcedSettings`は、ビルダーがリクエストに強制する設定の一覧です。たとえば`leftJoin()`の`join_use_nulls: 1`があります。強制する設定がなければ、このフィールドはありません。
+- `body`は`insert().values()`でのみ設定されます。行をValues形式のテキストにしたもので、`sql`には`INSERT INTO t (cols) FORMAT Values`のステートメントが入ります。それ以外では、このフィールドはありません。
+
+戻り値はコピーなので、変更してもビルダーには影響しません。
+
+ログやデバッグ向けに`sql`と`body`を複数行にしたいときは、`{ pretty: true }`を渡します。
+
+```ts
+console.log(query.toSQL({ pretty: true }).sql);
+```
+
+```sql
+select
+  `probe_telemetry`.`id` as `id`,
+  `probe_telemetry`.`status` as `status`
+from `probe_telemetry`
+where (
+  `probe_telemetry`.`probe_id` = {orm_param1:String}
+  and `probe_telemetry`.`created_at` >= {orm_param2:Int32}
+)
+limit 10
+```
+
+整形で変わるのは空白だけです。句ごとに改行し、`select`の項目は1行に1つずつ並べ、サブクエリとCTEはインデントします。`and`や`or`のグループに含まれる条件も、1行に1つずつです。関数の引数は同じ行のままで、クォートされたテキストには一切手を加えません。SQLコメントを含むステートメントは、整形せずそのまま返します。`insert().values()`のボディでは、挿入する行ごとに改行します。整形が、実際に送信されるクエリに影響することはありません。
 
 ### サブクエリとCTE
 

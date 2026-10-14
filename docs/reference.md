@@ -1203,6 +1203,55 @@ Use `.execute()` in application examples when you want the execution point to be
 
 `query.iterator()` uses the same session-aware concurrency rules as `db.stream()`: if the query targets a `session_id`, the slot stays occupied until iteration finishes or the iterator is closed early.
 
+### Inspecting the SQL with `toSQL()`
+
+`toSQL()` compiles a builder without sending anything. Call it on the builder itself, because awaiting a builder runs it. It works on `select()` builders and on `insert().values()` and `insert().fromSelect()`.
+
+```ts
+const query = db
+  .select({ id: probeTelemetry.id, status: probeTelemetry.status })
+  .from(probeTelemetry)
+  .where(
+    ck.and(
+      ck.eq(probeTelemetry.probeId, "probe_alpha"),
+      ck.gte(probeTelemetry.createdAt, 1710000000),
+    ),
+  )
+  .limit(10);
+
+const { sql, params } = query.toSQL();
+// params: { orm_param1: "probe_alpha", orm_param2: 1710000000 }
+```
+
+The result has these fields:
+
+- `sql` is the statement on one line, with a placeholder such as `{orm_param1:String}` where each value goes. It does not include the `FORMAT` clause, which is added when a query is sent.
+- `params` holds the raw JavaScript values for the placeholders. They are encoded and sent apart from the SQL when the query runs, so they are never inlined into `sql`.
+- `forcedSettings` lists the settings the builder forces on the request, such as `join_use_nulls: 1` for `leftJoin()`. It is absent when there are none.
+- `body` is set for `insert().values()` only: the rows as Values text, while `sql` holds the `INSERT INTO t (cols) FORMAT Values` statement. It is absent otherwise.
+
+The result is a copy, so changing it does not affect the builder.
+
+Pass `{ pretty: true }` to lay `sql` and `body` out over several lines, for logs and debugging:
+
+```ts
+console.log(query.toSQL({ pretty: true }).sql);
+```
+
+```sql
+select
+  `probe_telemetry`.`id` as `id`,
+  `probe_telemetry`.`status` as `status`
+from `probe_telemetry`
+where (
+  `probe_telemetry`.`probe_id` = {orm_param1:String}
+  and `probe_telemetry`.`created_at` >= {orm_param2:Int32}
+)
+limit 10
+```
+
+Pretty printing only changes whitespace. Each clause starts a line, `select` items go one per line, subqueries and CTEs are indented, and the conditions of an `and` or `or` group go one per line. Function arguments stay on their line, quoted text is never touched, and a statement that contains SQL comments is returned as it is. In an `insert().values()` body, each row goes on its own line. Pretty printing never affects the query that is sent.
+
 ### Subqueries and CTEs
 
 Use `.as("alias")` to turn a builder into an explicitly named subquery:

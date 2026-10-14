@@ -846,7 +846,7 @@ ck-orm 會在每次請求中強制套用一組精簡的傳輸契約設定：`htt
 - 未提供登入憑證時，預設用戶名稱是 `default`，密碼留空
 
 ## 查詢建構器
-<!-- src:e5211074 -->
+<!-- src:5152d6ff -->
 
 以下片段假設 `db`、`probeTelemetry` 以及文中使用的輔助工具都已從 `ck-orm` 匯入。
 
@@ -1140,6 +1140,55 @@ for await (const row of query.iterator()) {
 在應用程式範例中，如果想讓執行點一眼看得出來，就使用 `.execute()`。直接寫 `await query` 也可以，這是 Drizzle 風格的便利用法；團隊熟悉查詢建構器產生的查詢是 thenable 後，這種寫法就很實用。
 
 `query.iterator()` 的工作階段並行規則跟 `db.stream()` 一樣：查詢使用 `session_id` 時，就會一直佔用並行槽位，直到迭代完成，或提早關閉迭代器。
+
+### 用 `toSQL()` 查看 SQL
+
+`toSQL()` 只會編譯建構器，不會送出任何東西。請直接在建構器上呼叫它，因為 await 建構器會直接執行查詢。`select()`、`insert().values()` 和 `insert().fromSelect()` 產生的建構器都可以用。
+
+```ts
+const query = db
+  .select({ id: probeTelemetry.id, status: probeTelemetry.status })
+  .from(probeTelemetry)
+  .where(
+    ck.and(
+      ck.eq(probeTelemetry.probeId, "probe_alpha"),
+      ck.gte(probeTelemetry.createdAt, 1710000000),
+    ),
+  )
+  .limit(10);
+
+const { sql, params } = query.toSQL();
+// params: { orm_param1: "probe_alpha", orm_param2: 1710000000 }
+```
+
+返回的結果有以下欄位：
+
+- `sql` 是單行的 SQL 語句，每個值的位置都是一個佔位符，例如 `{orm_param1:String}`。它不含 `FORMAT` 子句，因為這個子句要等查詢送出時才會加上。
+- `params` 存放佔位符對應的原始 JavaScript 值。查詢執行時，這些值會單獨編碼，與 SQL 分開送出，所以不會被內嵌進 `sql`。
+- `forcedSettings` 列出建構器強制套用到請求上的設定，例如 `leftJoin()` 會帶來 `join_use_nulls: 1`。沒有這類設定時，這個欄位不會出現。
+- `body` 只有 `insert().values()` 才有：它是以 Values 文字表示的資料列，而 `sql` 則是 `INSERT INTO t (cols) FORMAT Values` 語句。其他情況下沒有這個欄位。
+
+返回的結果是副本，修改它不會影響建構器。
+
+傳入 `{ pretty: true }`，`sql` 和 `body` 就會分成多行排版，方便記錄和除錯：
+
+```ts
+console.log(query.toSQL({ pretty: true }).sql);
+```
+
+```sql
+select
+  `probe_telemetry`.`id` as `id`,
+  `probe_telemetry`.`status` as `status`
+from `probe_telemetry`
+where (
+  `probe_telemetry`.`probe_id` = {orm_param1:String}
+  and `probe_telemetry`.`created_at` >= {orm_param2:Int32}
+)
+limit 10
+```
+
+美化排版只會改變空白。每個子句各佔一行，`select` 的項目逐行排列，子查詢和 CTE 會縮排，`and` 或 `or` 組合內的條件也是每個一行。函數的參數仍留在同一行，引號內的文字完全不會動，含有 SQL 註解的語句則原樣返回。`insert().values()` 的主體裡，每列資料各佔一行。美化排版完全不影響實際送出的查詢。
 
 ### 子查詢與 CTE
 

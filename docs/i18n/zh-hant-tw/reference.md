@@ -846,7 +846,7 @@ ck-orm 會在每個請求強制套用一組固定的傳輸契約設定：`http_w
 - 如果沒有提供認證資訊，預設使用者是 `default`，密碼為空字串
 
 ## 查詢建構器
-<!-- src:e5211074 -->
+<!-- src:5152d6ff -->
 
 下面的程式碼片段假設 `db`、`probeTelemetry`，以及片段中用到的輔助工具，都已從 `ck-orm` 匯入。
 
@@ -1140,6 +1140,55 @@ for await (const row of query.iterator()) {
 在應用程式範例中，如果想讓執行點一眼就看得出來，就使用 `.execute()`。為了保留 Drizzle 風格的操作體驗，也支援直接 `await query`；等團隊熟悉建構器查詢具有 then 方法後，這種寫法就很方便。
 
 `query.iterator()` 遵循與 `db.stream()` 相同的工作階段並行規則：查詢若指定 `session_id`，這個並行槽位會一直被佔用，直到迭代完成或迭代器提前關閉。
+
+### 用 `toSQL()` 檢視 SQL
+
+`toSQL()` 只編譯建構器，不會送出任何東西。請直接對建構器呼叫它，因為 await 建構器就會執行查詢。`select()` 建構器、`insert().values()` 和 `insert().fromSelect()` 都可以使用。
+
+```ts
+const query = db
+  .select({ id: probeTelemetry.id, status: probeTelemetry.status })
+  .from(probeTelemetry)
+  .where(
+    ck.and(
+      ck.eq(probeTelemetry.probeId, "probe_alpha"),
+      ck.gte(probeTelemetry.createdAt, 1710000000),
+    ),
+  )
+  .limit(10);
+
+const { sql, params } = query.toSQL();
+// params: { orm_param1: "probe_alpha", orm_param2: 1710000000 }
+```
+
+回傳的結果有這幾個欄位：
+
+- `sql` 是壓成一行的陳述式，每個值的位置都換成 `{orm_param1:String}` 這類預留位置。裡面不含 `FORMAT` 子句，這個子句是查詢送出時才加上的。
+- `params` 存放這些預留位置對應的原始 JavaScript 值。查詢執行時，這些值會經過編碼，與 SQL 分開送出，所以值絕不會內嵌到 `sql` 裡。
+- `forcedSettings` 列出建構器強制加在請求上的設定，例如 `leftJoin()` 會加上 `join_use_nulls: 1`。沒有強制設定時，不會有這個欄位。
+- `body` 只有 `insert().values()` 才有：它是以 Values 文字表示的資料列，而 `sql` 裡是 `INSERT INTO t (cols) FORMAT Values` 陳述式。其他情況不會有這個欄位。
+
+回傳的是一份複本，所以改動它不會影響建構器。
+
+要記錄或除錯時，可以傳入 `{ pretty: true }`，把 `sql` 和 `body` 排成多行：
+
+```ts
+console.log(query.toSQL({ pretty: true }).sql);
+```
+
+```sql
+select
+  `probe_telemetry`.`id` as `id`,
+  `probe_telemetry`.`status` as `status`
+from `probe_telemetry`
+where (
+  `probe_telemetry`.`probe_id` = {orm_param1:String}
+  and `probe_telemetry`.`created_at` >= {orm_param2:Int32}
+)
+limit 10
+```
+
+美化輸出只會改變空白。每個子句各自另起一行，`select` 的項目各佔一行，子查詢和 CTE 會縮排，`and` 或 `or` 群組裡的條件也各佔一行。函式的參數維持在同一行，加了引號的文字絕不會更動，含有 SQL 註解的陳述式則會原樣回傳。`insert().values()` 的主體裡，每個資料列各佔一行。美化輸出不會影響實際送出的查詢。
 
 ### 子查詢與 CTE
 
