@@ -2523,6 +2523,8 @@ await db.runInSession(
 );
 ```
 
+`runInSession()` merges its `clickhouse_settings`, `http_headers` and `query_params` with the parent client's defaults, and the session's value wins when both set the same key. As with `withSettings()`, a `join_use_nulls: 0` or `join_use_nulls: 1` literal in the session's settings also decides whether its left joins are typed as nullable.
+
 ### Compiled query integration
 
 Most applications should use the builder directly. Use `executeCompiled()` and `iteratorCompiled()` when you are integrating another layer that already produces a `CompiledQuery`.

@@ -398,6 +398,63 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
     }
   });
 
+  it("merges runInSession settings, headers and query params over the parent defaults", async function testRunInSessionMergesDefaults() {
+    const { calls } = setFetchMock(async () => new Response("", { status: 200 }));
+    const db = clickhouseClient({
+      host: "http://localhost:8123",
+      http_headers: { "X-Parent": "parent" },
+    });
+
+    await db.withSettings({ join_use_nulls: 0, max_threads: 1 }).runInSession(
+      async (session) => {
+        await session.runInSession(
+          async (child) => {
+            await child.command(sql`select 1`);
+          },
+          { query_params: { inner: "b" } },
+        );
+      },
+      {
+        clickhouse_settings: { max_threads: 2 },
+        http_headers: { "X-Session": "session" },
+        query_params: { outer: "a" },
+      },
+    );
+
+    expect(calls).toHaveLength(1);
+    const [call] = calls;
+    expect(call?.url.searchParams.get("join_use_nulls")).toBe("0");
+    expect(call?.url.searchParams.get("max_threads")).toBe("2");
+    const headers = new Headers(call?.init.headers);
+    expect(headers.get("X-Parent")).toBe("parent");
+    expect(headers.get("X-Session")).toBe("session");
+    const form = call?.init.body as FormData;
+    expect(form.get("param_outer")).toBe("a");
+    expect(form.get("param_inner")).toBe("b");
+  });
+
+  it("applies join_use_nulls from runInSession settings to session left joins", async function testRunInSessionJoinUseNulls() {
+    const events = ckTable("session_events", { id: string() });
+    const dim = ckTable("session_dim", { id: string(), label: string() });
+    const { calls } = setFetchMock(async () => new Response(JSON.stringify({ data: [] }), { status: 200 }));
+    const db = clickhouseClient({ host: "http://localhost:8123" });
+
+    await db.runInSession(
+      async (session) => {
+        await session.select({ id: events.id, label: dim.label }).from(events).leftJoin(dim, eq(events.id, dim.id));
+      },
+      { clickhouse_settings: { join_use_nulls: 0 } },
+    );
+    await db.withSettings({ join_use_nulls: 0 }).runInSession(
+      async (session) => {
+        await session.select({ id: events.id, label: dim.label }).from(events).leftJoin(dim, eq(events.id, dim.id));
+      },
+      { clickhouse_settings: { join_use_nulls: 1 } },
+    );
+
+    expect(calls.map((call) => call.url.searchParams.get("join_use_nulls"))).toEqual(["0", "1"]);
+  });
+
   const sessionLockedResponse = () =>
     new Response("Code: 373. DB::Exception: Session is locked. (SESSION_IS_LOCKED)", { status: 500 });
 

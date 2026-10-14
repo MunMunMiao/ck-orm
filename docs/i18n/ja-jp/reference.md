@@ -2335,7 +2335,7 @@ await db.runInSession(async (session) => {
 - ローカルのバックプレッシャーを無効にしたく、`SESSION_IS_LOCKED`も許容できる場合にだけ、`session_max_concurrent_requests`を上げてください。
 
 ## ランタイムメソッド
-<!-- src:3e31db64 -->
+<!-- src:1d0d331a -->
 
 ビルダーだけでなく、クライアントには低レベルのランタイムメソッドもあります。
 
@@ -2436,6 +2436,8 @@ await db.runInSession(
   },
 );
 ```
+
+`runInSession()`は、自身の`clickhouse_settings`、`http_headers`、`query_params`を親クライアントのデフォルトとマージします。同じキーが両方にある場合は、セッション側の値が優先されます。`withSettings()`と同じく、セッションの設定でリテラルの`join_use_nulls: 0`または`join_use_nulls: 1`を指定すると、セッション内の左結合の結果型にNULLが含まれるかどうかも決まります。
 
 ### コンパイル済みクエリとの連携
 

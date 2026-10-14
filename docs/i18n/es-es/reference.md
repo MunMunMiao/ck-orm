@@ -2423,7 +2423,7 @@ Uso recomendado:
 - Aumenta `session_max_concurrent_requests` solo cuando quieras desactivar explícitamente el control local de concurrencia y puedas tolerar `SESSION_IS_LOCKED`.
 
 ## Métodos de ejecución
-<!-- src:3e31db64 -->
+<!-- src:1d0d331a -->
 
 Además del constructor, el cliente ofrece métodos de ejecución de bajo nivel.
 
@@ -2524,6 +2524,8 @@ await db.runInSession(
   },
 );
 ```
+
+`runInSession()` combina sus `clickhouse_settings`, `http_headers` y `query_params` con los valores predeterminados del cliente principal; si ambos definen la misma clave, prevalece el valor de la sesión. Igual que en `withSettings()`, un literal `join_use_nulls: 0` o `join_use_nulls: 1` en los ajustes de la sesión también decide si los left joins de la sesión tienen un tipo anulable.
 
 ### Integración con consultas compiladas
 

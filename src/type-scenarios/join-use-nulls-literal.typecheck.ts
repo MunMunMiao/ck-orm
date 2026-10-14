@@ -55,3 +55,32 @@ db.withSettings({ join_use_nulls: 0 }).runInSession(async (session) => {
   void sessionJoin;
   void sessionSettingsJoin;
 });
+
+db.runInSession(
+  async (session) => {
+    const sessionOptionJoin = leftJoinGroup(session);
+    type _SessionOptionJoin = Expect<Equal<InferBuilderResult<typeof sessionOptionJoin>, NonNullJoin>>;
+    void sessionOptionJoin;
+  },
+  { clickhouse_settings: { join_use_nulls: 0 } },
+);
+
+db.withSettings({ join_use_nulls: 0 }).runInSession(
+  async (session) => {
+    const sessionOptionOverrideJoin = leftJoinGroup(session);
+    type _SessionOptionOverrideJoin = Expect<Equal<InferBuilderResult<typeof sessionOptionOverrideJoin>, NullableJoin>>;
+    void sessionOptionOverrideJoin;
+  },
+  { clickhouse_settings: { join_use_nulls: 1 } },
+);
+
+db.withSettings({ join_use_nulls: 0 }).runInSession(
+  async (session) => {
+    const sessionOptionInheritedJoin = leftJoinGroup(session);
+    type _SessionOptionInheritedJoin = Expect<
+      Equal<InferBuilderResult<typeof sessionOptionInheritedJoin>, NonNullJoin>
+    >;
+    void sessionOptionInheritedJoin;
+  },
+  { clickhouse_settings: { max_threads: 2 } },
+);

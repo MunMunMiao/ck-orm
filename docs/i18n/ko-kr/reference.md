@@ -2413,7 +2413,7 @@ await db.runInSession(async (session) => {
 - 로컬 백프레셔를 없애려는 의도가 분명하고 `SESSION_IS_LOCKED`를 감수할 수 있을 때만 `session_max_concurrent_requests`를 높이세요.
 
 ## 런타임 메서드
-<!-- src:3e31db64 -->
+<!-- src:1d0d331a -->
 
 빌더 외에도 클라이언트는 저수준 런타임 메서드를 제공합니다.
 
@@ -2514,6 +2514,8 @@ await db.runInSession(
   },
 );
 ```
+
+`runInSession()`은 자신의 `clickhouse_settings`, `http_headers`, `query_params`를 부모 클라이언트의 기본값과 병합합니다. 같은 키가 양쪽에 모두 있으면 세션의 값이 우선합니다. `withSettings()`와 마찬가지로 세션 설정에 리터럴 `join_use_nulls: 0` 또는 `join_use_nulls: 1`을 지정하면 세션의 왼쪽 조인 결과가 NULL을 허용하는 타입인지도 함께 정해집니다.
 
 ### 컴파일된 쿼리 연동
 

@@ -2336,7 +2336,7 @@ await db.runInSession(async (session) => {
 - 只有明确要去掉本地背压，并且能接受 `SESSION_IS_LOCKED` 时，才调高 `session_max_concurrent_requests`
 
 ## 运行时方法
-<!-- src:3e31db64 -->
+<!-- src:1d0d331a -->
 
 除了查询构建器，客户端还提供更底层的运行时方法。
 
@@ -2438,6 +2438,8 @@ await db.runInSession(
   },
 );
 ```
+
+`runInSession()` 会把自己的 `clickhouse_settings`、`http_headers` 和 `query_params` 与父客户端的默认值合并，两边设置了同一个键时以会话的值为准。和 `withSettings()` 一样，会话设置中的 `join_use_nulls: 0` 或 `join_use_nulls: 1` 字面量也决定会话里左连接的类型是否含 null。
 
 ### 编译后查询集成
 

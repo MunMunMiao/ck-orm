@@ -2346,7 +2346,7 @@ await db.runInSession(async (session) => {
 - 只有你明確要移除本地背壓，而且可以接受 `SESSION_IS_LOCKED` 時，才調高 `session_max_concurrent_requests`
 
 ## 執行階段方法
-<!-- src:3e31db64 -->
+<!-- src:1d0d331a -->
 
 除了建構器，客戶端也會公開較低階的執行階段方法。
 
@@ -2447,6 +2447,8 @@ await db.runInSession(
   },
 );
 ```
+
+`runInSession()` 會把自己的 `clickhouse_settings`、`http_headers` 和 `query_params` 與父客戶端的預設值合併；如果兩邊都設定了同一個鍵，會以工作階段的值為準。和 `withSettings()` 一樣，工作階段設定中的 `join_use_nulls: 0` 或 `join_use_nulls: 1` 字面值也會決定工作階段內的 LEFT JOIN 是否帶有 NULL。
 
 ### 整合已編譯查詢
 

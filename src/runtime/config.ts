@@ -131,9 +131,9 @@ export interface Session<TJoinUseNulls extends 0 | 1 = 1>
   ): Promise<void>;
   dropTable(table: AnyTable | string, options?: DropTableOptions): Promise<void>;
   createTemporaryTableRaw(name: string, definition: string): Promise<void>;
-  runInSession<TResult>(
-    callback: (session: Session<TJoinUseNulls>) => Promise<TResult>,
-    options?: SessionRunInSessionOptions,
+  runInSession<TResult, const TSettings extends ClickHouseSettings | undefined = ClickHouseSettings | undefined>(
+    callback: (session: Session<ResolveJoinUseNulls<TSettings, TJoinUseNulls>>) => Promise<TResult>,
+    options?: SessionRunInSessionOptions & { readonly clickhouse_settings?: TSettings },
   ): Promise<TResult>;
 }
 

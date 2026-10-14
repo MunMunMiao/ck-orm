@@ -2426,7 +2426,7 @@ Utilisation recommandée :
 - n'augmentez `session_max_concurrent_requests` que si vous voulez explicitement désactiver la sérialisation locale et pouvez accepter `SESSION_IS_LOCKED`
 
 ## Méthodes d'exécution
-<!-- src:3e31db64 -->
+<!-- src:1d0d331a -->
 
 En plus du constructeur, le client expose des méthodes d'exécution de bas niveau.
 
@@ -2527,6 +2527,8 @@ await db.runInSession(
   },
 );
 ```
+
+`runInSession()` fusionne ses `clickhouse_settings`, `http_headers` et `query_params` avec les valeurs par défaut du client parent ; si les deux définissent la même clé, c'est la valeur de la session qui l'emporte. Comme avec `withSettings()`, un littéral `join_use_nulls: 0` ou `join_use_nulls: 1` dans les paramètres de la session détermine aussi si les jointures à gauche de la session sont typées comme pouvant être nulles.
 
 ### Intégration des requêtes compilées
 

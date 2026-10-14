@@ -823,9 +823,12 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
       await client.command(sql(`CREATE TEMPORARY TABLE ${identifier} ${normalizedDefinition}`));
     },
 
-    async runInSession<TResult>(
-      callback: (session: Session<TJoinUseNulls>) => Promise<TResult>,
-      options?: SessionRunInSessionOptions,
+    async runInSession<
+      TResult,
+      const TSettings extends ClickHouseSettings | undefined = ClickHouseSettings | undefined,
+    >(
+      callback: (session: Session<ResolveJoinUseNulls<TSettings, TJoinUseNulls>>) => Promise<TResult>,
+      options?: SessionRunInSessionOptions & { readonly clickhouse_settings?: TSettings },
     ): Promise<TResult> {
       if (sessionController && options?.session_check === 1) {
         throw createClientValidationError(
@@ -843,14 +846,23 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
       const childSessionController = sessionController
         ? sessionController.createChildSessionController(sessionId)
         : createSessionController(sessionId, []);
+      const sessionJoinUseNulls = options?.clickhouse_settings?.join_use_nulls;
       const sessionClient = createChild(
         {
           ...defaultOptions,
           ...options,
+          clickhouse_settings: mergeClickHouseSettings(
+            defaultOptions.clickhouse_settings,
+            options?.clickhouse_settings,
+          ),
           http_headers: { ...defaultOptions.http_headers, ...options?.http_headers },
+          query_params: { ...defaultOptions.query_params, ...options?.query_params },
           session_id: sessionId,
         },
         childSessionController,
+        (sessionJoinUseNulls === 0 || sessionJoinUseNulls === 1
+          ? sessionJoinUseNulls
+          : joinUseNulls) as ResolveJoinUseNulls<TSettings, TJoinUseNulls>,
       );
 
       let userError: unknown;
