@@ -844,28 +844,36 @@ export type JsonShape = { [key: string]: unknown };
  * Dotted-path literal union of every reachable nested key in a `JsonShape`.
  *
  * `Paths<{ a: { b: number }; c: string }>` evaluates to `"a" | "a.b" | "c"`.
+ * Optional and nullable nested objects are walked too.
  * Used to constrain `JsonConfig["typeHints"]` keys and to validate the
  * argument of `JsonColumn.path()` / `castPath()` / `subobject()` so typos
  * fail at compile time.
  */
 export type Paths<T> = T extends JsonShape
   ? {
-      [K in keyof T & string]: T[K] extends JsonShape ? K | `${K}.${Paths<T[K]>}` : K;
+      [K in keyof T & string]-?: NonNullable<T[K]> extends JsonShape ? K | `${K}.${Paths<NonNullable<T[K]>>}` : K;
     }[keyof T & string]
   : never;
 
 /**
  * Resolves the TypeScript type at a given dotted path inside a `JsonShape`.
- * `PathValue<{ a: { b: number } }, "a.b">` evaluates to `number`. Unknown
- * paths fall back to `unknown` so dynamic-path call sites stay sound.
+ * `PathValue<{ a: { b: number } }, "a.b">` evaluates to `number`. Walking
+ * through an optional or nullable object adds `undefined` or `null`, like
+ * optional chaining. Unknown paths fall back to `unknown` so dynamic-path
+ * call sites stay sound.
  */
 export type PathValue<T, P extends string> = P extends `${infer Head}.${infer Rest}`
   ? Head extends keyof T
-    ? PathValue<T[Head], Rest>
+    ? NullishPathValue<T[Head], Rest>
     : unknown
   : P extends keyof T
     ? T[P]
     : unknown;
+
+// Walks into a possibly optional or nullable object and keeps its `undefined` /
+// `null`. A separate alias, so inference of `JsonColumn<infer T>` still matches
+// `PathValue` by its type arguments.
+type NullishPathValue<T, P extends string> = PathValue<NonNullable<T>, P> | Extract<T, null | undefined>;
 
 /**
  * Parameterized configuration for a ClickHouse new-version `JSON` column.

@@ -165,6 +165,19 @@ type _JsonPathValueLeaf = Expect<Equal<PathValue<JsonShapeFixture, "a.b">, numbe
 type _JsonPathValueObject = Expect<Equal<PathValue<JsonShapeFixture, "a">, { readonly b: number; readonly c: string }>>;
 type _JsonPathValueUnknown = Expect<Equal<PathValue<JsonShapeFixture, "missing">, unknown>>;
 
+type OptionalJsonShapeFixture = {
+  readonly commit?: { readonly record?: { readonly text: string } };
+  readonly reply: { readonly root: string } | null;
+};
+
+type _OptionalJsonPaths = Expect<
+  Equal<Paths<OptionalJsonShapeFixture>, "commit" | "commit.record" | "commit.record.text" | "reply" | "reply.root">
+>;
+type _OptionalJsonPathValueLeaf = Expect<
+  Equal<PathValue<OptionalJsonShapeFixture, "commit.record.text">, string | undefined>
+>;
+type _NullableJsonPathValueLeaf = Expect<Equal<PathValue<OptionalJsonShapeFixture, "reply.root">, string | null>>;
+
 const jsonHints = {
   typeHints: {
     "a.b": ckType.uint32(),
@@ -184,6 +197,14 @@ type _JsonPathObjectType = Expect<
 
 const jsonCastLeaf = jsonPathTable.payload.castPath("a.b", ckType.uint64());
 type _JsonCastLeafType = Expect<Equal<SqlFragmentData<typeof jsonCastLeaf>, string>>;
+
+const optionalJsonTable = ckTable("optional_json_t", {
+  payload: ckType.json<OptionalJsonShapeFixture>({ typeHints: { "commit.record.text": ckType.string() } }),
+});
+const optionalJsonLeaf = optionalJsonTable.payload.path("commit.record.text");
+type _OptionalJsonLeafType = Expect<Equal<SqlFragmentData<typeof optionalJsonLeaf>, string | undefined>>;
+// @ts-expect-error a typo in a path below an optional object is still rejected
+optionalJsonTable.payload.path("commit.record.txt");
 
 const jsonIoTable = ckTable("json_io_t", {
   payload: ckType.json("payload", { typeHints: { uid: ckType.uint64() } }).$type<{
@@ -218,4 +239,5 @@ void jsonHints;
 void jsonPathLeaf;
 void jsonPathObject;
 void jsonCastLeaf;
+void optionalJsonLeaf;
 void sortOrder;
