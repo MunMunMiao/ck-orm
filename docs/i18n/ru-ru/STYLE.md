@@ -323,6 +323,7 @@ JavaScript, ClickHouse и SQL. Текст должен звучать как о�
 | metrics | метрики | no | attested | <https://learn.microsoft.com/ru-ru/azure/azure-monitor/app/api-custom-events-metrics> |
 | instrumentation | инструментирование | no | inferred | Из русской терминологии OpenTelemetry и профилирования; не оставляйте `instrumentation` в прозе. |
 | hook | хук | no | attested | Официальные русские React/Vue-документы используют «хук»: <https://ru.react.dev/learn>, <https://ru.vuejs.org/guide/introduction.html>; мужской род: «хука», «хуком». |
+| plugin | плагин | no | inferred | Устоявшийся русский термин для расширений (в документации webpack, Vite, VS Code); URL не открывался, проверить у носителя. |
 | event | событие | no | attested | <https://developer.mozilla.org/ru/docs/Web/API/EventTarget/addEventListener> |
 | error | ошибка | no | attested | <https://developer.mozilla.org/ru/docs/Web/JavaScript/Reference/Errors/Invalid_for-in_initializer> |
 | exception | исключение | no | attested | <https://developer.mozilla.org/ru/docs/Web/JavaScript/Reference/Errors/Invalid_for-in_initializer> |
@@ -443,9 +444,9 @@ JavaScript, ClickHouse и SQL. Текст должен звучать как о�
 - `leftJoin()` по умолчанию использует семантику NULL в стиле SQL.
 - Крупные или потенциально опасные числовые результаты декодируются осторожно, а не неявно приводятся к другому типу.
 
-У `ck-orm` одна peer-зависимость — `@opentelemetry/api`. Bun, npm и pnpm
-устанавливают её автоматически; Yarn — нет, поэтому команда для Yarn добавляет её
-явно.
+У `ck-orm` нет обязательных зависимостей. `@opentelemetry/api` — необязательная
+peer-зависимость, которая нужна только плагину `ck-orm/otel`; устанавливайте её
+вместе с ck-orm, если используете этот плагин.
 
 ### 9. Sources consulted
 

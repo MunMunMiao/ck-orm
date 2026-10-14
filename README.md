@@ -24,7 +24,7 @@ It gives you:
 - a typed query builder for the common path
 - raw SQL when ClickHouse-specific syntax is the better tool
 - session helpers for temporary-table workflows
-- observability hooks for logging, tracing, and custom instrumentation
+- observability through a logger and query lifecycle plugins, with OpenTelemetry tracing in `ck-orm/otel`
 
 ## Installation
 
@@ -32,10 +32,10 @@ It gives you:
 bun add ck-orm
 npm install ck-orm
 pnpm add ck-orm
-yarn add ck-orm @opentelemetry/api
+yarn add ck-orm
 ```
 
-ck-orm has one peer dependency, `@opentelemetry/api`. Bun, npm and pnpm install it automatically; Yarn does not, so the Yarn command adds it explicitly.
+ck-orm has no required dependencies. `@opentelemetry/api` is an optional peer dependency used only by the `ck-orm/otel` plugin; install it alongside ck-orm when you use that plugin.
 
 ## Example
 

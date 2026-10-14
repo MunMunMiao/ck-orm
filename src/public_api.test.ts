@@ -526,13 +526,13 @@ describe("ck-orm public api", function describePublicApi() {
     expectType<RootApi.ClickHouseKnownSettings | undefined>(undefined);
     expectType<RootApi.ClickHouseORMClient | undefined>(undefined);
     expectType<RootApi.ClickHouseORMExecutionState | undefined>(undefined);
-    expectType<RootApi.ClickHouseORMInstrumentation | undefined>(undefined);
+    expectType<RootApi.ClickHouseORMPlugin | undefined>(undefined);
+    expectType<RootApi.ClickHouseORMQueryStartResult | undefined>(undefined);
     expectType<RootApi.ClickHouseORMLogLevel | undefined>(undefined);
     expectType<RootApi.ClickHouseORMLogger | undefined>(undefined);
     expectType<RootApi.ClickHouseORMQueryErrorEvent | undefined>(undefined);
     expectType<RootApi.ClickHouseORMQueryEvent | undefined>(undefined);
     expectType<RootApi.ClickHouseORMQueryResultEvent | undefined>(undefined);
-    expectType<RootApi.ClickHouseORMTracingOptions | undefined>(undefined);
     expectType<RootApi.ClickHouseORMQueryStatistics | undefined>(undefined);
     expectType<RootApi.ClickHouseQueryOptions | undefined>(undefined);
     expectType<RootApi.ClickHouseSettings | undefined>(undefined);

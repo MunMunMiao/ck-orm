@@ -291,8 +291,9 @@ describeE2E("ck-orm e2e anonymous CTE via $with()", function describeAnonymousCt
   it("stable __cte_N counter: identical query compiled twice via execute() yields identical SQL", async function testAnonStableSql() {
     const startEvents: string[] = [];
     const db = createE2EDb({
-      instrumentation: [
+      plugins: [
         {
+          name: "probe",
           onQueryStart(event) {
             startEvents.push(event.statement);
           },

@@ -1,4 +1,3 @@
-import { type Span, SpanKind, SpanStatusCode, type Tracer, trace } from "@opentelemetry/api";
 import { isClickHouseORMError } from "./errors";
 import { createUuid, hashString } from "./platform";
 
@@ -12,13 +11,6 @@ export interface ClickHouseORMLogger {
   info(message: string, fields?: Record<string, unknown>): void;
   warn(message: string, fields?: Record<string, unknown>): void;
   error(message: string, fields?: Record<string, unknown>): void;
-}
-
-export interface ClickHouseORMTracingOptions {
-  readonly tracer?: Tracer;
-  readonly attributes?: Record<string, string | number | boolean>;
-  readonly includeStatement?: boolean;
-  readonly includeRowCount?: boolean;
 }
 
 export interface ClickHouseORMQueryStatistics {
@@ -86,13 +78,26 @@ export interface ClickHouseORMQueryErrorEvent extends ClickHouseORMQueryEvent {
   readonly partialRowCount?: number;
 }
 
-export interface ClickHouseORMInstrumentation {
-  onQueryStart?(event: ClickHouseORMQueryEvent): void | Promise<void>;
+export interface ClickHouseORMQueryStartResult {
+  /**
+   * Headers added to this request. Explicit `http_headers` (client-level or
+   * per-request) override them, and plugins cannot override the
+   * `Authorization` header built from configured credentials or the session
+   * `X-ClickHouse-Replica-Tag`.
+   */
+  readonly http_headers?: Record<string, string>;
+}
+
+export interface ClickHouseORMPlugin {
+  /** Identifies the plugin in hook error messages. */
+  readonly name: string;
+  onQueryStart?(
+    event: ClickHouseORMQueryEvent,
+    // biome-ignore lint/suspicious/noConfusingVoidType: `void` keeps expression-bodied hooks such as `() => log()` assignable
+  ): void | ClickHouseORMQueryStartResult | Promise<void | ClickHouseORMQueryStartResult>;
   onQuerySuccess?(event: ClickHouseORMQueryResultEvent): void | Promise<void>;
   onQueryError?(event: ClickHouseORMQueryErrorEvent): void | Promise<void>;
 }
-
-const RESERVED_TRACING_ATTRIBUTE_PREFIX = "db.";
 
 export const resolveSafeClickHouseDestination = (url: string | undefined): string | undefined => {
   if (!url) {
@@ -167,50 +172,69 @@ export const createQueryErrorEvent = (
   return result;
 };
 
+/**
+ * Runs every `onQueryStart` in registration order and returns the headers they
+ * contributed. `Headers` lower-cases names, so a later plugin overrides an
+ * earlier one regardless of case.
+ */
 export const emitQueryStart = async (
-  instrumentations: readonly ClickHouseORMInstrumentation[],
+  plugins: readonly ClickHouseORMPlugin[],
   event: ClickHouseORMQueryEvent,
-): Promise<void> => {
-  for (const instrumentation of instrumentations) {
-    if (!instrumentation.onQueryStart) {
+): Promise<Record<string, string>> => {
+  const headers: Record<string, string> = {};
+  for (const plugin of plugins) {
+    if (!plugin.onQueryStart) {
       continue;
     }
-    await invokeInstrumentation(() => instrumentation.onQueryStart?.(event));
+    await invokePluginHook(plugin, "onQueryStart", async () => {
+      const result = await plugin.onQueryStart?.(event);
+      if (!result?.http_headers) {
+        return;
+      }
+      // `new Headers` rejects malformed names and values before anything is
+      // merged, so a bad plugin loses its own headers instead of failing the request.
+      new Headers(result.http_headers).forEach((value, key) => {
+        headers[key] = value;
+      });
+    });
   }
+  return headers;
 };
 
 export const emitQuerySuccess = async (
-  instrumentations: readonly ClickHouseORMInstrumentation[],
+  plugins: readonly ClickHouseORMPlugin[],
   event: ClickHouseORMQueryResultEvent,
 ): Promise<void> => {
-  for (let index = instrumentations.length - 1; index >= 0; index -= 1) {
-    const instrumentation = instrumentations[index];
-    if (!instrumentation.onQuerySuccess) {
+  for (let index = plugins.length - 1; index >= 0; index -= 1) {
+    const plugin = plugins[index];
+    if (!plugin.onQuerySuccess) {
       continue;
     }
-    await invokeInstrumentation(() => instrumentation.onQuerySuccess?.(event));
+    await invokePluginHook(plugin, "onQuerySuccess", () => plugin.onQuerySuccess?.(event));
   }
 };
 
 export const emitQueryError = async (
-  instrumentations: readonly ClickHouseORMInstrumentation[],
+  plugins: readonly ClickHouseORMPlugin[],
   event: ClickHouseORMQueryErrorEvent,
 ): Promise<void> => {
-  for (let index = instrumentations.length - 1; index >= 0; index -= 1) {
-    const instrumentation = instrumentations[index];
-    if (!instrumentation.onQueryError) {
+  for (let index = plugins.length - 1; index >= 0; index -= 1) {
+    const plugin = plugins[index];
+    if (!plugin.onQueryError) {
       continue;
     }
-    await invokeInstrumentation(() => instrumentation.onQueryError?.(event));
+    await invokePluginHook(plugin, "onQueryError", () => plugin.onQueryError?.(event));
   }
 };
 
-const invokeInstrumentation = async (operation: () => void | Promise<void>) => {
+type PluginHookName = "onQueryStart" | "onQuerySuccess" | "onQueryError";
+
+const invokePluginHook = async (plugin: ClickHouseORMPlugin, hook: PluginHookName, operation: () => unknown) => {
   try {
     await operation();
-  } catch (instrumentationError) {
+  } catch (hookError) {
     try {
-      console.error("[ck-orm] instrumentation hook threw:", instrumentationError);
+      console.error(`[ck-orm] plugin "${plugin.name}" ${hook} threw:`, hookError);
     } catch {
       // ignore secondary failures from console
     }
@@ -229,11 +253,12 @@ const shouldWriteLog = (minimumLevel: ClickHouseORMLogLevel, eventLevel: ClickHo
   return logLevelPriority[eventLevel] >= logLevelPriority[minimumLevel];
 };
 
-export const createLoggerInstrumentation = (
+export const createLoggerPlugin = (
   logger: ClickHouseORMLogger,
   minimumLevel: ClickHouseORMLogLevel = "warn",
-): ClickHouseORMInstrumentation => {
+): ClickHouseORMPlugin => {
   return {
+    name: "logger",
     onQueryStart(event) {
       if (!shouldWriteLog(minimumLevel, "debug")) {
         return;
@@ -277,110 +302,6 @@ export const createLoggerInstrumentation = (
   };
 };
 
-export const createTracingInstrumentation = (
-  options: ClickHouseORMTracingOptions = {},
-): ClickHouseORMInstrumentation => {
-  const tracer = options.tracer ?? trace.getTracer("ck-orm");
-  const includeStatement = options.includeStatement ?? true;
-  const spanByExecutionId = new Map<string, Span>();
-
-  // Common epilogue shared by `onQuerySuccess` / `onQueryError`: pull the span,
-  // detach it from the lookup map, write the per-result attributes that don't
-  // depend on outcome, then let the caller stamp status + close.
-  const closeSpan = (
-    event: ClickHouseORMQueryResultEvent | ClickHouseORMQueryErrorEvent,
-    finalize: (span: Span) => void,
-  ): void => {
-    const span = spanByExecutionId.get(event.executionId);
-    if (!span) return;
-    spanByExecutionId.delete(event.executionId);
-
-    if (event.format) {
-      span.setAttribute("db.response.format", event.format);
-    }
-    const rowCount = "error" in event ? event.partialRowCount : event.rowCount;
-    if (shouldIncludeRowCount(options.includeRowCount, event.mode) && typeof rowCount === "number") {
-      span.setAttribute("db.response.row_count", rowCount);
-      span.setAttribute("db.response.returned_rows", rowCount);
-    }
-    span.setAttribute("db.query.duration_ms", event.durationMs);
-    span.setAttribute("ck_orm.duration_ms", event.durationMs);
-
-    finalize(span);
-    span.end();
-  };
-
-  return {
-    onQueryStart(event) {
-      const span = tracer.startSpan(buildClickHouseSpanName(event.operation), {
-        kind: SpanKind.CLIENT,
-        attributes: buildSpanAttributes(event, {
-          attributes: options.attributes,
-          includeStatement,
-        }),
-      });
-      spanByExecutionId.set(event.executionId, span);
-    },
-    onQuerySuccess(event) {
-      closeSpan(event, (span) => {
-        setOptionalNumberAttribute(span, "ck_orm.server.elapsed_ms", event.serverElapsedMs);
-        setOptionalNumberAttribute(span, "ck_orm.read.rows", event.readRows);
-        setOptionalNumberAttribute(span, "ck_orm.read.bytes", event.readBytes);
-        setOptionalNumberAttribute(span, "ck_orm.result.rows", event.resultRows);
-        setOptionalNumberAttribute(span, "ck_orm.rows_before_limit_at_least", event.rowsBeforeLimitAtLeast);
-        span.setStatus({ code: SpanStatusCode.OK });
-      });
-    },
-    onQueryError(event) {
-      closeSpan(event, (span) => {
-        setErrorAttributes(span, event.error);
-        span.recordException(toSpanException(event.error));
-        span.setStatus({
-          code: SpanStatusCode.ERROR,
-          message: event.error instanceof Error ? event.error.message : String(event.error),
-        });
-      });
-    },
-  };
-};
-
-const shouldIncludeRowCount = (includeRowCount: boolean | undefined, mode: ClickHouseORMQueryMode) => {
-  if (includeRowCount !== undefined) {
-    return includeRowCount;
-  }
-  return mode === "query";
-};
-
-const toSpanException = (error: unknown): Error | string => {
-  if (error instanceof Error) {
-    return error;
-  }
-  if (typeof error === "string") return error;
-  return String(error);
-};
-
-const setOptionalNumberAttribute = (span: Span, key: string, value: number | undefined) => {
-  if (typeof value === "number") {
-    span.setAttribute(key, value);
-  }
-};
-
-const setErrorAttributes = (span: Span, error: unknown) => {
-  if (!isClickHouseORMError(error)) {
-    span.setAttribute("error.type", error instanceof Error ? error.name : typeof error);
-    return;
-  }
-
-  span.setAttribute("error.type", error.clickhouseName ?? error.kind);
-  span.setAttribute("ck_orm.error.kind", error.kind);
-  span.setAttribute("ck_orm.execution_state", error.executionState);
-  if (typeof error.clickhouseCode === "number") {
-    span.setAttribute("db.response.status_code", String(error.clickhouseCode));
-  } else if (typeof error.httpStatus === "number") {
-    span.setAttribute("db.response.status_code", String(error.httpStatus));
-  }
-};
-
 const buildBaseLogFields = (event: ClickHouseORMQueryEvent) => {
   return {
     executionId: event.executionId,
@@ -405,79 +326,8 @@ const buildBaseLogFields = (event: ClickHouseORMQueryEvent) => {
   };
 };
 
-const buildSpanAttributes = (
-  event: ClickHouseORMQueryEvent,
-  options: {
-    attributes?: Record<string, string | number | boolean>;
-    includeStatement: boolean;
-  },
-) => {
-  const attributes: Record<string, string | number | boolean> = {
-    ...filterCustomTracingAttributes(options.attributes),
-    "db.system": "clickhouse",
-    "db.system.name": "clickhouse",
-    "db.operation": event.operation,
-    "db.operation.name": event.operation,
-    "db.query.summary": event.querySummary,
-    "db.query.kind": event.queryKind,
-    "db.query.mode": event.mode,
-    "db.statement.hash": event.statementHash,
-    "ck_orm.execution_id": event.executionId,
-    "ck_orm.query.kind": event.queryKind,
-    "ck_orm.query.mode": event.mode,
-    "ck_orm.statement.hash": event.statementHash,
-  };
-
-  if (event.databaseName !== undefined) {
-    attributes["db.name"] = event.databaseName;
-    attributes["db.namespace"] = event.databaseName;
-  }
-  if (event.queryId !== undefined) {
-    attributes["db.query.id"] = event.queryId;
-    attributes["ck_orm.query_id"] = event.queryId;
-  }
-  if (event.sessionId !== undefined) {
-    attributes["db.session.id"] = event.sessionId;
-    attributes["ck_orm.session_id"] = event.sessionId;
-  }
-  if (event.tableName !== undefined) {
-    attributes["db.table"] = event.tableName;
-    attributes["db.collection.name"] = event.tableName;
-  }
-  if (event.format !== undefined) {
-    attributes["db.response.format"] = event.format;
-    attributes["ck_orm.format"] = event.format;
-  }
-  if (event.serverAddress !== undefined) attributes["server.address"] = event.serverAddress;
-  if (event.serverPort !== undefined) attributes["server.port"] = event.serverPort;
-  if (event.requestTimeoutMs !== undefined) attributes["ck_orm.request_timeout_ms"] = event.requestTimeoutMs;
-
-  if (options.includeStatement) {
-    attributes["db.statement"] = event.compactStatement;
-    attributes["db.query.text"] = event.compactStatement;
-  }
-
-  return attributes;
-};
-
 const buildQuerySummary = (operation: string, tableName: string | undefined): string => {
   return tableName ? `${operation} ${tableName}` : operation;
-};
-
-const filterCustomTracingAttributes = (attributes: Record<string, string | number | boolean> | undefined) => {
-  if (!attributes) {
-    return {};
-  }
-
-  const filtered: Record<string, string | number | boolean> = {};
-  for (const [key, value] of Object.entries(attributes)) {
-    if (key.startsWith(RESERVED_TRACING_ATTRIBUTE_PREFIX)) {
-      continue;
-    }
-    filtered[key] = value;
-  }
-
-  return filtered;
 };
 
 export const compactStatement = (statement: string): string => {
@@ -521,13 +371,6 @@ export const resolveSqlOperation = (statement: string): string => {
     return WITH_INNER_DML_PATTERN.exec(normalized)?.[1] ?? "QUERY";
   }
   return KNOWN_LEADING_OPERATIONS.has(firstToken) ? firstToken : "QUERY";
-};
-
-const buildClickHouseSpanName = (operation: string): string => {
-  if (operation === "SELECT" || operation === "QUERY") {
-    return "clickhouse QUERY";
-  }
-  return `clickhouse ${operation}`;
 };
 
 const stripLeadingSqlComments = (statement: string): string => {

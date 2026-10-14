@@ -19,7 +19,7 @@ UI 字串維持短而可掃讀：導覽項用名詞（例如「範例」「語�
 | 英文原句 | 不自然 | 建議 |
 |---|---|---|
 | Use `ck-orm` with these boundaries in mind: | 使用 `ck-orm` 時，請牢記以下邊界： | 使用 `ck-orm` 時，記得把下面這些界線分清楚： |
-| Bun, npm and pnpm install it automatically; Yarn does not, so the Yarn command adds it explicitly. | Bun、npm 和 pnpm 會自動安裝它；Yarn 則不會，因此 Yarn 命令會明確將其新增。 | Bun、npm 和 pnpm 會自動安裝它；Yarn 不會，所以 Yarn 指令會明確把它加進去。 |
+| `@opentelemetry/api` is an optional peer dependency used only by the `ck-orm/otel` plugin; install it alongside ck-orm when you use that plugin. | `@opentelemetry/api` 是可選的對等依賴項，僅由 `ck-orm/otel` 外掛使用；使用該外掛時，請將其與 ck-orm 一併安裝。 | `@opentelemetry/api` 是選用的同儕依賴，只有 `ck-orm/otel` 外掛程式會用到；使用該外掛程式時，請和 ck-orm 一起安裝。 |
 | That means: | 這意味著： | 也就是說： |
 | `ck-orm` is designed to make unsafe SQL construction difficult by default. | `ck-orm` 的設計旨在預設使不安全 SQL 建構變得困難。 | `ck-orm` 預設讓你很難組出不安全的 SQL。 |
 
@@ -103,6 +103,7 @@ UI 字串維持短而可掃讀：導覽項用名詞（例如「範例」「語�
 | concurrency; lifecycle; cleanup; runtime method; execute; fetch; abort; cancel | 並行；生命週期；清理；執行階段方法；執行；擷取；中止；取消 | no | inferred — from Taiwan runtime/API terminology | concurrency 尚無本次可引用的固定臺灣詞形，採 plain textbook rendering。
 | observability; tracing; span; logging; logger; metrics; instrumentation | 可觀察性；追蹤；區間；記錄；記錄器；指標；儀器化 | no | attested — https://learn.microsoft.com/zh-tw/azure/well-architected/operational-excellence/observability and https://learn.microsoft.com/zh-tw/agent-framework/agents/observability | 官方頁面混用可觀察性／可觀測性；本指南選「可觀察性」。span 用「區間」。
 | hook | hook | yes | attested — https://zh-hans.react.dev/reference/react/hooks | React 語境的 Hook 是開發者實際保留的技術術語；臺灣 React 語料也保留 Hook：https://react.com.tw/reference/react/use。
+| plugin | 外掛程式 | no | inferred — Taiwan Microsoft/Windows localization uses 「外掛程式」 for plug-in; I did not open a page confirming it for this project | 未逐頁核對來源，故標 inferred；識別字 `plugins`、`ClickHouseORMPlugin` 保留原文。 |
 | event; error; exception; throws; rejects; error model; validation error; stack; retry | 事件；錯誤；例外；拋出；拒絕；錯誤模型；驗證錯誤；堆疊；重試 | no | attested — https://learn.microsoft.com/zh-tw/dotnet/api/system.servicemodel.dispatcher.ierrorhandler?view=netcore-1.1 and https://developer.mozilla.org/zh-TW/docs/Web/API/Fetch_API/Using_Fetch | call stack 可寫「呼叫堆疊」。
 | security; SQL injection; untrusted input; identifier quoting; escaping; credentials; password; allow-list; permission | 安全性；SQL 注入；不受信任的輸入；識別字引用；跳脫；認證資訊；密碼；允許清單；權限 | no | attested — https://developer.mozilla.org/zh-TW/docs/Glossary/SQL_Injection and https://learn.microsoft.com/zh-tw/aspnet/core/fundamentals/servers/kestrel/security-considerations?view=aspnetcore-10.0 | SQL 保留；injection 譯為「注入」。
 | installation; install; peer dependency; version; pin a version; release; breaking change | 安裝；安裝；同儕依賴；版本；鎖定版本；發行；重大變更 | no | attested — https://prisma.tw/docs/orm/prisma-client/observability-and-logging/opentelemetry-tracing | Prisma 繁中直接將 peer dependency 寫成「同儕依賴」；其他詞形見 Microsoft Learn zh-TW。
@@ -150,7 +151,7 @@ UI 字串維持短而可掃讀：導覽項用名詞（例如「範例」「語�
 
 #### 安裝
 
-ck-orm 有一項同儕依賴：`@opentelemetry/api`。Bun、npm 和 pnpm 會自動安裝它；Yarn 不會，所以 Yarn 指令會明確把它加進去。
+ck-orm 沒有必要的依賴。`@opentelemetry/api` 是選用的同儕依賴，只有 `ck-orm/otel` 外掛程式會用到；使用該外掛程式時，請和 ck-orm 一起安裝。
 
 ### 9. Sources consulted
 

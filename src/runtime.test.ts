@@ -300,8 +300,9 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
 
     const db = clickhouseClient({
       host: "http://localhost:8123",
-      instrumentation: [
+      plugins: [
         {
+          name: "probe",
           onQueryStart(event) {
             startedQueryIds.push(event.queryId);
           },
@@ -324,8 +325,9 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
 
     const httpDb = clickhouseClient({
       host: "http://localhost",
-      instrumentation: [
+      plugins: [
         {
+          name: "probe",
           onQueryStart(event) {
             serverPorts.push(event.serverPort);
           },
@@ -336,8 +338,9 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
 
     const httpsDb = clickhouseClient({
       host: "https://localhost",
-      instrumentation: [
+      plugins: [
         {
+          name: "probe",
           onQueryStart(event) {
             serverPorts.push(event.serverPort);
           },
@@ -1130,6 +1133,30 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
         host: "http://localhost:8123",
       }),
     ).not.toThrow();
+
+    expect(() =>
+      clickhouseClient({
+        host: "http://localhost:8123",
+        instrumentation: [],
+      } as unknown as ClickHouseClientConfig),
+    ).toThrow("clickhouseClient() no longer accepts instrumentation; use plugins instead");
+
+    expect(() =>
+      clickhouseClient({
+        host: "http://localhost:8123",
+        tracing: {},
+      } as unknown as ClickHouseClientConfig),
+    ).toThrow(
+      'clickhouseClient() no longer accepts tracing; remove it, or use plugins: [otelTracing()] from "ck-orm/otel" instead',
+    );
+    expect(() =>
+      clickhouseClient({
+        host: "http://localhost:8123",
+        tracing: false,
+      } as unknown as ClickHouseClientConfig),
+    ).toThrow(
+      'clickhouseClient() no longer accepts tracing; remove it, or use plugins: [otelTracing()] from "ck-orm/otel" instead',
+    );
   });
 
   it("supports ping and replicasStatus through GET endpoint helpers", async function testSystemEndpointHelpers() {

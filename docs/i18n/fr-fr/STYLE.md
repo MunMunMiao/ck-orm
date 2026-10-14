@@ -211,6 +211,7 @@ la forme française reste fournie.
 | logging | journalisation | no | attested — [Microsoft, journalisation .NET](https://learn.microsoft.com/fr-fr/dotnet/core/extensions/logging/overview) | `journalisation` est le nom du domaine. |
 | logger | logger | yes | attested — [Microsoft, notions ASP.NET Core](https://learn.microsoft.com/fr-fr/aspnet/core/fundamentals/?view=aspnetcore-3.1) | Terme de composant/API laissé en anglais dans la documentation française ; ne le francisez pas en `journaliseur` dans ce contexte. |
 | metrics; instrumentation | métriques; instrumentation | no | attested — [OpenTelemetry, introduction](https://opentelemetry.io/fr/docs/concepts/observability-primer/) | `métrique` est féminin ; `instrumentation` est féminin. |
+| plugin | plugin | yes | inferred — usage courant dans les écosystèmes d'outils JavaScript (Vite, ESLint, Rollup), non vérifié par une URL ouverte pendant cette tâche | Mot déjà intégré en français technique ; pluriel `plugins`. Évitez `greffon` et `module d'extension` ; l'API reste `plugins`. |
 | hook | hook | yes | attested — [React en français](https://fr.react.dev/learn) | Terme d'API/écosystème React laissé en anglais ; ne le traduisez pas par `crochet`. |
 | event | événement | no | attested — [OpenTelemetry, traces](https://opentelemetry.io/fr/docs/concepts/signals/traces/) | Accent obligatoire sur `événement`. |
 | error; exception; throws / rejects; error model; validation error; stack; retry | erreur; exception; lève / rejette; modèle d'erreur; erreur de validation; pile d'appels; nouvelle tentative | no | attested — [TypeScript](https://www.typescriptlang.org/fr/docs/handbook/2/basic-types.html), [MDN, Promise](https://developer.mozilla.org/fr/docs/Web/JavaScript/Reference/Global_Objects/Promise) | Écrivez `lever` une erreur, jamais `jeter` une erreur ; `lève` et `rejette` s'accordent avec leur sujet. |
@@ -277,7 +278,7 @@ Gardez ces limites en tête quand vous utilisez `ck-orm` :
 
 **Installation**
 
-`ck-orm` a une seule dépendance entre pairs, `@opentelemetry/api`. Bun, npm et pnpm l'installent automatiquement ; Yarn ne le fait pas, donc la commande Yarn l'ajoute explicitement.
+`ck-orm` n'a aucune dépendance obligatoire. `@opentelemetry/api` est une dépendance entre pairs facultative, utilisée uniquement par le plugin `ck-orm/otel` ; installez-la avec `ck-orm` quand vous utilisez ce plugin.
 
 ### 9. Sources consulted
 

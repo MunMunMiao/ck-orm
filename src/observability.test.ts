@@ -1,15 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import type { Span, Tracer } from "@opentelemetry/api";
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
 import { int32, string } from "./columns";
-import { createRequestFailedError } from "./errors";
 import {
-  type ClickHouseORMInstrumentation,
+  type ClickHouseORMPlugin,
   compactStatement,
-  createLoggerInstrumentation,
+  createLoggerPlugin,
   createQueryErrorEvent,
   createQueryEvent,
   createQuerySuccessEvent,
-  createTracingInstrumentation,
   emitQueryError,
   emitQueryStart,
   emitQuerySuccess,
@@ -77,50 +74,6 @@ const createCapturedLogger = () => {
   };
 };
 
-const createCapturedTracer = () => {
-  const spans: Array<{
-    name: string;
-    attributes: Record<string, unknown>;
-    ended: boolean;
-    status?: unknown;
-    exceptions: unknown[];
-  }> = [];
-
-  const tracer: Tracer = {
-    startSpan(name: string, options?: { attributes?: Record<string, unknown> }) {
-      const spanState = {
-        name,
-        attributes: { ...(options?.attributes ?? {}) } as Record<string, unknown>,
-        ended: false,
-        status: undefined as unknown,
-        exceptions: [] as unknown[],
-      };
-      spans.push(spanState);
-
-      const span: Partial<Span> = {
-        setAttribute(key, value) {
-          spanState.attributes[key] = value;
-          return span as Span;
-        },
-        setStatus(status) {
-          spanState.status = status;
-          return span as Span;
-        },
-        recordException(exception) {
-          spanState.exceptions.push(exception);
-        },
-        end() {
-          spanState.ended = true;
-        },
-      };
-
-      return span as Span;
-    },
-  } as Tracer;
-
-  return { spans, tracer };
-};
-
 describe("ck-orm observability", function describeClickHouseORMObservability() {
   beforeEach(function setupMocks() {
     globalThis.Request = RecordingRequest as typeof Request;
@@ -135,8 +88,8 @@ describe("ck-orm observability", function describeClickHouseORMObservability() {
 
   it("logs ORM events with level filtering and resolves safe destinations", async function testLoggerInstrumentation() {
     const captured = createCapturedLogger();
-    const warnOnly = createLoggerInstrumentation(captured.logger, "warn");
-    const debugEnabled = createLoggerInstrumentation(captured.logger, "debug");
+    const warnOnly = createLoggerPlugin(captured.logger, "warn");
+    const debugEnabled = createLoggerPlugin(captured.logger, "debug");
     const event = createQueryEvent({
       mode: "query",
       queryKind: "typed",
@@ -173,140 +126,10 @@ describe("ck-orm observability", function describeClickHouseORMObservability() {
     expect(resolveSafeClickHouseDestination("not a url")).toBeUndefined();
   });
 
-  it("creates OTel spans and keeps custom attributes additive only", async function testTracingInstrumentation() {
-    const tracer = createCapturedTracer();
-    const instrumentation = createTracingInstrumentation({
-      tracer: tracer.tracer,
-      includeStatement: false,
-      attributes: {
-        scope: "custom",
-        "db.system": "evil",
-        "db.statement": "select secret",
-        "db.operation": "DELETE",
-      },
-    });
-
-    const event = createQueryEvent({
-      mode: "query",
-      queryKind: "typed",
-      statement: "select * from users",
-      operation: "SELECT",
-      databaseName: "demo_store",
-      serverAddress: "localhost",
-      serverPort: 8123,
-      requestTimeoutMs: 30_000,
-      queryId: "query_1",
-      tableName: "users",
-      startedAt: 100,
-    });
-
-    await instrumentation.onQueryStart?.(event);
-    await instrumentation.onQuerySuccess?.(
-      createQuerySuccessEvent(event, 8, 1, {
-        serverElapsedMs: 2,
-        readRows: 10,
-        readBytes: 128,
-        resultRows: 1,
-        rowsBeforeLimitAtLeast: 20,
-      }),
-    );
-
-    expect(tracer.spans).toHaveLength(1);
-    expect(tracer.spans[0]).toMatchObject({
-      name: "clickhouse QUERY",
-      ended: true,
-      attributes: expect.objectContaining({
-        "db.system": "clickhouse",
-        "db.system.name": "clickhouse",
-        "db.operation": "SELECT",
-        "db.operation.name": "SELECT",
-        "db.namespace": "demo_store",
-        "db.name": "demo_store",
-        "db.collection.name": "users",
-        "db.query.summary": "SELECT users",
-        "db.response.returned_rows": 1,
-        "db.response.row_count": 1,
-        "server.address": "localhost",
-        "server.port": 8123,
-        "ck_orm.query_id": "query_1",
-        "ck_orm.statement.hash": hashStatement("select * from users"),
-        "ck_orm.server.elapsed_ms": 2,
-        "ck_orm.read.rows": 10,
-        "ck_orm.read.bytes": 128,
-        "ck_orm.rows_before_limit_at_least": 20,
-        scope: "custom",
-      }),
-    });
-    expect(tracer.spans[0]?.attributes["db.statement"]).toBeUndefined();
-    expect(tracer.spans[0]?.attributes["db.query.text"]).toBeUndefined();
-
-    const streamEvent = createQueryEvent({
-      mode: "stream",
-      queryKind: "raw",
-      statement: "select * from users",
-      operation: "SELECT",
-      startedAt: 200,
-      format: "JSONEachRow",
-    });
-    await instrumentation.onQueryStart?.(streamEvent);
-    await instrumentation.onQueryError?.(createQueryErrorEvent(streamEvent, "bad", 20, 5));
-    expect(tracer.spans[1]?.attributes["db.response.row_count"]).toBeUndefined();
-    expect(tracer.spans[1]?.exceptions).toEqual(["bad"]);
-
-    const clickhouseErrorEvent = createQueryEvent({
-      mode: "query",
-      queryKind: "raw",
-      statement: "select coalesce(toFloat64(1), toInt64(0))",
-      operation: "SELECT",
-      startedAt: 300,
-    });
-    await instrumentation.onQueryStart?.(clickhouseErrorEvent);
-    await instrumentation.onQueryError?.(
-      createQueryErrorEvent(
-        clickhouseErrorEvent,
-        createRequestFailedError({
-          httpStatus: 500,
-          clickhouseCode: 386,
-          clickhouseName: "NO_COMMON_TYPE",
-          responseText: "Code: 386. DB::Exception: no common type (NO_COMMON_TYPE)",
-        }),
-        30,
-      ),
-    );
-    expect(tracer.spans[2]?.attributes).toMatchObject({
-      "error.type": "NO_COMMON_TYPE",
-      "ck_orm.error.kind": "request_failed",
-      "ck_orm.execution_state": "rejected",
-      "db.response.status_code": "386",
-    });
-
-    const httpErrorEvent = createQueryEvent({
-      mode: "query",
-      queryKind: "raw",
-      statement: "select 1",
-      operation: "SELECT",
-      startedAt: 400,
-    });
-    await instrumentation.onQueryStart?.(httpErrorEvent);
-    await instrumentation.onQueryError?.(
-      createQueryErrorEvent(
-        httpErrorEvent,
-        createRequestFailedError({
-          httpStatus: 503,
-          responseText: "temporarily unavailable",
-        }),
-        40,
-      ),
-    );
-    expect(tracer.spans[3]?.attributes).toMatchObject({
-      "error.type": "request_failed",
-      "db.response.status_code": "503",
-    });
-  });
-
   it("emits instrumentation hooks in forward/reverse order around runtime execution", async function testRuntimeInstrumentationOrder() {
     const order: string[] = [];
-    const instrumentationA: ClickHouseORMInstrumentation = {
+    const instrumentationA: ClickHouseORMPlugin = {
+      name: "a",
       onQueryStart() {
         order.push("start:a");
       },
@@ -317,7 +140,8 @@ describe("ck-orm observability", function describeClickHouseORMObservability() {
         order.push("error:a");
       },
     };
-    const instrumentationB: ClickHouseORMInstrumentation = {
+    const instrumentationB: ClickHouseORMPlugin = {
+      name: "b",
       onQueryStart() {
         order.push("start:b");
       },
@@ -343,7 +167,7 @@ describe("ck-orm observability", function describeClickHouseORMObservability() {
 
     const db = clickhouseClient({
       host: "http://localhost:8123",
-      instrumentation: [instrumentationA, instrumentationB],
+      plugins: [instrumentationA, instrumentationB],
     });
 
     await db.execute(sql`select 1 as one`);
@@ -387,7 +211,8 @@ describe("ck-orm observability", function describeClickHouseORMObservability() {
       );
     }) as unknown as typeof fetch;
 
-    const instrumentation: ClickHouseORMInstrumentation = {
+    const instrumentation: ClickHouseORMPlugin = {
+      name: "success",
       onQuerySuccess(event) {
         events.push({
           databaseName: event.databaseName,
@@ -408,11 +233,11 @@ describe("ck-orm observability", function describeClickHouseORMObservability() {
       host: "http://clickhouse.local:8123",
       database: "structured_db",
       request_timeout: 12_000,
-      instrumentation: [instrumentation],
+      plugins: [instrumentation],
     });
     const urlDb = clickhouseClient({
       databaseUrl: "https://default:secret@clickhouse.example/url_db",
-      instrumentation: [instrumentation],
+      plugins: [instrumentation],
     });
 
     await structuredDb.select().from(users).execute();
@@ -440,8 +265,7 @@ describe("ck-orm observability", function describeClickHouseORMObservability() {
     });
   });
 
-  it("records system endpoint helpers through logger, tracing and instrumentation", async function testSystemEndpointObservability() {
-    const tracer = createCapturedTracer();
+  it("records system endpoint helpers through logger and plugins", async function testSystemEndpointObservability() {
     const capturedLogger = createCapturedLogger();
     const order: string[] = [];
 
@@ -460,11 +284,9 @@ describe("ck-orm observability", function describeClickHouseORMObservability() {
       host: "http://localhost:8123",
       logger: capturedLogger.logger,
       logLevel: "debug",
-      tracing: {
-        tracer: tracer.tracer,
-      },
-      instrumentation: [
+      plugins: [
         {
+          name: "order",
           onQueryStart(event) {
             order.push(`start:${event.operation}`);
           },
@@ -479,7 +301,6 @@ describe("ck-orm observability", function describeClickHouseORMObservability() {
     await db.replicasStatus();
 
     expect(order).toEqual(["start:PING", "success:PING", "start:REPLICAS_STATUS", "success:REPLICAS_STATUS"]);
-    expect(tracer.spans.map((span) => span.name)).toEqual(["clickhouse PING", "clickhouse REPLICAS_STATUS"]);
     expect(
       capturedLogger.entries.filter((entry) => entry.level === "debug").map((entry) => entry.fields?.operation),
     ).toEqual(["PING", "PING", "REPLICAS_STATUS", "REPLICAS_STATUS"]);
@@ -490,71 +311,6 @@ describe("ck-orm observability", function describeClickHouseORMObservability() {
     expect(resolveSqlOperation("/* comment */\nselect 1")).toBe("SELECT");
     expect(resolveSqlOperation("-- comment\ncreate table x")).toBe("CREATE");
     expect(resolveSqlOperation("")).toBe("QUERY");
-  });
-
-  it("covers tracing early returns and SQL operation fallbacks", async function testTracingEdgeCases() {
-    const noStartTracer = createCapturedTracer();
-    const noStartInstrumentation = createTracingInstrumentation({
-      tracer: noStartTracer.tracer,
-    });
-    const baseEvent = createQueryEvent({
-      mode: "query",
-      queryKind: "typed",
-      statement: "select * from users",
-      operation: "SELECT",
-      startedAt: 300,
-    });
-
-    await noStartInstrumentation.onQuerySuccess?.(createQuerySuccessEvent(baseEvent, 3, 1));
-    await noStartInstrumentation.onQueryError?.(createQueryErrorEvent(baseEvent, new Error("boom"), 4, 2));
-    expect(noStartTracer.spans).toHaveLength(0);
-
-    const traced = createCapturedTracer();
-    const tracedInstrumentation = createTracingInstrumentation({
-      tracer: traced.tracer,
-      includeRowCount: true,
-    });
-    const streamEvent = createQueryEvent({
-      mode: "stream",
-      queryKind: "raw",
-      statement: "select * from users",
-      operation: "SELECT",
-      startedAt: 400,
-      format: "JSONEachRow",
-    });
-    await tracedInstrumentation.onQueryStart?.(streamEvent);
-    await tracedInstrumentation.onQuerySuccess?.(createQuerySuccessEvent(streamEvent, 5, 2));
-
-    const errorEvent = createQueryEvent({
-      mode: "stream",
-      queryKind: "raw",
-      statement: "insert into users values (1)",
-      operation: "INSERT",
-      startedAt: 500,
-      format: "JSONEachRow",
-    });
-    const boom = new Error("boom");
-    await tracedInstrumentation.onQueryStart?.(errorEvent);
-    await tracedInstrumentation.onQueryError?.(createQueryErrorEvent(errorEvent, boom, 6, 3));
-
-    expect(traced.spans[0]?.attributes["db.response.format"]).toBe("JSONEachRow");
-    expect(traced.spans[0]?.attributes["db.response.row_count"]).toBe(2);
-    expect(traced.spans[0]?.attributes["db.response.returned_rows"]).toBe(2);
-    expect(traced.spans[1]?.exceptions).toEqual([boom]);
-    expect(traced.spans[1]?.attributes["error.type"]).toBe("Error");
-    expect(traced.spans[1]?.attributes["db.response.row_count"]).toBe(3);
-    expect(traced.spans[1]?.attributes["db.response.returned_rows"]).toBe(3);
-
-    const noCountTracer = createCapturedTracer();
-    const noCountInstrumentation = createTracingInstrumentation({
-      tracer: noCountTracer.tracer,
-      includeRowCount: false,
-    });
-    await noCountInstrumentation.onQueryStart?.(baseEvent);
-    await noCountInstrumentation.onQuerySuccess?.(createQuerySuccessEvent(baseEvent, 7, 4));
-    expect(noCountTracer.spans[0]?.attributes["db.response.row_count"]).toBeUndefined();
-    expect(noCountTracer.spans[0]?.attributes["db.response.returned_rows"]).toBeUndefined();
-
     expect(resolveSqlOperation("/* lead */ with scoped as (select 1) insert into sink select 1")).toBe("INSERT");
     expect(resolveSqlOperation("with scoped as (select 1)")).toBe("QUERY");
     expect(resolveSqlOperation("-- comment only")).toBe("QUERY");
@@ -563,7 +319,8 @@ describe("ck-orm observability", function describeClickHouseORMObservability() {
 
   it("keeps manual instrumentation dispatch resilient to hook failures", async function testManualDispatch() {
     const calls: string[] = [];
-    const flaky: ClickHouseORMInstrumentation = {
+    const flaky: ClickHouseORMPlugin = {
+      name: "flaky",
       onQueryStart() {
         calls.push("start");
         throw new Error("ignore start");
@@ -585,15 +342,27 @@ describe("ck-orm observability", function describeClickHouseORMObservability() {
       startedAt: 1,
     });
 
-    await emitQueryStart([flaky], event);
-    await emitQuerySuccess([flaky], createQuerySuccessEvent(event, 5));
-    await emitQueryError([flaky], createQueryErrorEvent(event, new Error("boom"), 7));
-    expect(calls).toEqual(["start", "success", "error"]);
+    const consoleError = spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      await emitQueryStart([flaky], event);
+      await emitQuerySuccess([flaky], createQuerySuccessEvent(event, 5));
+      await emitQueryError([flaky], createQueryErrorEvent(event, new Error("boom"), 7));
+      expect(calls).toEqual(["start", "success", "error"]);
+      const messages = consoleError.mock.calls.map((call) => call[0]);
+      expect(messages).toEqual([
+        '[ck-orm] plugin "flaky" onQueryStart threw:',
+        '[ck-orm] plugin "flaky" onQuerySuccess threw:',
+        '[ck-orm] plugin "flaky" onQueryError threw:',
+      ]);
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it("skips instrumentations that do not declare a matching lifecycle hook", async function testPartialHookSkip() {
     const calls: string[] = [];
-    const tagged = (tag: string): ClickHouseORMInstrumentation => ({
+    const tagged = (tag: string): ClickHouseORMPlugin => ({
+      name: tag,
       onQueryStart() {
         calls.push(`${tag}:start`);
       },
@@ -610,8 +379,9 @@ describe("ck-orm observability", function describeClickHouseORMObservability() {
     //   - `noError` declares start + success but not onQueryError (the previously
     //     uncovered observability.ts:201-202 continue branch)
     const full = tagged("full");
-    const empty: ClickHouseORMInstrumentation = {};
-    const noError: ClickHouseORMInstrumentation = {
+    const empty: ClickHouseORMPlugin = { name: "empty" };
+    const noError: ClickHouseORMPlugin = {
+      name: "noError",
       onQueryStart() {
         calls.push("noError:start");
       },
@@ -640,44 +410,165 @@ describe("ck-orm observability", function describeClickHouseORMObservability() {
     // span boundaries.
     expect(calls).toEqual(["full:start", "noError:start", "noError:success", "full:success", "full:error"]);
   });
+});
 
-  it("attaches db.session.id and ck_orm.session_id to tracing spans when the event carries sessionId", async function testTracingSessionAttributes() {
-    const tracer = createCapturedTracer();
-    const instrumentation = createTracingInstrumentation({
-      tracer: tracer.tracer,
+describe("ck-orm plugins", function describePlugins() {
+  it("adds onQueryStart headers to every request path", async function testPluginHeadersOnEveryPath() {
+    const seen: Array<string | null> = [];
+    const plugin: ClickHouseORMPlugin = {
+      name: "tag",
+      onQueryStart() {
+        return { http_headers: { "x-plugin": "on" } };
+      },
+    };
+    const clientFor = (body: string) =>
+      clickhouseClient({
+        host: "http://localhost:8123",
+        plugins: [plugin],
+        fetch(request) {
+          seen.push(request.headers.get("x-plugin"));
+          return new Response(body, { status: 200 });
+        },
+      });
+    const json = clientFor(JSON.stringify({ data: [] }));
+    const empty = clientFor("");
+    const ok = clientFor("Ok.\n");
+
+    await json.execute(sql`select 1`);
+    await json.select().from(users).execute();
+    await Array.fromAsync(empty.stream(sql`select 1`));
+    await Array.fromAsync(empty.select().from(users).iterator());
+    await empty.command(sql`select 1`);
+    await empty.insertJsonEachRow(users, [{ id: 1, name: "alice" }]);
+    await ok.ping();
+    await ok.replicasStatus();
+
+    expect(seen).toEqual(Array(8).fill("on"));
+  });
+
+  it("keeps client-level and session headers above plugin headers inside runInSession", async function testPluginHeaderPrecedenceInSession() {
+    let headers = new Headers();
+    const db = clickhouseClient({
+      host: "http://localhost:8123",
+      http_headers: { "x-client": "client" },
+      plugins: [
+        {
+          name: "override-attempt",
+          onQueryStart: () => ({
+            http_headers: { "x-client": "plugin", "x-session": "plugin", "X-ClickHouse-Replica-Tag": "plugin" },
+          }),
+        },
+      ],
+      fetch(request) {
+        headers = request.headers;
+        return new Response("", { status: 200 });
+      },
     });
 
-    const event = createQueryEvent({
-      mode: "query",
-      queryKind: "typed",
-      statement: "select 1",
-      operation: "SELECT",
-      startedAt: 0,
-      sessionId: "session_abc",
+    await db.runInSession((session) => session.command(sql`select 1`), {
+      session_id: "session_under_test",
+      http_headers: { "x-session": "session" },
     });
 
-    await instrumentation.onQueryStart?.(event);
+    expect(headers.get("x-client")).toBe("client");
+    expect(headers.get("x-session")).toBe("session");
+    expect(headers.get("x-clickhouse-replica-tag")).toBe("session_under_test");
+  });
 
-    const attributes = tracer.spans[0]?.attributes;
-    expect(attributes?.["db.session.id"]).toBe("session_abc");
-    expect(attributes?.["ck_orm.session_id"]).toBe("session_abc");
+  it("keeps explicit and runtime-owned headers above plugin headers", async function testPluginHeaderPrecedence() {
+    let headers = new Headers();
+    const db = clickhouseClient({
+      host: "http://localhost:8123",
+      username: "alice",
+      password: "secret",
+      http_headers: { "x-client": "client" },
+      plugins: [
+        {
+          name: "first",
+          onQueryStart: () => ({
+            http_headers: {
+              "x-plugin": "first",
+              "x-client": "plugin",
+              "x-request": "plugin",
+              Authorization: "Bearer plugin",
+            },
+          }),
+        },
+        { name: "second", onQueryStart: () => ({ http_headers: { "X-Plugin": "second" } }) },
+      ],
+      fetch(request) {
+        headers = request.headers;
+        return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      },
+    });
 
-    // Cross-check: events without sessionId must not surface either attribute
-    // — guarding the `event.sessionId !== undefined` gate from regressing into
-    // an always-on `?? null` shape.
-    const sessionlessTracer = createCapturedTracer();
-    const sessionlessInstrumentation = createTracingInstrumentation({
-      tracer: sessionlessTracer.tracer,
+    await db.execute(sql`select 1`, { http_headers: { "x-request": "request" } });
+
+    expect(headers.get("x-plugin")).toBe("second");
+    expect(headers.get("x-client")).toBe("client");
+    expect(headers.get("x-request")).toBe("request");
+    expect(headers.get("authorization")).toBe(`Basic ${btoa("alice:secret")}`);
+  });
+
+  it("logs failing hooks with the plugin name and drops their headers", async function testPluginHookFailures() {
+    const consoleError = spyOn(console, "error").mockImplementation(() => undefined);
+    let headers = new Headers();
+    const db = clickhouseClient({
+      host: "http://localhost:8123",
+      plugins: [
+        {
+          name: "throws",
+          onQueryStart() {
+            throw new Error("start failed");
+          },
+        },
+        { name: "bad-header", onQueryStart: () => ({ http_headers: { "bad header": "x", "x-bad": "dropped" } }) },
+        { name: "good", onQueryStart: () => ({ http_headers: { "x-good": "yes" } }) },
+      ],
+      fetch(request) {
+        headers = request.headers;
+        return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      },
     });
-    const sessionlessEvent = createQueryEvent({
-      mode: "query",
-      queryKind: "typed",
-      statement: "select 1",
-      operation: "SELECT",
-      startedAt: 0,
+
+    try {
+      await db.execute(sql`select 1`);
+      expect(consoleError.mock.calls.map((call) => call[0])).toEqual([
+        '[ck-orm] plugin "throws" onQueryStart threw:',
+        '[ck-orm] plugin "bad-header" onQueryStart threw:',
+      ]);
+      expect(headers.get("x-bad")).toBeNull();
+      expect(headers.get("x-good")).toBe("yes");
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("reports a stream stopped early as a success with the rows read so far", async function testEarlyStreamExit() {
+    const events: string[] = [];
+    const db = clickhouseClient({
+      host: "http://localhost:8123",
+      plugins: [
+        {
+          name: "probe",
+          onQueryStart() {
+            events.push("start");
+          },
+          onQuerySuccess(event) {
+            events.push(`success:${event.rowCount}`);
+          },
+          onQueryError() {
+            events.push("error");
+          },
+        },
+      ],
+      fetch: () => new Response('{"n":1}\n{"n":2}\n{"n":3}\n', { status: 200 }),
     });
-    await sessionlessInstrumentation.onQueryStart?.(sessionlessEvent);
-    expect(sessionlessTracer.spans[0]?.attributes["db.session.id"]).toBeUndefined();
-    expect(sessionlessTracer.spans[0]?.attributes["ck_orm.session_id"]).toBeUndefined();
+
+    for await (const _row of db.stream(sql`select n`)) {
+      break;
+    }
+
+    expect(events).toEqual(["start", "success:1"]);
   });
 });

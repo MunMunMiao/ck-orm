@@ -210,14 +210,14 @@ export type {
   StandardSchemaV1SuccessResult,
 } from "./internal/standard-schema";
 export type {
-  ClickHouseORMInstrumentation,
   ClickHouseORMLogger,
   ClickHouseORMLogLevel,
+  ClickHouseORMPlugin,
   ClickHouseORMQueryErrorEvent,
   ClickHouseORMQueryEvent,
   ClickHouseORMQueryResultEvent,
+  ClickHouseORMQueryStartResult,
   ClickHouseORMQueryStatistics,
-  ClickHouseORMTracingOptions,
 } from "./observability";
 export type {
   BuiltQuery,

@@ -6,12 +6,7 @@ import {
   unwrapNullableLowCardinalityType,
 } from "../internal/clickhouse-type";
 import { formatClickHouseDateTime } from "../internal/datetime";
-import type {
-  ClickHouseORMInstrumentation,
-  ClickHouseORMLogger,
-  ClickHouseORMLogLevel,
-  ClickHouseORMTracingOptions,
-} from "../observability";
+import type { ClickHouseORMLogger, ClickHouseORMLogLevel, ClickHouseORMPlugin } from "../observability";
 import { base64EncodeUtf8, canSetUserAgentHeader } from "../platform";
 import type { AnySelectBuilderLike, CompiledQuery, CreateMaterializedViewOptions, QueryClient } from "../query";
 import type { AnyTable } from "../schema";
@@ -229,8 +224,7 @@ export type ClickHouseFetchConfigOptions = SharedClientConfigOptions &
 export type ClickHouseClientConfig = ClickHouseFetchConfigOptions & {
   readonly logger?: ClickHouseORMLogger | false;
   readonly logLevel?: ClickHouseORMLogLevel;
-  readonly tracing?: false | ClickHouseORMTracingOptions;
-  readonly instrumentation?: ClickHouseORMInstrumentation[];
+  readonly plugins?: readonly ClickHouseORMPlugin[];
 };
 
 export type ResolveJoinUseNulls<TSettings, TFallback extends 0 | 1> = TSettings extends {
@@ -754,6 +748,8 @@ const DEPRECATED_CLIENT_CONFIG_KEYS: Record<string, { readonly label?: string; r
   json: { label: "json hooks", hint: "ck-orm uses built-in JSON handling internally" },
   session_timeout: { hint: "pass it to a single request or runInSession() instead" },
   session_check: { hint: "pass it to a single request or runInSession() instead" },
+  instrumentation: { hint: "use plugins instead" },
+  tracing: { hint: 'remove it, or use plugins: [otelTracing()] from "ck-orm/otel" instead' },
 };
 
 export const normalizeClientConfig = (config: ClickHouseFetchConfigOptions): NormalizedClientConfig => {

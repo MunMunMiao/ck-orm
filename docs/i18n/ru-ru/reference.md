@@ -1,5 +1,5 @@
 ## Установка
-<!-- src:8558838e -->
+<!-- src:03d420fc -->
 
 ```bash [bun]
 bun add ck-orm
@@ -14,10 +14,10 @@ pnpm add ck-orm
 ```
 
 ```bash [yarn]
-yarn add ck-orm @opentelemetry/api
+yarn add ck-orm
 ```
 
-У ck-orm одна peer-зависимость — `@opentelemetry/api`. Bun, npm и pnpm устанавливают её автоматически; Yarn — нет, поэтому команда для Yarn добавляет её явно.
+У ck-orm нет обязательных зависимостей. `@opentelemetry/api` — необязательная peer-зависимость, которая нужна только плагину `ck-orm/otel`; устанавливайте её вместе с ck-orm, если используете этот плагин.
 
 ## Быстрый старт
 <!-- src:d7ba4246 -->
@@ -824,7 +824,7 @@ ckType.qbit("embedding", ckType.float32(), { dimensions: 8 });
 `INSERT`; явная передача таких столбцов отклоняется.
 
 ## Конфигурация клиента
-<!-- src:0d752985 -->
+<!-- src:26d96c74 -->
 
 Создайте клиент с помощью `clickhouseClient()`:
 
@@ -901,8 +901,7 @@ const db = clickhouseClient({
 | `session_max_concurrent_requests` | Максимум одновременно выполняющихся запросов для одного `session_id` в этом клиенте (по умолчанию `1`) |
 | `compression.response` | Со значением `false` по умолчанию потоковые запросы отправляют `enable_http_compression = 0`, поэтому строки приходят по мере появления в ClickHouse. Непотоковые запросы сохраняют настройку сервера по умолчанию (начиная с ClickHouse 26.3 сервер сжимает ответ, если клиент это поддерживает). Значение `true` сжимает каждый ответ, из-за чего поток с редкими данными может задержаться до заполнения блока сжатия |
 | `logger` / `logLevel` | Интеграция с логгером |
-| `tracing` | Интеграция с OpenTelemetry |
-| `instrumentation` | Пользовательские хуки жизненного цикла запроса |
+| `plugins` | Плагины жизненного цикла запроса, например `otelTracing()` из `ck-orm/otel` |
 
 Параметры времени жизни сессии намеренно задаются для каждого запроса. Передавайте `session_timeout` отдельному запросу или `runInSession(...)`. Используйте `session_check`, когда продолжаете существующую `session_id`, а не когда создаёте новую сессию с нуля.
 `session_max_concurrent_requests` работает иначе: это ограничение на уровне клиента, которое ограничивает число одновременно выполняющихся запросов к одной `session_id`.
@@ -1513,7 +1512,7 @@ const rows = await db
 При выполнении вычисляемые выражения подчиняются правилам распространения NULL в ClickHouse: если ClickHouse возвращает NULL (во входе был NULL или для строки, присоединённой через левое соединение, не нашлось пары), значение будет `null`. В TypeScript типом выражения остаётся объявленный вами `TData` (или фиксированный тип вспомогательной функции) и автоматически не расширяется. Поэтому укажите `| null` — например, `fn.plus<number | null>(...)`, — или оберните вход в `fn.coalesce(...)`, если он может быть NULL.
 
 ## Запись данных
-<!-- src:d7555d6e -->
+<!-- src:5d78750d -->
 
 ### `insert(table).values(...)`
 
@@ -1612,7 +1611,7 @@ await db.insertJsonEachRow("tmp_scope", [
 - обычный массив
 - `AsyncIterable`
 
-Пустой обычный массив ничего не делает на стороне клиента, но хуки инструментирования всё равно получают событие успешного завершения вставки с `rowCount: 0`. Поведение при неизвестных полях контролирует ClickHouse; если сервер должен игнорировать лишние поля JSON, передайте настройки вроде `input_format_skip_unknown_fields: 1`. Вложенные столбцы отправляются как плоские массивы `column.field` (в ClickHouse по умолчанию `flatten_nested = 1`), поэтому `{ lines: [{ sku: "a" }] }` работает и с `insert().values()`, и с `insertJsonEachRow()`.
+Пустой обычный массив ничего не делает на стороне клиента, но хуки плагинов всё равно получают событие успешного завершения вставки с `rowCount: 0`. Поведение при неизвестных полях контролирует ClickHouse; если сервер должен игнорировать лишние поля JSON, передайте настройки вроде `input_format_skip_unknown_fields: 1`. Вложенные столбцы отправляются как плоские массивы `column.field` (в ClickHouse по умолчанию `flatten_nested = 1`), поэтому `{ lines: [{ sku: "a" }] }` работает и с `insert().values()`, и с `insertJsonEachRow()`.
 
 При наличии схемы таблицы `insertJsonEachRow()` передаёт JavaScript `Date` в столбец `DateTime`/`DateTime64` как то же целое значение в тиках, что и `insert().values()`, и поручает разбор строк стандартному парсеру ClickHouse `date_time_input_format = basic`. Поэтому оба способа одинаково разбирают строки даты и времени. JSON-число, которое вы сами передаёте в столбец `DateTime64`, по-прежнему читается как тики в `JSONEachRow` и как секунды Unix в `.values()`.
 
@@ -2645,13 +2644,12 @@ await db.replicasStatus();
 ```
 
 ## Наблюдаемость
-<!-- src:8021e8d9 -->
+<!-- src:37125a8e -->
 
-В `ck-orm` есть три встроенных слоя наблюдаемости:
+В `ck-orm` есть два слоя наблюдаемости:
 
-- `logger`
-- `tracing`
-- `instrumentation`
+- `logger` и `logLevel` для встроенного логирования
+- `plugins` для хуков жизненного цикла запроса; трассировка OpenTelemetry поставляется как плагин `ck-orm/otel`
 
 ### Логгер
 
@@ -2683,56 +2681,109 @@ const db = clickhouseClient({
 });
 ```
 
-### Трассировка
+### Плагин OpenTelemetry
+
+Установите `@opentelemetry/api`, затем добавьте плагин:
 
 ```ts
 import { clickhouseClient } from "ck-orm";
-import { trace } from "@opentelemetry/api";
+import { otelTracing } from "ck-orm/otel";
 
 const db = clickhouseClient({
   databaseUrl: "http://127.0.0.1:8123/telemetry_lab",
-  tracing: {
-    tracer: trace.getTracer("ck-orm-example"),
-    includeStatement: false,
-    includeRowCount: true,
-  },
+  plugins: [
+    otelTracing({
+      includeStatement: false,
+      includeRowCount: true,
+    }),
+  ],
 });
 ```
 
-Трассировка берёт из конфигурации `clickhouseClient(...)` имя базы данных, адрес и порт сервера, а также таймаут запроса. Передавайте атрибуты уровня сервиса через `tracing.attributes`; ключи, начинающиеся с `db.`, игнорируются, поэтому код приложения не может перезаписать встроенные атрибуты базы данных.
+Если не передать `tracer`, плагин использует `trace.getTracer("ck-orm")`. Он берёт из конфигурации `clickhouseClient(...)` имя базы данных, адрес и порт сервера, а также таймаут запроса. Передавайте атрибуты уровня сервиса через `attributes`; ключи, начинающиеся с `db.`, игнорируются, поэтому код приложения не может перезаписать встроенные атрибуты базы данных.
 
-Для общего бэкенда трассировки безопаснее использовать `includeStatement: false`. По умолчанию в библиотеке стоит `true`; отключите эту настройку, если имена таблиц, столбцов или форма запроса не должны покидать границы сервиса. Привязанные значения не попадают в компактную форму запроса, но даже форма SQL может содержать чувствительные сведения о работе сервиса.
+Для общего бэкенда трассировки безопаснее использовать `includeStatement: false`. По умолчанию стоит `true`; отключите эту настройку, если имена таблиц, столбцов или форма запроса не должны покидать границы сервиса. Привязанные значения не попадают в компактную форму запроса, но даже форма SQL может содержать чувствительные сведения о работе сервиса.
 
-### Пользовательское инструментирование
+#### Серверные спаны
+
+Передайте `propagateTraceContext: true`, чтобы с каждым запросом отправлялся контекст трассировки W3C (`traceparent`, `tracestate`) текущего спана. Тогда ClickHouse записывает собственные спаны запроса, такие как `HTTPHandler`, `query` и стадии конвейера, как дочерние по отношению к спану ck-orm. Плагин пересылает только эти два заголовка, а `baggage` и вендорские заголовки вашего глобального пропагатора не отправляет никогда, и только для спанов, попавших в выборку (sampled): ClickHouse записывает серверные спаны для любого полученного контекста трассировки, независимо от выборки. Плагин внедряет контекст через глобально зарегистрированный пропагатор, который OpenTelemetry SDK по умолчанию настраивает на контекст трассировки W3C; если пропагатор не зарегистрирован, ничего не отправляется.
 
 ```ts
-import type { ClickHouseORMInstrumentation } from "ck-orm";
-
-const instrumentation: ClickHouseORMInstrumentation = {
-  onQueryStart(event) {
-    console.log("start", event.operation, event.statement);
-  },
-  onQuerySuccess(event) {
-    console.log("success", event.durationMs, event.rowCount);
-  },
-  onQueryError(event) {
-    console.error("error", event.error);
-  },
-};
-
 const db = clickhouseClient({
   databaseUrl: "http://127.0.0.1:8123/telemetry_lab",
-  instrumentation: [instrumentation],
+  plugins: [otelTracing({ propagateTraceContext: true })],
 });
 ```
 
-Публичные типы событий:
+ClickHouse записывает эти спаны в `system.opentelemetry_span_log` и сам их не экспортирует; об экспорте в бэкенд трассировки см. [Tracing ClickHouse with OpenTelemetry](https://clickhouse.com/docs/operations/opentelemetry). Серверные спаны содержат `clickhouse.query_id`, который совпадает с `db.query.id` в спане ck-orm, а об ошибках сообщают через `clickhouse.exception_code`, а не через статус спана.
 
+Если вы передадите собственный `traceparent` в `http_headers`, он переопределит заголовок плагина; передайте и соответствующий `tracestate`, иначе вместе с ним будет отправлен `tracestate` плагина.
+
+В браузерах из-за `traceparent` запрос не проходит CORS-предпроверку (preflight), если ClickHouse не разрешает этот заголовок, а поскольку его несут только запросы из выборки, сбои выглядят случайными. Значение `http_options_response` по умолчанию его не разрешает, поэтому включайте распространение в браузерах только после добавления заголовка в файл `config.d`:
+
+```xml
+<clickhouse>
+  <http_options_response replace="replace">
+    <header><name>Access-Control-Allow-Origin</name><value>*</value></header>
+    <header><name>Access-Control-Allow-Headers</name><value>origin, x-requested-with, x-clickhouse-format, x-clickhouse-user, x-clickhouse-key, Authorization, traceparent, tracestate</value></header>
+    <header><name>Access-Control-Allow-Methods</name><value>POST, GET, OPTIONS</value></header>
+    <header><name>Access-Control-Max-Age</name><value>86400</value></header>
+  </http_options_response>
+</clickhouse>
+```
+
+### Написание плагинов
+
+Плагин — это объект с полем `name` и не более чем тремя хуками:
+
+```ts
+import { clickhouseClient, type ClickHouseORMPlugin } from "ck-orm";
+
+const slowQueries = (thresholdMs: number): ClickHouseORMPlugin => ({
+  name: "slow-queries",
+  onQuerySuccess(event) {
+    if (event.durationMs >= thresholdMs) {
+      console.warn("slow query", event.querySummary, event.durationMs);
+    }
+  },
+});
+
+const db = clickhouseClient({
+  databaseUrl: "http://127.0.0.1:8123/telemetry_lab",
+  plugins: [slowQueries(500)],
+});
+```
+
+`onQueryStart` может вернуть заголовки для этого запроса:
+
+```ts
+const requestSource: ClickHouseORMPlugin = {
+  name: "request-source",
+  onQueryStart() {
+    return { http_headers: { "x-request-source": "billing-worker" } };
+  },
+};
+```
+
+Плагины подчиняются следующим правилам:
+
+- Хуки выполняются для каждого запроса, который ck-orm отправляет в ClickHouse, включая запросы, потоки, команды, вставки, вспомогательные функции DDL, `ping()`, `replicasStatus()` и очистку временных таблиц в `runInSession()`. Хуки не запускают только запросы, которые отменяют брошенный поток и ждут разблокировки его сессии (`KILL QUERY` и последующий опрос).
+- За каждым `onQueryStart` следует ровно один `onQuerySuccess` или `onQueryError` с тем же `executionId`; для потока это происходит, когда итератор завершается или закрывается. Поток, который вызывающий код остановил досрочно, считается успешным и сообщает число строк, прочитанных к этому моменту. Храните состояние запроса по ключу `executionId`.
+- Хуки `onQueryStart` выполняются в порядке регистрации, и все они завершаются до отправки запроса. `onQuerySuccess` и `onQueryError` выполняются в обратном порядке. Встроенный логгер всегда работает самым внешним.
+- Заголовок более позднего плагина переопределяет заголовок более раннего. Явно заданные `http_headers` (на уровне клиента или отдельного запроса) переопределяют заголовки плагинов. Плагины не могут переопределить заголовок `Authorization`, построенный из учётных данных подключения, и заголовок `X-ClickHouse-Replica-Tag`, который отправляют сессии.
+- Хук, выбросивший исключение, попадает в журнал вместе с именем плагина и не влияет ни на запрос, ни на другие плагины. Заголовки из `onQueryStart`, который выбросил исключение или вернул недопустимый заголовок, отбрасываются.
+- События доступны только для чтения. Плагины не могут изменять SQL, параметры, настройки и результаты.
+- Хуки ожидаются (await) на пути выполнения запроса. Медленную работу, например сетевой экспорт, буферизуйте, а не ожидайте в хуке.
+
+Публичные типы наблюдаемости:
+
+- `ClickHouseORMPlugin`
+- `ClickHouseORMQueryStartResult`
 - `ClickHouseORMQueryEvent`
 - `ClickHouseORMQueryResultEvent`
 - `ClickHouseORMQueryErrorEvent`
 - `ClickHouseORMQueryStatistics`
-- `ClickHouseORMTracingOptions`
+- `ClickHouseORMTracingOptions` (из `ck-orm/otel`)
 - `ClickHouseORMLogLevel`
 
 Встроенные поля событий включают `databaseName`, `serverAddress`, `serverPort`, `requestTimeoutMs`, `statementHash`, `querySummary`, `queryId`, `sessionId` и `tableName`, когда ck-orm может определить единственную таблицу, не угадывая её по сырому SQL. JSON-запросы, выполняемые целиком, также содержат статистику ответа ClickHouse, если сервер её возвращает: `serverElapsedMs`, `readRows`, `readBytes`, `resultRows` и `rowsBeforeLimitAtLeast`.
@@ -2809,7 +2860,7 @@ const toPublicQueryError = (error: unknown) => {
 Не возвращайте `responseText` или исходный текст ошибки `message` клиентам, которым нельзя доверять. В тексте ошибки ClickHouse могут быть фрагменты SQL и имена объектов.
 
 ## Безопасность
-<!-- src:c2dbb125 -->
+<!-- src:062d0032 -->
 
 По умолчанию `ck-orm` устроен так, чтобы небезопасный SQL было трудно составлять.
 
@@ -2837,9 +2888,11 @@ const toPublicQueryError = (error: unknown) => {
 
 ### Какие данные раскрывает трассировка
 
-По умолчанию `tracing.includeStatement` имеет значение `true`, поэтому компактный текст SQL добавляется к спанам как `db.statement` и `db.query.text`.
+`otelTracing()` добавляет компактный текст SQL к спанам как `db.statement` и `db.query.text`, потому что `includeStatement` по умолчанию равно `true`.
 
 Привязанные значения хранятся отдельно как именованные параметры ClickHouse и не входят в текст запроса, но имена таблиц и столбцов, а также форма запроса всё равно попадают в вывод трассировки. Если бэкенд трассировки общий или находится вне хоста сервиса, отключите `includeStatement` или отфильтруйте `db.statement` / `db.query.text` в коллекторе.
+
+Серверные спаны ClickHouse также записывают запрос как `db.statement` в `system.opentelemetry_span_log`. Эта таблица остаётся на сервере ClickHouse, пока вы её не экспортируете.
 
 ### Ответы с ошибками
 

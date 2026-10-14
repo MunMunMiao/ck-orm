@@ -1,5 +1,5 @@
 ## インストール
-<!-- src:8558838e -->
+<!-- src:03d420fc -->
 
 ```bash [bun]
 bun add ck-orm
@@ -14,10 +14,10 @@ pnpm add ck-orm
 ```
 
 ```bash [yarn]
-yarn add ck-orm @opentelemetry/api
+yarn add ck-orm
 ```
 
-ck-ormのピア依存関係は`@opentelemetry/api`1つです。Bun、npm、pnpmでは自動で入り、Yarnではコマンドに明示的に追加します。
+ck-ormに必須の依存関係はありません。`@opentelemetry/api`は省略可能なピア依存関係で、`ck-orm/otel`プラグインでのみ使います。そのプラグインを使うときは、ck-ormと一緒にインストールしてください。
 
 ## クイックスタート
 <!-- src:d7ba4246 -->
@@ -721,7 +721,7 @@ ckType.qbit("embedding", ckType.float32(), { dimensions: 8 });
 挿入する行の形は、`typeof table.$inferInsert`から推論される形と同じです。ただし、ClickHouseのデフォルト値や生成式を持つカラムは、`insert(table).values(...)`を呼び出すときに省略できます。生成される`INSERT`のカラムリストには、`MATERIALIZED`カラムと`ALIAS`カラムは含まれません。これらを明示的に渡すと、受け付けられません。
 
 ## クライアント設定
-<!-- src:0d752985 -->
+<!-- src:26d96c74 -->
 
 `clickhouseClient()`でクライアントを作成します。
 
@@ -798,8 +798,7 @@ const db = clickhouseClient({
 | `session_max_concurrent_requests` | このクライアント内で同じ`session_id`に対して同時に実行できるリクエスト数の上限（デフォルトは`1`） |
 | `compression.response` | デフォルトの`false`では、ストリーミングリクエストは`enable_http_compression = 0`を送り、行はClickHouseが生成した順に届きます。通常のリクエストはサーバーのデフォルトを維持します（ClickHouse 26.3以降では、クライアントが対応する場合にレスポンスを圧縮します）。`true`はすべてのレスポンスを圧縮します。データが少ないストリームでは、圧縮ブロックが埋まるまで届くのが遅れることがあります。 |
 | `logger` / `logLevel` | ロガー連携 |
-| `tracing` | OpenTelemetry連携 |
-| `instrumentation` | カスタムクエリライフサイクルフック |
+| `plugins` | クエリライフサイクルプラグイン（`ck-orm/otel`の`otelTracing()`など） |
 
 セッションの寿命を決める設定は、意図的にリクエスト単位にしています。`session_timeout`は単一クエリか`runInSession(...)`に渡します。`session_check`は、新しいセッションを開始するときではなく、既存の`session_id`を引き継ぐときに使ってください。
 `session_max_concurrent_requests`は異なります。同じ`session_id`を対象にした重複リクエストを絞り込む、クライアント単位のガードです。
@@ -1419,7 +1418,7 @@ const rows = await db
 計算式は実行時にClickHouseのNULL伝播に従います。ClickHouseがNULLを返すと（入力がNULLの場合、または左結合した行が一致しない場合）、値は`null`です。そのTypeScriptの型は、宣言した`TData`（またはヘルパーの固定型）のままで、自動的にNULL許容型には広げられません。入力がNULLになる可能性がある場合は、`| null`を宣言する（例：`fn.plus<number | null>(...)`）か、入力を`fn.coalesce(...)`で包んでください。
 
 ## 書き込み
-<!-- src:d7555d6e -->
+<!-- src:5d78750d -->
 
 ### `insert(table).values(...)`
 
@@ -1518,7 +1517,7 @@ await db.insertJsonEachRow("tmp_scope", [
 - 通常の配列
 - `AsyncIterable`
 
-空の通常配列は、クライアント側で何も実行しない扱いになります。それでも計装フックには、INSERTが成功し`rowCount: 0`だったライフサイクルが報告されます。不明なフィールドの扱いはClickHouseが決めます。サーバーに余分なJSONフィールドを無視させたいときは、`input_format_skip_unknown_fields: 1`などの設定を渡してください。ネストカラムは、フラット化された`column.field`配列（ClickHouseの`flatten_nested = 1`、デフォルト）として送信されます。そのため、`{ lines: [{ sku: "a" }] }`は`insert().values()`と`insertJsonEachRow()`のどちらでも使えます。
+空の通常配列は、クライアント側で何も実行しない扱いになります。それでもプラグインのフックには、INSERTが成功し`rowCount: 0`だったライフサイクルが報告されます。不明なフィールドの扱いはClickHouseが決めます。サーバーに余分なJSONフィールドを無視させたいときは、`input_format_skip_unknown_fields: 1`などの設定を渡してください。ネストカラムは、フラット化された`column.field`配列（ClickHouseの`flatten_nested = 1`、デフォルト）として送信されます。そのため、`{ lines: [{ sku: "a" }] }`は`insert().values()`と`insertJsonEachRow()`のどちらでも使えます。
 
 テーブルスキーマを使う場合、`insertJsonEachRow()`は、`DateTime`/`DateTime64`カラムのJavaScriptの`Date`を`insert().values()`と同じ正確な整数tickとして送信します。文字列の解釈は、ClickHouseのデフォルトパーサー`date_time_input_format = basic`に任せます。このため、日時の文字列はどちらでも同じ方法で読み込まれます。自分で`DateTime64`カラムへJSONの数値を渡した場合は、`JSONEachRow`ではtick、`.values()`ではUnix秒として読み込まれます。
 
@@ -2475,13 +2474,12 @@ await db.replicasStatus();
 ```
 
 ## オブザーバビリティ
-<!-- src:8021e8d9 -->
+<!-- src:37125a8e -->
 
-`ck-orm`は、組み込みのオブザーバビリティレイヤーを3つ備えています。
+`ck-orm`は、オブザーバビリティのレイヤーを2つ備えています。
 
-- `logger`
-- `tracing`
-- `instrumentation`
+- 組み込みのロギング用の`logger`と`logLevel`
+- クエリライフサイクルのフック用の`plugins`。OpenTelemetryトレーシングは`ck-orm/otel`プラグインとして提供されます
 
 ### ロガー
 
@@ -2513,56 +2511,109 @@ const db = clickhouseClient({
 });
 ```
 
-### トレーシング
+### OpenTelemetryプラグイン
+
+`@opentelemetry/api`をインストールしてから、プラグインを追加します。
 
 ```ts
 import { clickhouseClient } from "ck-orm";
-import { trace } from "@opentelemetry/api";
+import { otelTracing } from "ck-orm/otel";
 
 const db = clickhouseClient({
   databaseUrl: "http://127.0.0.1:8123/telemetry_lab",
-  tracing: {
-    tracer: trace.getTracer("ck-orm-example"),
-    includeStatement: false,
-    includeRowCount: true,
-  },
+  plugins: [
+    otelTracing({
+      includeStatement: false,
+      includeRowCount: true,
+    }),
+  ],
 });
 ```
 
-トレーシングは、`clickhouseClient(...)`の設定からデータベース名、サーバーアドレス、サーバーポート、リクエストのタイムアウトを取得します。サービス単位のラベルは`tracing.attributes`で渡します。`db.`で始まるキーは無視するため、アプリケーションコードでは組み込みのデータベース属性を上書きできません。
+`tracer`を渡さない場合、プラグインは`trace.getTracer("ck-orm")`を使います。データベース名、サーバーアドレス、サーバーポート、リクエストのタイムアウトは、`clickhouseClient(...)`の設定から取得します。サービス単位のラベルは`attributes`で渡します。`db.`で始まるキーは無視するため、アプリケーションコードでは組み込みのデータベース属性を上書きできません。
 
-複数のサービスで共有するトレーシングバックエンドでは、`includeStatement: false`のほうが安全です。ライブラリのデフォルトは`true`です。テーブル名、カラム名、クエリの形をサービスの境界から外に出したくない場合は、オフにしてください。バインドされた値は空白を詰めたSQLに埋め込まれませんが、SQLの形自体も運用上は機微な情報になる可能性があります。
+複数のサービスで共有するトレーシングバックエンドでは、`includeStatement: false`のほうが安全です。デフォルトは`true`です。テーブル名、カラム名、クエリの形をサービスの境界から外に出したくない場合は、オフにしてください。バインドされた値は空白を詰めたSQLに埋め込まれませんが、SQLの形自体も運用上は機微な情報になる可能性があります。
 
-### カスタム計装
+#### サーバー側のスパン
+
+`propagateTraceContext: true`を設定すると、スパンのW3Cトレースコンテキスト（`traceparent`、`tracestate`）が各リクエストとともに送られます。すると、ClickHouseは`HTTPHandler`、`query`、パイプラインの各ステージなど、クエリに対する自身のスパンを、ck-ormのスパンの子として記録します。プラグインが転送するのはこの2つのヘッダーだけで、グローバルなプロパゲーター由来の`baggage`やベンダー固有のヘッダーは転送しません。また、転送するのはサンプリングされたスパンだけです。ClickHouseは、受け取ったトレースコンテキストについて、サンプリングされているかどうかにかかわらず、すべてサーバースパンを記録するためです。プラグインはグローバルに登録されたプロパゲーターを通じて注入します。OpenTelemetry SDKは、これをデフォルトでW3Cトレースコンテキストに設定します。プロパゲーターが登録されていない場合、何も送信されません。
 
 ```ts
-import type { ClickHouseORMInstrumentation } from "ck-orm";
-
-const instrumentation: ClickHouseORMInstrumentation = {
-  onQueryStart(event) {
-    console.log("start", event.operation, event.statement);
-  },
-  onQuerySuccess(event) {
-    console.log("success", event.durationMs, event.rowCount);
-  },
-  onQueryError(event) {
-    console.error("error", event.error);
-  },
-};
-
 const db = clickhouseClient({
   databaseUrl: "http://127.0.0.1:8123/telemetry_lab",
-  instrumentation: [instrumentation],
+  plugins: [otelTracing({ propagateTraceContext: true })],
 });
 ```
 
-公開イベント型は次のとおりです。
+ClickHouseはこれらのスパンを`system.opentelemetry_span_log`に書き込むだけで、エクスポートはしません。トレーシングバックエンドへエクスポートする方法は、[Tracing ClickHouse with OpenTelemetry](https://clickhouse.com/docs/operations/opentelemetry)を参照してください。サーバースパンには`clickhouse.query_id`が付き、ck-ormのスパンの`db.query.id`と一致します。失敗はスパンのステータスではなく、`clickhouse.exception_code`で報告されます。
 
+`http_headers`に独自の`traceparent`を渡すと、プラグインのものより優先されます。対応する`tracestate`も一緒に渡してください。渡さないと、プラグインの`tracestate`もあわせて送られます。
+
+ブラウザーでは、ClickHouseがこのヘッダーを許可していない限り、`traceparent`のせいでリクエストがCORSプリフライトに失敗します。しかも送られるのはサンプリングされたリクエストだけなので、失敗はランダムに起きているように見えます。デフォルトの`http_options_response`はこのヘッダーを許可しません。ブラウザーで伝播を有効にするのは、`config.d`ファイルで許可を追加してからにしてください。
+
+```xml
+<clickhouse>
+  <http_options_response replace="replace">
+    <header><name>Access-Control-Allow-Origin</name><value>*</value></header>
+    <header><name>Access-Control-Allow-Headers</name><value>origin, x-requested-with, x-clickhouse-format, x-clickhouse-user, x-clickhouse-key, Authorization, traceparent, tracestate</value></header>
+    <header><name>Access-Control-Allow-Methods</name><value>POST, GET, OPTIONS</value></header>
+    <header><name>Access-Control-Max-Age</name><value>86400</value></header>
+  </http_options_response>
+</clickhouse>
+```
+
+### プラグインを書く
+
+プラグインは、`name`と最大3つのフックを持つオブジェクトです。
+
+```ts
+import { clickhouseClient, type ClickHouseORMPlugin } from "ck-orm";
+
+const slowQueries = (thresholdMs: number): ClickHouseORMPlugin => ({
+  name: "slow-queries",
+  onQuerySuccess(event) {
+    if (event.durationMs >= thresholdMs) {
+      console.warn("slow query", event.querySummary, event.durationMs);
+    }
+  },
+});
+
+const db = clickhouseClient({
+  databaseUrl: "http://127.0.0.1:8123/telemetry_lab",
+  plugins: [slowQueries(500)],
+});
+```
+
+`onQueryStart`は、そのリクエスト用のヘッダーを返せます。
+
+```ts
+const requestSource: ClickHouseORMPlugin = {
+  name: "request-source",
+  onQueryStart() {
+    return { http_headers: { "x-request-source": "billing-worker" } };
+  },
+};
+```
+
+プラグインには次のルールがあります。
+
+- フックは、ck-ormがClickHouseに送るすべてのリクエストで実行されます。対象はクエリ、ストリーム、コマンド、INSERT、DDLヘルパー、`ping()`、`replicasStatus()`、`runInSession()`での一時テーブルのクリーンアップです。放棄されたストリームをキャンセルし、そのセッションのロック解除を待つリクエスト（`KILL QUERY`とその後のポーリング）だけは、フックを実行しません。
+- `onQueryStart`の後には、同じ`executionId`を持つ`onQuerySuccess`か`onQueryError`のどちらか一方が、必ず1回だけ続きます。ストリームの場合は、イテレーターが完了するか閉じられた時点で続きます。呼び出し側が途中で止めたストリームは成功として扱われ、それまでに読んだ行数が報告されます。リクエストごとの状態は`executionId`をキーにして保持してください。
+- `onQueryStart`フックは登録順に実行され、すべて完了してからリクエストが送られます。`onQuerySuccess`と`onQueryError`は逆順に実行されます。組み込みのロガーは常に最も外側で実行されます。
+- 後のプラグインのヘッダーは、前のプラグインのヘッダーを上書きします。クライアントレベルまたはリクエストごとに明示した`http_headers`は、プラグインのヘッダーより優先されます。プラグインは、接続の認証情報から作られる`Authorization`ヘッダーや、セッションが送る`X-ClickHouse-Replica-Tag`ヘッダーを上書きできません。
+- 例外を投げたフックは、プラグイン名とともにログに記録され、クエリや他のプラグインには影響しません。例外を投げた、または無効なヘッダーを返した`onQueryStart`のヘッダーは破棄されます。
+- イベントは読み取り専用です。プラグインは、SQL、パラメーター、設定、結果を変更できません。
+- フックはクエリのパス上でawaitされます。ネットワークエクスポートのような時間のかかる処理は、フック内でawaitせず、バッファリングしてください。
+
+公開されているオブザーバビリティ関連の型は次のとおりです。
+
+- `ClickHouseORMPlugin`
+- `ClickHouseORMQueryStartResult`
 - `ClickHouseORMQueryEvent`
 - `ClickHouseORMQueryResultEvent`
 - `ClickHouseORMQueryErrorEvent`
 - `ClickHouseORMQueryStatistics`
-- `ClickHouseORMTracingOptions`
+- `ClickHouseORMTracingOptions`（`ck-orm/otel`から）
 - `ClickHouseORMLogLevel`
 
 組み込みのイベントフィールドには`databaseName`、`serverAddress`、`serverPort`、`requestTimeoutMs`、`statementHash`、`querySummary`、`queryId`、`sessionId`が含まれます。ck-ormが生SQLから推測せずに1つのテーブルを特定できる場合は、`tableName`も含まれます。JSONレスポンスをまとめて受け取るクエリでは、サーバーが返す場合にClickHouseのレスポンス統計も含まれます。含まれる統計は`serverElapsedMs`、`readRows`、`readBytes`、`resultRows`、`rowsBeforeLimitAtLeast`です。
@@ -2639,7 +2690,7 @@ const toPublicQueryError = (error: unknown) => {
 信頼できないクライアントには、`responseText`や生のエラー`message`を返さないでください。ClickHouseのエラーテキストには、SQLの断片やオブジェクト名が含まれることがあります。
 
 ## セキュリティ
-<!-- src:c2dbb125 -->
+<!-- src:062d0032 -->
 
 `ck-orm`は、デフォルトで安全でないSQLを組み立てにくくする設計です。
 
@@ -2667,9 +2718,11 @@ const toPublicQueryError = (error: unknown) => {
 
 ### トレーシングで公開されるデータ
 
-`tracing.includeStatement`のデフォルトは`true`です。空白を詰めたSQLテキストは、`db.statement`と`db.query.text`としてスパンに付与されます。
+`otelTracing()`は、`includeStatement`のデフォルトが`true`であるため、空白を詰めたSQLテキストを`db.statement`と`db.query.text`としてスパンに付与します。
 
 バインドされた値はClickHouseの名前付きパラメーターとして別に保存され、SQLテキストには含まれません。ただし、テーブル名、カラム名、クエリの形はトレーシングの出力に残ります。トレースバックエンドを共有する場合やホスト外に置いている場合は、`includeStatement`を無効にするか、コレクターで`db.statement`と`db.query.text`をフィルターしてください。
+
+ClickHouseのサーバースパンも、ステートメントを`db.statement`として`system.opentelemetry_span_log`に記録します。このテーブルは、エクスポートしない限りClickHouseサーバー上にとどまります。
 
 ### エラーレスポンス
 

@@ -33,6 +33,10 @@ async function writeDistPackageJson() {
       types: "./index.d.ts",
       default: "./index.js",
     },
+    "./otel": {
+      types: "./otel.d.ts",
+      default: "./otel.js",
+    },
   };
   packageJson.unpkg = "./index.min.js";
   packageJson.jsdelivr = "./index.min.js";
@@ -56,6 +60,7 @@ export default defineConfig([
     dts: true,
     entry: {
       index: entry,
+      otel: "src/otel.ts",
     },
     inputOptions: {
       resolve: {

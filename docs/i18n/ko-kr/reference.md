@@ -1,5 +1,5 @@
 ## 설치
-<!-- src:8558838e -->
+<!-- src:03d420fc -->
 
 ```bash [bun]
 bun add ck-orm
@@ -14,10 +14,10 @@ pnpm add ck-orm
 ```
 
 ```bash [yarn]
-yarn add ck-orm @opentelemetry/api
+yarn add ck-orm
 ```
 
-ck-orm에는 `@opentelemetry/api` 피어 종속성이 하나 있습니다. Bun, npm, pnpm은 이 종속성을 자동으로 설치하지만 Yarn은 설치하지 않으므로 Yarn 명령에 이 패키지를 명시적으로 추가합니다.
+ck-orm에는 필수 종속성이 없습니다. `@opentelemetry/api`는 `ck-orm/otel` 플러그인에서만 사용하는 선택적 피어 종속성이므로, 이 플러그인을 사용할 때 ck-orm과 함께 설치하세요.
 
 ## 빠른 시작
 <!-- src:d7ba4246 -->
@@ -776,7 +776,7 @@ ckType.qbit("embedding", ckType.float32(), { dimensions: 8 });
 목록에는 `MATERIALIZED`와 `ALIAS` 컬럼을 넣지 않습니다. 명시적으로 넘겨도 허용되지 않습니다.
 
 ## 클라이언트 구성
-<!-- src:0d752985 -->
+<!-- src:26d96c74 -->
 
 클라이언트는 `clickhouseClient()`로 만듭니다.
 
@@ -853,8 +853,7 @@ const db = clickhouseClient({
 | `session_max_concurrent_requests` | 이 클라이언트에서 같은 `session_id`에 허용되는 최대 동시 요청 수(기본값 `1`) |
 | `compression.response` | 기본값인 `false`에서는 스트리밍 요청이 `enable_http_compression = 0`을 보내므로 행이 ClickHouse에서 생성되는 대로 도착합니다. 스트리밍이 아닌 요청은 서버 기본값을 그대로 사용합니다(ClickHouse 26.3 이상에서는 클라이언트가 허용하면 응답을 압축합니다). `true`로 설정하면 모든 응답을 압축하므로, 데이터가 드문 스트림은 압축 블록이 채워질 때까지 지연될 수 있습니다. |
 | `logger` / `logLevel` | 로거 연동 |
-| `tracing` | OpenTelemetry 연동 |
-| `instrumentation` | 사용자 정의 쿼리 라이프사이클 훅 |
+| `plugins` | `ck-orm/otel`의 `otelTracing()` 같은 쿼리 라이프사이클 플러그인 |
 
 세션 수명을 제어하는 옵션은 의도적으로 요청 범위로만 동작합니다. `session_timeout`은 개별 쿼리 또는 `runInSession(...)`에 넘기세요. `session_check`는 기존 `session_id`를 이어 쓸 때 사용하고, 새 세션을 시작할 때는 사용하지 마세요.
 `session_max_concurrent_requests`는 다르게 동작합니다. 클라이언트 수준에서 같은 `session_id`를 대상으로 겹치는 요청 수를 제한합니다.
@@ -1471,7 +1470,7 @@ const rows = await db
 계산 표현식은 런타임에서 ClickHouse의 NULL 전파를 따릅니다. ClickHouse가 NULL을 반환하면(NULL 입력이거나 왼쪽 조인에서 짝이 없는 행) 값은 `null`입니다. TypeScript 타입은 선언한 `TData`(또는 헬퍼의 고정 타입)이며 자동으로 넓어지지 않습니다. 입력이 NULL일 수 있으면 `| null`을 선언하거나(`fn.plus<number | null>(...)`) 입력을 `fn.coalesce(...)`로 감싸세요.
 
 ## 쓰기
-<!-- src:d7555d6e -->
+<!-- src:5d78750d -->
 
 ### `insert(table).values(...)`
 
@@ -1570,7 +1569,7 @@ await db.insertJsonEachRow("tmp_scope", [
 - 일반 배열
 - `AsyncIterable`
 
-빈 일반 배열은 클라이언트에서 아무 작업도 하지 않는 것으로 처리되지만, 계측 훅에는 `rowCount: 0`과 함께 성공한 삽입 라이프사이클을 계속 보고합니다. 알 수 없는 필드의 동작은 ClickHouse가 결정합니다. 서버가 추가 JSON 필드를 무시하게 하려면 `input_format_skip_unknown_fields: 1` 같은 설정을 넘기세요. 중첩 컬럼은 평탄화된 `column.field` 배열로 전송됩니다(ClickHouse `flatten_nested = 1`이 기본값). 따라서 `{ lines: [{ sku: "a" }] }`는 `insert().values()`와 `insertJsonEachRow()`에서 모두 동작합니다.
+빈 일반 배열은 클라이언트에서 아무 작업도 하지 않는 것으로 처리되지만, 플러그인 훅에는 `rowCount: 0`과 함께 성공한 삽입 라이프사이클을 계속 보고합니다. 알 수 없는 필드의 동작은 ClickHouse가 결정합니다. 서버가 추가 JSON 필드를 무시하게 하려면 `input_format_skip_unknown_fields: 1` 같은 설정을 넘기세요. 중첩 컬럼은 평탄화된 `column.field` 배열로 전송됩니다(ClickHouse `flatten_nested = 1`이 기본값). 따라서 `{ lines: [{ sku: "a" }] }`는 `insert().values()`와 `insertJsonEachRow()`에서 모두 동작합니다.
 
 테이블 스키마가 있으면 `insertJsonEachRow()`는 `DateTime`/`DateTime64` 컬럼의 JavaScript `Date`를 `insert().values()`와 똑같은 정수 틱으로 보냅니다. 문자열은 ClickHouse 기본 `date_time_input_format = basic` 파서에 맡기므로 두 방식이 날짜/시간 문자열을 같은 방식으로 읽습니다. 직접 넘긴 JSON 숫자를 `DateTime64` 컬럼에 넣으면 `JSONEachRow`에서는 여전히 틱으로 읽고 `.values()`에서는 Unix 초로 읽습니다.
 
@@ -2553,13 +2552,12 @@ await db.replicasStatus();
 ```
 
 ## 옵저버빌리티
-<!-- src:8021e8d9 -->
+<!-- src:37125a8e -->
 
-`ck-orm`은 내장된 옵저버빌리티 계층 세 가지를 제공합니다.
+`ck-orm`은 옵저버빌리티 계층 두 가지를 제공합니다.
 
-- `logger`
-- `tracing`
-- `instrumentation`
+- 내장 로깅을 위한 `logger`와 `logLevel`
+- 쿼리 라이프사이클 훅을 위한 `plugins`. OpenTelemetry 트레이싱은 `ck-orm/otel` 플러그인으로 제공됩니다
 
 ### 로거
 
@@ -2591,56 +2589,109 @@ const db = clickhouseClient({
 });
 ```
 
-### 트레이싱
+### OpenTelemetry 플러그인
+
+`@opentelemetry/api`를 설치한 다음 플러그인을 추가하세요.
 
 ```ts
 import { clickhouseClient } from "ck-orm";
-import { trace } from "@opentelemetry/api";
+import { otelTracing } from "ck-orm/otel";
 
 const db = clickhouseClient({
   databaseUrl: "http://127.0.0.1:8123/telemetry_lab",
-  tracing: {
-    tracer: trace.getTracer("ck-orm-example"),
-    includeStatement: false,
-    includeRowCount: true,
-  },
+  plugins: [
+    otelTracing({
+      includeStatement: false,
+      includeRowCount: true,
+    }),
+  ],
 });
 ```
 
-트레이싱은 `clickhouseClient(...)` 구성에서 데이터베이스 이름, 서버 주소, 서버 포트, 요청 시간 초과를 가져옵니다. 서비스 수준 레이블은 `tracing.attributes`로 넘기세요. `db.`로 시작하는 키는 무시하므로 애플리케이션 코드가 내장 데이터베이스 속성을 덮어쓸 수 없습니다.
+`tracer`를 넘기지 않으면 플러그인은 `trace.getTracer("ck-orm")`를 사용합니다. 데이터베이스 이름, 서버 주소, 서버 포트, 요청 시간 초과는 `clickhouseClient(...)` 구성에서 가져옵니다. 서비스 수준 레이블은 `attributes`로 넘기세요. `db.`로 시작하는 키는 무시하므로 애플리케이션 코드가 내장 데이터베이스 속성을 덮어쓸 수 없습니다.
 
-`includeStatement: false`는 공유 트레이싱 백엔드에 더 안전한 설정입니다. 라이브러리 기본값은 `true`입니다. 테이블 이름, 컬럼 이름 또는 쿼리 형태가 서비스 경계 밖으로 나가면 안 될 때 끄세요. 바인딩된 값은 공백을 정리한 SQL 문에 포함되지 않지만 SQL 형태는 여전히 운영상 민감할 수 있습니다.
+`includeStatement: false`는 공유 트레이싱 백엔드에 더 안전한 설정입니다. 기본값은 `true`입니다. 테이블 이름, 컬럼 이름 또는 쿼리 형태가 서비스 경계 밖으로 나가면 안 될 때 끄세요. 바인딩된 값은 공백을 정리한 SQL 문에 포함되지 않지만 SQL 형태는 여전히 운영상 민감할 수 있습니다.
 
-### 사용자 지정 계측
+#### 서버 측 스팬
+
+`propagateTraceContext: true`를 설정하면 스팬의 W3C 트레이스 컨텍스트(`traceparent`, `tracestate`)를 각 요청과 함께 보냅니다. 그러면 ClickHouse가 쿼리에 대한 자체 스팬(`HTTPHandler`, `query`, 파이프라인 단계 등)을 ck-orm 스팬의 자식으로 기록합니다. 플러그인은 이 두 헤더만 전달하며, 전역 propagator가 만드는 `baggage`나 벤더 헤더는 전달하지 않습니다. 또한 샘플링된 스팬에만 헤더를 붙입니다. ClickHouse는 샘플링 여부와 관계없이 받은 모든 트레이스 컨텍스트에 대해 서버 스팬을 기록하기 때문입니다. 플러그인은 전역으로 등록된 propagator를 통해 주입하며, OpenTelemetry SDK는 이를 기본적으로 W3C 트레이스 컨텍스트로 설정합니다. propagator가 등록되어 있지 않으면 아무것도 전송되지 않습니다.
 
 ```ts
-import type { ClickHouseORMInstrumentation } from "ck-orm";
-
-const instrumentation: ClickHouseORMInstrumentation = {
-  onQueryStart(event) {
-    console.log("start", event.operation, event.statement);
-  },
-  onQuerySuccess(event) {
-    console.log("success", event.durationMs, event.rowCount);
-  },
-  onQueryError(event) {
-    console.error("error", event.error);
-  },
-};
-
 const db = clickhouseClient({
   databaseUrl: "http://127.0.0.1:8123/telemetry_lab",
-  instrumentation: [instrumentation],
+  plugins: [otelTracing({ propagateTraceContext: true })],
 });
 ```
 
-공개 이벤트 타입은 다음과 같습니다.
+ClickHouse는 이 스팬을 `system.opentelemetry_span_log`에 기록할 뿐 내보내지는 않습니다. 트레이싱 백엔드로 내보내는 방법은 [Tracing ClickHouse with OpenTelemetry](https://clickhouse.com/docs/operations/opentelemetry)를 참고하세요. 서버 스팬에는 ck-orm 스팬의 `db.query.id`와 일치하는 `clickhouse.query_id`가 들어 있으며, 실패는 스팬 상태가 아니라 `clickhouse.exception_code`로 보고합니다.
 
+`http_headers`에 직접 `traceparent`를 넘기면 플러그인의 값보다 우선합니다. 이때 대응하는 `tracestate`도 함께 넘기세요. 그렇지 않으면 플러그인의 `tracestate`가 함께 전송됩니다.
+
+브라우저에서는 ClickHouse가 `traceparent` 헤더를 허용하지 않으면 `traceparent` 때문에 요청이 CORS 사전 요청(preflight)에서 실패합니다. 샘플링된 요청에만 이 헤더가 붙으므로 실패가 무작위로 보입니다. 기본 `http_options_response`는 이 헤더를 허용하지 않으므로, `config.d` 파일에 추가한 뒤에만 브라우저에서 전파를 활성화하세요.
+
+```xml
+<clickhouse>
+  <http_options_response replace="replace">
+    <header><name>Access-Control-Allow-Origin</name><value>*</value></header>
+    <header><name>Access-Control-Allow-Headers</name><value>origin, x-requested-with, x-clickhouse-format, x-clickhouse-user, x-clickhouse-key, Authorization, traceparent, tracestate</value></header>
+    <header><name>Access-Control-Allow-Methods</name><value>POST, GET, OPTIONS</value></header>
+    <header><name>Access-Control-Max-Age</name><value>86400</value></header>
+  </http_options_response>
+</clickhouse>
+```
+
+### 플러그인 작성
+
+플러그인은 `name`과 최대 세 개의 훅을 가진 객체입니다.
+
+```ts
+import { clickhouseClient, type ClickHouseORMPlugin } from "ck-orm";
+
+const slowQueries = (thresholdMs: number): ClickHouseORMPlugin => ({
+  name: "slow-queries",
+  onQuerySuccess(event) {
+    if (event.durationMs >= thresholdMs) {
+      console.warn("slow query", event.querySummary, event.durationMs);
+    }
+  },
+});
+
+const db = clickhouseClient({
+  databaseUrl: "http://127.0.0.1:8123/telemetry_lab",
+  plugins: [slowQueries(500)],
+});
+```
+
+`onQueryStart`는 해당 요청에 사용할 헤더를 반환할 수 있습니다.
+
+```ts
+const requestSource: ClickHouseORMPlugin = {
+  name: "request-source",
+  onQueryStart() {
+    return { http_headers: { "x-request-source": "billing-worker" } };
+  },
+};
+```
+
+플러그인에는 다음 규칙이 적용됩니다.
+
+- 훅은 ck-orm이 ClickHouse로 보내는 모든 요청(쿼리, 스트림, 명령, 삽입, DDL 헬퍼, `ping()`, `replicasStatus()`, `runInSession()`의 임시 테이블 정리)에서 실행됩니다. 중단된 스트림을 취소하고 해당 세션이 잠금 해제되기를 기다리는 요청(`KILL QUERY`와 그 이후의 폴링)에서만 훅이 실행되지 않습니다.
+- 모든 `onQueryStart`에는 같은 `executionId`를 가진 `onQuerySuccess` 또는 `onQueryError`가 정확히 하나씩 뒤따릅니다. 스트림의 경우 이터레이터가 끝나거나 닫힐 때 뒤따릅니다. 호출자가 중간에 멈춘 스트림은 성공으로 처리되며 그때까지 읽은 행 수를 보고합니다. 요청별 상태는 `executionId`를 키로 관리하세요.
+- `onQueryStart` 훅은 등록 순서대로 실행되며, 요청이 전송되기 전에 모두 끝납니다. `onQuerySuccess`와 `onQueryError`는 역순으로 실행됩니다. 내장 로거는 항상 가장 바깥에서 실행됩니다.
+- 나중에 등록한 플러그인의 헤더가 앞선 플러그인의 헤더를 덮어씁니다. 클라이언트 수준이든 요청별이든 명시적인 `http_headers`는 플러그인 헤더를 덮어씁니다. 플러그인은 연결 자격 증명으로 만든 `Authorization` 헤더와 세션이 보내는 `X-ClickHouse-Replica-Tag` 헤더를 덮어쓸 수 없습니다.
+- 예외를 던지는 훅은 플러그인 이름과 함께 로그에 기록되며 쿼리나 다른 플러그인에는 영향을 주지 않습니다. 예외를 던지거나 잘못된 헤더를 반환한 `onQueryStart`의 헤더는 버려집니다.
+- 이벤트는 읽기 전용입니다. 플러그인은 SQL, 매개변수, 설정, 결과를 바꿀 수 없습니다.
+- 훅은 쿼리 경로에서 await됩니다. 네트워크 내보내기처럼 느린 작업은 훅에서 await하지 말고 버퍼링하세요.
+
+공개 옵저버빌리티 타입은 다음과 같습니다.
+
+- `ClickHouseORMPlugin`
+- `ClickHouseORMQueryStartResult`
 - `ClickHouseORMQueryEvent`
 - `ClickHouseORMQueryResultEvent`
 - `ClickHouseORMQueryErrorEvent`
 - `ClickHouseORMQueryStatistics`
-- `ClickHouseORMTracingOptions`
+- `ClickHouseORMTracingOptions` (`ck-orm/otel`에서 제공)
 - `ClickHouseORMLogLevel`
 
 내장 이벤트 필드에는 `databaseName`, `serverAddress`, `serverPort`, `requestTimeoutMs`, `statementHash`, `querySummary`, `queryId`, `sessionId`가 포함됩니다. ck-orm이 원시 SQL을 보고 추측하지 않아도 테이블 하나를 식별할 수 있을 때는 `tableName`도 포함됩니다. JSON 결과를 한 번에 받는 쿼리에는 서버가 통계를 반환하면 `serverElapsedMs`, `readRows`, `readBytes`, `resultRows`, `rowsBeforeLimitAtLeast` 같은 ClickHouse 응답 통계도 포함됩니다.
@@ -2717,7 +2768,7 @@ const toPublicQueryError = (error: unknown) => {
 신뢰할 수 없는 클라이언트에 `responseText`나 오류의 원시 `message`를 반환하지 마세요. ClickHouse 오류 텍스트에는 SQL 조각과 객체 이름이 들어갈 수 있습니다.
 
 ## 보안
-<!-- src:c2dbb125 -->
+<!-- src:062d0032 -->
 
 `ck-orm`은 기본적으로 안전하지 않은 SQL을 만들기 어렵게 설계했습니다.
 
@@ -2745,9 +2796,11 @@ const toPublicQueryError = (error: unknown) => {
 
 ### 트레이싱 데이터 노출
 
-`tracing.includeStatement`는 기본값이 `true`이므로 공백을 정리한 SQL 텍스트가 스팬의 `db.statement`와 `db.query.text`에 들어갑니다.
+`includeStatement`의 기본값이 `true`이므로 `otelTracing()`은 공백을 정리한 SQL 텍스트를 스팬의 `db.statement`와 `db.query.text`에 첨부합니다.
 
 바인딩된 값은 ClickHouse 이름 있는 매개변수로 따로 저장되므로 SQL 텍스트에는 포함되지 않습니다. 그래도 테이블 이름, 컬럼 이름, 쿼리 형태는 트레이싱 출력에 나타납니다. 트레이싱 백엔드를 공유하거나 외부 호스트에서 운영한다면 `includeStatement`를 끄거나 컬렉터에서 `db.statement` / `db.query.text`를 필터링하세요.
+
+ClickHouse 서버 스팬도 `system.opentelemetry_span_log`에 SQL 문을 `db.statement`로 기록합니다. 이 테이블은 내보내지 않는 한 ClickHouse 서버에 머뭅니다.
 
 ### 오류 응답
 

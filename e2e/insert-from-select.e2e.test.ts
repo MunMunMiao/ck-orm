@@ -281,8 +281,9 @@ describeE2E("ck-orm e2e insert.fromSelect", function describeInsertFromSelect() 
     const successEvents: Array<{ mode: string; operation: string; tableName?: string }> = [];
 
     const db = createE2EDb({
-      instrumentation: [
+      plugins: [
         {
+          name: "probe",
           onQueryStart(event) {
             if (event.tableName?.startsWith("tmp_users_obs")) {
               startEvents.push({
@@ -586,8 +587,9 @@ describeE2E("ck-orm e2e insert.fromSelect", function describeInsertFromSelect() 
     }> = [];
 
     const db = createE2EDb({
-      instrumentation: [
+      plugins: [
         {
+          name: "probe",
           onQueryError(event) {
             if (event.tableName?.startsWith("tmp_obs_error_")) {
               errorEvents.push({
@@ -1048,8 +1050,9 @@ describeE2E("ck-orm e2e insert.fromSelect", function describeInsertFromSelect() 
     }> = [];
 
     const db = createE2EDb({
-      instrumentation: [
+      plugins: [
         {
+          name: "probe",
           onQueryStart(event) {
             if (event.tableName?.startsWith("nested_obs_")) {
               startEvents.push({
@@ -1110,8 +1113,9 @@ describeE2E("ck-orm e2e insert.fromSelect", function describeInsertFromSelect() 
     }> = [];
 
     const db = createE2EDb({
-      instrumentation: [
+      plugins: [
         {
+          name: "probe",
           onQueryError(event) {
             if (event.tableName?.startsWith("nested_err_")) {
               errorEvents.push({

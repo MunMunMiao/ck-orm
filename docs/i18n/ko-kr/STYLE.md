@@ -248,6 +248,7 @@
 | metrics | 메트릭 | no | attested | <https://opentelemetry.io/ko/docs/concepts/signals/> — 메트릭 용례를 따른다. |
 | instrumentation | 계측 | no | attested | <https://opentelemetry.io/ko/docs/concepts/glossary/> — 계측 용례를 따른다. |
 | hook | 훅 | no | attested | <https://ko.react.dev/learn/responding-to-events> — 이벤트 핸들러와 훅의 한국어 개발자 용례를 따른다. |
+| plugin | 플러그인 | no | inferred | 소프트웨어 확장 모듈을 가리키는 한국어 개발자 관용 표기이며, 출처 URL은 열어 확인하지 않았다. |
 | event | 이벤트 | no | attested | <https://ko.react.dev/learn/responding-to-events> — 이벤트 용례를 따른다. |
 | error | 오류 | no | attested | <https://developer.mozilla.org/ko/docs/Web/API/Request> — 오류 용례를 따른다. |
 | exception | 예외 | no | attested | <https://www.typescriptlang.org/ko/docs/handbook/2/everyday-types.html> — 런타임 오류와 예외 용례를 따른다. |
@@ -350,7 +351,7 @@
 - `leftJoin()`은 기본적으로 SQL 방식의 NULL 처리 규칙을 사용합니다.
 - 값이 크거나 손실 위험이 큰 숫자 결과는 암묵적으로 형변환하지 않고 보수적으로 디코딩합니다.
 
-ck-orm에는 피어 종속성으로 `@opentelemetry/api` 하나가 있습니다. Bun, npm, pnpm은 이 종속성을 자동으로 설치하지만 Yarn은 그렇지 않으므로 Yarn 명령에 이 패키지를 명시적으로 추가합니다.
+ck-orm에는 필수 종속성이 없습니다. `@opentelemetry/api`는 `ck-orm/otel` 플러그인에서만 사용하는 선택적 피어 종속성이므로, 이 플러그인을 사용할 때 ck-orm과 함께 설치하세요.
 
 ### 9. 참고한 자료
 

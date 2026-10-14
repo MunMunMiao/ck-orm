@@ -18,7 +18,7 @@
 
 | English source sentence | BAD. officialese / translationese | Good. colloquial developer Japanese |
 |---|---|---|
-| ck-orm has one peer dependency, `@opentelemetry/api`. Bun, npm and pnpm install it automatically; Yarn does not, so the Yarn command adds it explicitly. | **BAD.** ck-ormには `@opentelemetry/api`という1つのピア依存関係が存在し、Bun、npm、pnpmはそれを自動的にインストールしますが、Yarnはそうではなく、Yarnコマンドはそれを明示的に追加するものとなります。 | ck-ormのピア依存関係は`@opentelemetry/api`1つです。Bun、npm、pnpmでは自動で入り、Yarnではコマンドに明示的に追加します。 |
+| ck-orm has no required dependencies. `@opentelemetry/api` is an optional peer dependency used only by the `ck-orm/otel` plugin; install it alongside ck-orm when you use that plugin. | **BAD.** ck-ormには必須とされる依存関係というものは存在せず、`@opentelemetry/api`は省略可能なピア依存関係であり、`ck-orm/otel`プラグインによってのみ使用されるものとなっており、そのプラグインを使用する場合にはck-ormと一緒にインストールすることになります。 | ck-ormに必須の依存関係はありません。`@opentelemetry/api`は省略可能なピア依存関係で、`ck-orm/otel`プラグインでのみ使います。そのプラグインを使うときは、ck-ormと一緒にインストールしてください。 |
 | The examples below use a single table so the main flow stays easy to follow. | **BAD.** 以下の例は、主要なフローを容易に追跡することができるように、単一のテーブルを使用するものとなります。 | 以下の例では、流れを追いやすくするため、1つのテーブルだけを使います。 |
 | Builder queries are thenable, so `await query` executes the query directly. | **BAD.** ビルダークエリはthenableであるため、`await query`によりクエリを直接実行することができます。 | ビルダーのクエリはthenableなので、`await query`だけでそのまま実行できます。 |
 | Avoid forwarding those details directly to untrusted clients. | **BAD.** これらの詳細を信頼されていないクライアントに直接転送することは回避してください。 | その詳細を、信頼できないクライアントへそのまま返さないでください。 |
@@ -243,6 +243,7 @@
 | logger | ロガー | no | attested | OpenTelemetry日本語のAPI資料。<https://opentelemetry.io/ja/docs/languages/java/api/> |
 | metrics | メトリクス | no | attested | OpenTelemetry日本語用語集。<https://opentelemetry.io/ja/docs/concepts/glossary/> |
 | instrumentation | 計装 | no | attested | OpenTelemetry日本語の計装資料。<https://opentelemetry.io/ja/docs/languages/swift/instrumentation/> |
+| plugin | プラグイン | no | inferred | 一般的な日本語のIT用語として定着したカタカナ表記から推定。専用の出典は未確認。 |
 | hook | フック | no | attested | Vue日本語ドキュメントのライフサイクルフック。<https://v2.ja.vuejs.org/v2/guide/instance> |
 | event | イベント | no | attested | OpenTelemetry日本語資料のスパンイベント。<https://opentelemetry.io/ja/docs/concepts/context-propagation/> |
 | error | エラー | no | attested | MDNとReactの日本語ドキュメントの表記。<https://developer.mozilla.org/ja/docs/Web/WebDriver/Reference/Errors> <https://ja.react.dev/learn/react-compiler/debugging> |
@@ -358,7 +359,7 @@
 
 #### インストール
 
-ck-ormのピア依存関係は`@opentelemetry/api`の1つだけです。Bun、npm、pnpmでは自動でインストールされますが、Yarnでは自動で入らないため、Yarnのコマンドに明示的に追加します。
+ck-ormに必須の依存関係はありません。`@opentelemetry/api`は省略可能なピア依存関係で、`ck-orm/otel`プラグインでのみ使います。そのプラグインを使うときは、ck-ormと一緒にインストールしてください。
 
 ### 9. 参照した資料
 

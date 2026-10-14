@@ -1,8 +1,4 @@
-import {
-  type ClickHouseORMInstrumentation,
-  createLoggerInstrumentation,
-  createTracingInstrumentation,
-} from "./observability";
+import { type ClickHouseORMPlugin, createLoggerPlugin } from "./observability";
 import { type ClickHouseORMClient, createClickHouseORMClient } from "./runtime/client";
 import { type ClickHouseClientConfig, normalizeClientConfig, type ResolveJoinUseNulls } from "./runtime/config";
 import { createSessionConcurrencyController } from "./runtime/session-concurrency";
@@ -34,14 +30,13 @@ export const clickhouseClient = <const TSettings extends ClickHouseSettings | un
     readonly clickhouse_settings?: TSettings;
   },
 ): ClickHouseORMClient<ResolveJoinUseNulls<TSettings, 1>> => {
-  const { logger, logLevel, tracing, instrumentation, ...clientOptions } = config;
+  const { logger, logLevel, plugins, ...clientOptions } = config;
 
   const normalizedConfig = normalizeClientConfig(clientOptions);
-  const instrumentations = [
-    ...(logger ? [createLoggerInstrumentation(logger, logLevel ?? "warn")] : []),
-    ...(tracing === false || tracing === undefined ? [] : [createTracingInstrumentation(tracing)]),
-    ...(instrumentation ?? []),
-  ] satisfies ClickHouseORMInstrumentation[];
+  const allPlugins = [
+    ...(logger ? [createLoggerPlugin(logger, logLevel ?? "warn")] : []),
+    ...(plugins ?? []),
+  ] satisfies ClickHouseORMPlugin[];
 
   const client = createFetchClickHouseTransport(normalizedConfig);
   const sessionConcurrencyController = createSessionConcurrencyController(
@@ -51,7 +46,7 @@ export const clickhouseClient = <const TSettings extends ClickHouseSettings | un
 
   return createClickHouseORMClient<ResolveJoinUseNulls<TSettings, 1>>({
     client,
-    instrumentations,
+    plugins: allPlugins,
     databaseName: normalizedConfig.database,
     serverAddress: normalizedConfig.url.hostname,
     serverPort: resolveServerPort(normalizedConfig.url),

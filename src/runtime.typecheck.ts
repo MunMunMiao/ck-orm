@@ -1,6 +1,7 @@
 // Type-only contract file. It exists to keep the public runtime API honest
 // under `tsc --noEmit`; it is not runtime library code.
 import { float64, int32, nested, string } from "./columns";
+import { otelTracing } from "./otel";
 import { ckSql } from "./public_api";
 import { clickhouseClient, type Session } from "./runtime";
 import { ckTable } from "./schema";
@@ -144,10 +145,24 @@ clickhouseClient({
 
 clickhouseClient({
   databaseUrl: "http://localhost:8123/typecheck_db",
-  tracing: {
-    // @ts-expect-error tracing database name is derived from the client config
-    dbName: "typecheck_db",
-  },
+  plugins: [
+    otelTracing({
+      // @ts-expect-error tracing database name is derived from the client config
+      dbName: "typecheck_db",
+    }),
+  ],
+});
+
+clickhouseClient({
+  databaseUrl: "http://localhost:8123/typecheck_db",
+  // @ts-expect-error every plugin needs a name
+  plugins: [{ onQueryStart: () => undefined }],
+});
+
+clickhouseClient({
+  databaseUrl: "http://localhost:8123/typecheck_db",
+  // @ts-expect-error tracing moved to plugins: [otelTracing()] from "ck-orm/otel"
+  tracing: {},
 });
 
 // --- insert().fromSelect() positive cases ---
@@ -390,3 +405,9 @@ const _nestedChainMatrixAssertions: [
   _MatrixRequiredThenType,
 ] = [true, true, true, true, true, true, true];
 void _nestedChainMatrixAssertions;
+
+// An expression-bodied hook returning void must stay assignable to onQueryStart.
+clickhouseClient({
+  databaseUrl: "http://localhost:8123/typecheck_db",
+  plugins: [{ name: "log", onQueryStart: () => console.log("start") }],
+});

@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import type { Tracer } from "@opentelemetry/api";
+import { propagation, type TextMapPropagator, TraceFlags, type Tracer, trace } from "@opentelemetry/api";
 import {
   type ClickHouseORMLogger,
   type ClickHouseORMQueryErrorEvent,
@@ -9,6 +9,7 @@ import {
   ckSql,
   fn,
 } from "./ck-orm";
+import { otelTracing } from "./ck-orm-otel";
 import { createE2EDb, getE2EConfig, users } from "./shared";
 import { describeE2E } from "./test-helpers";
 
@@ -31,6 +32,11 @@ const createTestTracer = (spans: CapturedSpan[]): Tracer => {
       };
       spans.push(span);
       return {
+        spanContext: () => ({
+          traceId: "00000000000000000000000000000001",
+          spanId: "0000000000000001",
+          traceFlags: TraceFlags.NONE,
+        }),
         setAttribute(key: string, value: string | number | boolean) {
           span.attributes[key] = value;
         },
@@ -96,15 +102,16 @@ describeE2E("ck-orm e2e observability", function describeObservability() {
     const db = createE2EDb({
       logger,
       logLevel: "debug",
-      tracing: {
-        tracer: createTestTracer(spans),
-        attributes: {
-          "app.component": "ck-orm-e2e",
-          "db.system": "user-supplied-should-be-ignored",
-        },
-      },
-      instrumentation: [
+      plugins: [
+        otelTracing({
+          tracer: createTestTracer(spans),
+          attributes: {
+            "app.component": "ck-orm-e2e",
+            "db.system": "user-supplied-should-be-ignored",
+          },
+        }),
         {
+          name: "probe",
           onQueryStart(event: ClickHouseORMQueryEvent) {
             lifecycle.push("custom_start_1");
             starts.push(event);
@@ -119,6 +126,7 @@ describeE2E("ck-orm e2e observability", function describeObservability() {
           },
         },
         {
+          name: "probe-2",
           onQueryStart(_event: ClickHouseORMQueryEvent) {
             lifecycle.push("custom_start_2");
           },
@@ -232,5 +240,51 @@ describeE2E("ck-orm e2e observability", function describeObservability() {
     expect(errors[0]?.operation).toBe("SELECT");
     expect(errors[0]?.databaseName).toBe(e2eConfig.database);
     expect(errors[0]?.querySummary).toBe("SELECT");
+  });
+
+  it("records ClickHouse server spans under the ck-orm client span", async function testServerSpans() {
+    const traceId = crypto.randomUUID().replaceAll("-", "");
+    const spanId = crypto.randomUUID().replaceAll("-", "").slice(0, 16);
+    const tracer = {
+      startSpan: () => ({
+        spanContext: () => ({ traceId, spanId, traceFlags: TraceFlags.SAMPLED }),
+        setAttribute() {
+          return this;
+        },
+        setStatus() {
+          return this;
+        },
+        recordException() {
+          return undefined;
+        },
+        end() {
+          return undefined;
+        },
+      }),
+    } as unknown as Tracer;
+    const injector: TextMapPropagator = {
+      inject(ctx, carrier, setter) {
+        const spanContext = trace.getSpanContext(ctx);
+        if (spanContext) {
+          setter.set(carrier, "traceparent", `00-${spanContext.traceId}-${spanContext.spanId}-01`);
+        }
+      },
+      extract: (ctx) => ctx,
+      fields: () => ["traceparent"],
+    };
+
+    propagation.setGlobalPropagator(injector);
+    try {
+      const db = createE2EDb({ plugins: [otelTracing({ tracer, propagateTraceContext: true })] });
+      await db.execute(ckSql`SELECT 1`);
+      await db.command(ckSql`SYSTEM FLUSH LOGS`);
+      const rows = await db.execute(ckSql`
+        SELECT leftPad(lower(hex(parent_span_id)), 16, '0') AS parent
+        FROM system.opentelemetry_span_log
+        WHERE lower(hex(trace_id)) = ${traceId} AND operation_name = 'HTTPHandler'`);
+      expect(rows).toContainEqual({ parent: spanId });
+    } finally {
+      propagation.disable();
+    }
   });
 });

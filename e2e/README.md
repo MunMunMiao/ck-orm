@@ -168,8 +168,7 @@ The current E2E suite covers:
   - same-session raw stream slot retention until iterator close
 - observability
   - `logger`
-  - `tracing`
-  - `instrumentation`
+  - `plugins`
 - error contracts
   - invalid SQL syntax
   - missing tables

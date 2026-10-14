@@ -214,6 +214,7 @@
 | metrics | 指标 | 否 | attested（https://opentelemetry.io/zh/docs/languages/js/instrumentation/） | 可观测性语境固定用“指标”。 |
 | instrumentation | 插桩 | 否 | attested（https://opentelemetry.io/zh/docs/languages/js/instrumentation/） | OpenTelemetry 中文文档标题直接使用“插桩”。 |
 | hook | Hook | 是 | attested（https://zh-hans.react.dev/learn） | React 中文文档使用 Hook；这是 JavaScript/React API 术语，不是普通英文名词。 |
+| plugin | 插件 | 否 | inferred（中文开发者文档通用译法，未打开具体页面核对） | 指 `plugins` 选项中的 `ClickHouseORMPlugin`；API 名保留英文，概念词用“插件”。 |
 | event | 事件 | 否 | attested（https://developer.mozilla.org/zh-CN/docs/Learn_web_development/Core/Scripting/Events） | 不写英文 `event`。 |
 | error | 错误 | 否 | attested（https://developer.mozilla.org/zh-CN/docs/Web/HTTP/Reference/Status） | 返回值、异常和页面提示都按上下文用“错误”。 |
 | exception | 异常 | 否 | attested（https://opentelemetry.io/zh/docs/languages/js/instrumentation/） | JavaScript 错误对象语境使用“异常”。 |
@@ -316,7 +317,7 @@
 - `leftJoin()` 默认使用 SQL 风格的 NULL 语义。
 - 大数或高风险数值结果要谨慎解码，不要静默强制转换。
 
-ck-orm 有一个对等依赖项，`@opentelemetry/api`。Bun、npm 和 pnpm 会自动安装它；Yarn 不会，因此 Yarn 命令会显式添加它。
+ck-orm 没有必需依赖。`@opentelemetry/api` 是可选的对等依赖项，仅供 `ck-orm/otel` 插件使用；使用该插件时，请和 ck-orm 一起安装。
 
 ### 9. 参考来源与证据边界
 

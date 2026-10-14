@@ -199,6 +199,7 @@ siguen exactamente el mismo orden que las de la columna English.
 | runtime method; execute; fetch; abort; cancel | método de ejecución; ejecutar; obtener; abortar; cancelar | no | inferred — https://learn.microsoft.com/es-es/style-guide/global-communications/writing-tips | «Método» es masculino; los demás son infinitivos. Confirmar «método de ejecución» con un nativo. |
 | observability; tracing; logging; metrics; instrumentation; event | observabilidad; trazado; registro; métricas; instrumentación; evento | no | attested — https://learn.microsoft.com/es-es/azure/well-architected/operational-excellence/observability | Trazado, registro e instrumentación son las formas de la documentación técnica española. |
 | span; logger; hook | span; logger; hook | sí | attested — https://opentelemetry.io/es/docs/concepts/instrumentation/libraries/ | OpenTelemetry en español deja estos términos de API en inglés; plural: spans, loggers, hooks. |
+| plugin | plugin | sí | inferred — sin fuente abierta | No se abrió una fuente que atestigüe el término; se deja en inglés por coherencia con el campo de API `plugins` y con hook, que ya se conserva; plural: plugins. Confirmar con un nativo si se prefiere «complemento». |
 | error; exception; throws; rejects; error model; validation error; stack; retry | error; excepción; lanza; rechaza; modelo de errores; error de validación; pila; reintento | no | attested — https://learn.microsoft.com/es-es/windows/win32/debug/error-message-guidelines | Error es una palabra incorporada al español; «pila» se usa en «pila de llamadas». |
 | security; SQL injection; untrusted input; identifier quoting; escaping | seguridad; inyección SQL; entrada no fiable; entrecomillado de identificadores; escape | no | attested — https://learn.microsoft.com/es-es/troubleshoot/windows-client/networking/use-authenticated-proxy-servers | SQL se conserva; en prosa escaping se explica como «secuencias de escape». |
 | credentials; password; allow-list; permission | credenciales; contraseña; lista de permitidos; permiso | no | attested — https://learn.microsoft.com/es-es/troubleshoot/windows-client/networking/use-authenticated-proxy-servers | «Permitidos» concuerda con el sustantivo implícito «elementos». |
@@ -261,7 +262,7 @@ Ten en cuenta estos límites al usar `ck-orm`:
 
 #### Instalación
 
-ck-orm tiene una única peer dependency, `@opentelemetry/api`. Bun, npm y pnpm la instalan automáticamente; Yarn no, así que el comando de Yarn la añade explícitamente.
+ck-orm no tiene dependencias obligatorias. `@opentelemetry/api` es una peer dependency opcional que solo usa el plugin `ck-orm/otel`; instálala junto con ck-orm cuando uses ese plugin.
 
 ### 9. Sources consulted
 

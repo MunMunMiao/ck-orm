@@ -1,6 +1,6 @@
 import { createClientValidationError, createSessionError, isClickHouseORMError } from "../errors";
 import {
-  type ClickHouseORMInstrumentation,
+  type ClickHouseORMPlugin,
   type ClickHouseORMQueryKind,
   type ClickHouseORMQueryMode,
   type ClickHouseORMQueryStatistics,
@@ -61,7 +61,7 @@ export interface ClickHouseORMClient<TJoinUseNulls extends 0 | 1 = 1>
 type ClickHouseORMClientConfig<TJoinUseNulls extends 0 | 1> = {
   client: FetchClickHouseTransport;
   defaultOptions?: ClickHouseBaseQueryOptions;
-  instrumentations?: readonly ClickHouseORMInstrumentation[];
+  plugins?: readonly ClickHouseORMPlugin[];
   databaseName?: string;
   serverAddress?: string;
   serverPort?: number;
@@ -157,7 +157,7 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
   config: ClickHouseORMClientConfig<TJoinUseNulls>,
 ): ClickHouseORMClient<TJoinUseNulls> => {
   const defaultOptions = config.defaultOptions ?? {};
-  const instrumentations = config.instrumentations ?? [];
+  const plugins = config.plugins ?? [];
   const sessionController = config.sessionController;
   const sessionConcurrencyController = config.sessionConcurrencyController;
   const joinUseNulls = (config.joinUseNulls ?? 1) as TJoinUseNulls;
@@ -232,48 +232,63 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
   // Both wrappers share the same per-call query metadata shape — define it
   // once so changes (e.g. adding a new field that observability cares about)
   // only have to land in one place.
-  type InstrumentationContext = {
+  type PluginContext<TOptions extends ClickHouseBaseQueryOptions> = {
     mode: ClickHouseORMQueryMode;
     queryKind: ClickHouseORMQueryKind;
     statement: string;
-    options: ClickHouseBaseQueryOptions;
+    options: TOptions;
     format?: ClickHouseQueryOptions["format"] | ClickHouseStreamOptions["format"];
     tableName?: string;
     operation?: string;
   };
 
-  const executeWithInstrumentation = async <TValue>(
-    input: InstrumentationContext,
-    operation: () => Promise<{ value: TValue; rowCount?: number; statistics?: ClickHouseORMQueryStatistics }>,
+  // Plugin headers sit under every explicit header: client-level and
+  // per-request `http_headers` and the session replica tag are already in
+  // `options`, and the transport sets Authorization last.
+  const withPluginHeaders = <TOptions extends ClickHouseBaseQueryOptions>(
+    options: TOptions,
+    pluginHeaders: Record<string, string>,
+  ): TOptions => {
+    if (Object.keys(pluginHeaders).length === 0) {
+      return options;
+    }
+    return { ...options, http_headers: { ...pluginHeaders, ...options.http_headers } };
+  };
+
+  const executeWithPlugins = async <TValue, TOptions extends ClickHouseBaseQueryOptions>(
+    input: PluginContext<TOptions>,
+    operation: (
+      options: TOptions,
+    ) => Promise<{ value: TValue; rowCount?: number; statistics?: ClickHouseORMQueryStatistics }>,
   ): Promise<TValue> => {
     const event = buildQueryEvent(input);
-    await emitQueryStart(instrumentations, event);
+    const pluginHeaders = await emitQueryStart(plugins, event);
 
     try {
-      const result = await operation();
+      const result = await operation(withPluginHeaders(input.options, pluginHeaders));
       await emitQuerySuccess(
-        instrumentations,
+        plugins,
         createQuerySuccessEvent(event, Date.now() - event.startedAt, result.rowCount, result.statistics),
       );
       return result.value;
     } catch (error) {
-      await emitQueryError(instrumentations, createQueryErrorEvent(event, error, Date.now() - event.startedAt));
+      await emitQueryError(plugins, createQueryErrorEvent(event, error, Date.now() - event.startedAt));
       throw error;
     }
   };
 
-  const streamWithInstrumentation = async function* <TValue>(
-    input: InstrumentationContext,
-    operation: () => AsyncGenerator<TValue, void, unknown>,
+  const streamWithPlugins = async function* <TValue, TOptions extends ClickHouseBaseQueryOptions>(
+    input: PluginContext<TOptions>,
+    operation: (options: TOptions) => AsyncGenerator<TValue, void, unknown>,
   ): AsyncGenerator<TValue, void, unknown> {
     const event = buildQueryEvent(input);
-    await emitQueryStart(instrumentations, event);
+    const pluginHeaders = await emitQueryStart(plugins, event);
 
     let rowCount = 0;
     let caughtError: unknown;
 
     try {
-      for await (const row of operation()) {
+      for await (const row of operation(withPluginHeaders(input.options, pluginHeaders))) {
         rowCount += 1;
         yield row;
       }
@@ -283,9 +298,9 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
     } finally {
       const durationMs = Date.now() - event.startedAt;
       if (caughtError === undefined) {
-        await emitQuerySuccess(instrumentations, createQuerySuccessEvent(event, durationMs, rowCount));
+        await emitQuerySuccess(plugins, createQuerySuccessEvent(event, durationMs, rowCount));
       } else {
-        await emitQueryError(instrumentations, createQueryErrorEvent(event, caughtError, durationMs, rowCount));
+        await emitQueryError(plugins, createQueryErrorEvent(event, caughtError, durationMs, rowCount));
       }
     }
   };
@@ -369,7 +384,7 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
       const operation = resolveSqlOperation(queryConfig.query);
       const mode = compiled.mode === "command" ? (operation === "INSERT" ? "insert" : "command") : "query";
 
-      return executeWithInstrumentation(
+      return executeWithPlugins(
         {
           mode,
           queryKind: "typed",
@@ -379,11 +394,11 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
           operation,
           tableName: compiled.metadata?.tableName,
         },
-        async () => {
+        async (requestOptions) => {
           if (compiled.mode === "command") {
             await config.client.command(
               queryConfig.query,
-              mergedOptions,
+              requestOptions,
               queryConfig.query_params,
               queryConfig.query_param_types,
               compiled.body,
@@ -395,7 +410,7 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
             statement: queryConfig.query,
             query_params: queryConfig.query_params,
             query_param_types: queryConfig.query_param_types,
-            options: mergedOptions,
+            options: requestOptions,
             format: "JSON",
           });
           const rows = result.rows;
@@ -456,7 +471,7 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
     const operation = resolveSqlOperation(queryConfig.query);
 
     yield* runLockedStream(mergedOptions, () =>
-      streamWithInstrumentation(
+      streamWithPlugins(
         {
           mode: "stream",
           queryKind: "typed",
@@ -466,13 +481,13 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
           operation,
           tableName: compiled.metadata?.tableName,
         },
-        () =>
+        (requestOptions) =>
           createStreamGenerator(
             compiled,
             queryConfig.query,
             queryConfig.query_params,
             queryConfig.query_param_types,
-            mergedOptions,
+            requestOptions,
           ),
       ),
     );
@@ -486,7 +501,7 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
     return createClickHouseORMClient<TNextJoinUseNulls>({
       client: config.client,
       defaultOptions: nextDefaultOptions,
-      instrumentations,
+      plugins,
       databaseName: config.databaseName,
       serverAddress: config.serverAddress,
       serverPort: config.serverPort,
@@ -568,7 +583,7 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
       const mergedOptions = mergeOptions(options);
       const normalized = normalizeRawQueryInput(query);
       return runSerial(mergedOptions, async () => {
-        return executeWithInstrumentation(
+        return executeWithPlugins(
           {
             mode: "query",
             queryKind: "raw",
@@ -576,13 +591,13 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
             options: mergedOptions,
             format: "JSON",
           },
-          async () => {
+          async (requestOptions) => {
             const result = await config.client.queryJSON<Record<string, unknown>>({
               statement: normalized.query,
-              query_params: mergeQueryParams(normalized.params, mergedOptions.query_params),
+              query_params: mergeQueryParams(normalized.params, requestOptions.query_params),
               query_param_types: normalized.paramTypes,
-              options: mergedOptions,
-              format: mergedOptions.format ?? "JSON",
+              options: requestOptions,
+              format: requestOptions.format ?? "JSON",
             });
             const rows = result.rows;
             return {
@@ -602,18 +617,18 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
       const mergedOptions = mergeOptions(options);
       const normalized = normalizeRawQueryInput(query);
 
-      const createGenerator = async function* () {
+      const createGenerator = async function* (requestOptions: typeof mergedOptions) {
         yield* config.client.queryStream<Record<string, unknown>>({
           statement: normalized.query,
-          query_params: mergeQueryParams(normalized.params, mergedOptions.query_params),
+          query_params: mergeQueryParams(normalized.params, requestOptions.query_params),
           query_param_types: normalized.paramTypes,
-          options: mergedOptions,
-          format: mergedOptions.format ?? "JSONEachRow",
+          options: requestOptions,
+          format: requestOptions.format ?? "JSONEachRow",
         });
       };
 
       yield* runLockedStream(mergedOptions, () =>
-        streamWithInstrumentation(
+        streamWithPlugins(
           {
             mode: "stream",
             queryKind: "raw",
@@ -630,18 +645,18 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
       const mergedOptions = mergeOptions(options);
       const normalized = normalizeRawQueryInput(query);
       await runSerial(mergedOptions, async () => {
-        await executeWithInstrumentation(
+        await executeWithPlugins(
           {
             mode: "command",
             queryKind: "raw",
             statement: normalized.query,
             options: mergedOptions,
           },
-          async () => {
+          async (requestOptions) => {
             await config.client.command(
               normalized.query,
-              mergedOptions,
-              mergeQueryParams(normalized.params, mergedOptions.query_params),
+              requestOptions,
+              mergeQueryParams(normalized.params, requestOptions.query_params),
               normalized.paramTypes,
             );
             return { value: undefined };
@@ -653,7 +668,7 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
     async ping(options?: ClickHouseEndpointOptions): Promise<void> {
       const mergedOptions = mergeOptions(options);
       await runSerial(mergedOptions, async () => {
-        await executeWithInstrumentation(
+        await executeWithPlugins(
           {
             mode: "command",
             queryKind: "raw",
@@ -661,8 +676,8 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
             options: mergedOptions,
             operation: "PING",
           },
-          async () => {
-            await config.client.endpoint("/ping", mergedOptions, "GET");
+          async (requestOptions) => {
+            await config.client.endpoint("/ping", requestOptions, "GET");
             return { value: undefined };
           },
         );
@@ -672,7 +687,7 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
     async replicasStatus(options?: ClickHouseEndpointOptions): Promise<void> {
       const mergedOptions = mergeOptions(options);
       await runSerial(mergedOptions, async () => {
-        await executeWithInstrumentation(
+        await executeWithPlugins(
           {
             mode: "command",
             queryKind: "raw",
@@ -680,8 +695,8 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
             options: mergedOptions,
             operation: "REPLICAS_STATUS",
           },
-          async () => {
-            await config.client.endpoint("/replicas_status", mergedOptions, "GET");
+          async (requestOptions) => {
+            await config.client.endpoint("/replicas_status", requestOptions, "GET");
             return { value: undefined };
           },
         );
@@ -734,7 +749,7 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
       const mappedRows = mapLogicalJsonEachRowKeys(table, rows);
       const arrayRowCount = Array.isArray(rows) ? rows.length : undefined;
       return runSerial(mergedOptions, async () => {
-        await executeWithInstrumentation(
+        await executeWithPlugins(
           {
             mode: "insert",
             queryKind: "raw",
@@ -744,9 +759,9 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
             operation: "INSERT",
             tableName,
           },
-          async () => {
+          async (requestOptions) => {
             if (arrayRowCount !== 0) {
-              await config.client.insertJsonEachRow(tableName, mappedRows, mergedOptions);
+              await config.client.insertJsonEachRow(tableName, mappedRows, requestOptions);
             }
             return {
               value: undefined,
@@ -832,6 +847,7 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
         {
           ...defaultOptions,
           ...options,
+          http_headers: { ...defaultOptions.http_headers, ...options?.http_headers },
           session_id: sessionId,
         },
         childSessionController,

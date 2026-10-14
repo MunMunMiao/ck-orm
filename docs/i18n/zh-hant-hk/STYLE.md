@@ -148,6 +148,7 @@
 | observability; tracing | observability → 可觀測性；tracing → 追蹤 | 否 | attested | Microsoft zh-TW OpenTelemetry 文件使用「可觀測性」和「追蹤」。https://learn.microsoft.com/zh-tw/dotnet/core/diagnostics/observability-with-otel |
 | span | span → span | 是 | attested | Microsoft zh-TW OpenTelemetry 文件同時使用「跨度」和 API 術語 Span；本指南在 API 語境保留 span。https://learn.microsoft.com/zh-tw/azure/foundry/observability/concepts/trace-agent-concept |
 | logging; logger; metrics; instrumentation | logging → 記錄；logger → 記錄器；metrics → 指標；instrumentation → 插裝 | 否 | inferred | Microsoft zh-TW OpenTelemetry 文件使用記錄／指標；instrumentation 的「插裝」按 JavaScript 技術慣用語推定。https://learn.microsoft.com/zh-tw/dotnet/core/diagnostics/observability-with-otel |
+| plugin | plugin → 插件 | 否 | inferred | 未開啟任何香港一手來源核實「插件」一詞；按香港與內地慣用的普通技術中文推定，不採台灣版「外掛程式」。 |
 | hook | hook → hook | 是 | attested | React 中文官方文件保留 hook 作為 JavaScript／React 術語。https://zh-hans.react.dev/learn/state-a-components-memory |
 | event | event → 事件 | 否 | attested | Microsoft／MDN API 文件普遍使用「事件」。https://developer.mozilla.org/zh-TW/docs/Web/API/XMLHttpRequest |
 | error; exception; throws / rejects; error model; validation error; stack; retry | error → 錯誤；exception → 例外狀況；throws → 擲回；rejects → 拒絕；error model → 錯誤模型；validation error → 驗證錯誤；stack → 堆疊；retry → 重試 | 否 | inferred | 香港政府頁面直接使用錯誤；EDB 列 stack → 堆疊；其他詞形由 Microsoft／Promise 文件組合推定。throws → 擲回沒有香港一手用例，候選「拋出」，見第 10 節。https://www.gov.hk/tc/residents/taxes/etax/faq/faq_about_etax_technical.htm |
@@ -213,7 +214,7 @@
 - `leftJoin()` 預設使用 SQL 風格的 NULL 語義。
 - 數值較大或風險較高的結果會以保守方式解碼，而不是靜默強制轉換。
 
-ck-orm 有一個 peer dependency：`@opentelemetry/api`。Bun、npm 和 pnpm 會自動安裝它；Yarn 不會，所以 Yarn 指令會明確加入這個套件。
+ck-orm 沒有必要的依賴項。`@opentelemetry/api` 是可選的 peer dependency，只供 `ck-orm/otel` 插件使用；使用該插件時，請連同 ck-orm 一併安裝。
 
 ### 9. 參考來源與證據邊界
 

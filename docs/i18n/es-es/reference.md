@@ -1,5 +1,5 @@
 ## Instalación
-<!-- src:8558838e -->
+<!-- src:03d420fc -->
 
 ```bash [bun]
 bun add ck-orm
@@ -14,10 +14,10 @@ pnpm add ck-orm
 ```
 
 ```bash [yarn]
-yarn add ck-orm @opentelemetry/api
+yarn add ck-orm
 ```
 
-ck-orm tiene una única peer dependency: `@opentelemetry/api`. Bun, npm y pnpm la instalan automáticamente; Yarn no lo hace, así que el comando de Yarn la añade explícitamente.
+ck-orm no tiene dependencias obligatorias. `@opentelemetry/api` es una peer dependency opcional que solo usa el plugin `ck-orm/otel`; instálala junto con ck-orm cuando uses ese plugin.
 
 ## Inicio rápido
 <!-- src:d7ba4246 -->
@@ -782,7 +782,7 @@ Actualmente, `ckType.map(...)` solo admite claves `String` y representa el mapa 
 Las filas que insertas tienen la misma forma inferida que `typeof table.$inferInsert`. Al llamar a `insert(table).values(...)`, puedes omitir las columnas con valores predeterminados de ClickHouse o con expresiones generadas. Las columnas `MATERIALIZED` y `ALIAS` nunca se escriben en la lista de columnas del `INSERT` generado; si las pasas explícitamente, se rechaza la operación.
 
 ## Configuración del cliente
-<!-- src:0d752985 -->
+<!-- src:26d96c74 -->
 
 Crea un cliente con `clickhouseClient()`:
 
@@ -859,8 +859,7 @@ Usa estos campos para controlar el comportamiento avanzado en tiempo de ejecuci�
 | `session_max_concurrent_requests` | Máximo de solicitudes en curso permitido por cada `session_id` en este cliente (valor predeterminado: `1`) |
 | `compression.response` | Con el valor predeterminado `false`, las solicitudes en flujo envían `enable_http_compression = 0` para que las filas lleguen a medida que ClickHouse las produce. Las solicitudes que devuelven el resultado de una vez mantienen el valor predeterminado del servidor (ClickHouse 26.3+ comprime una respuesta cuando el cliente la acepta). `true` comprime todas las respuestas, lo que puede retener un flujo con pocos datos hasta que se llene un bloque de compresión |
 | `logger` / `logLevel` | Integración con el logger |
-| `tracing` | Integración de OpenTelemetry para trazado |
-| `instrumentation` | hooks personalizados para el ciclo de vida de las consultas |
+| `plugins` | Plugins del ciclo de vida de las consultas, como `otelTracing()` de `ck-orm/otel` |
 
 Los controles de duración de la sesión se aplican deliberadamente por solicitud. Pasa `session_timeout` a una consulta concreta o a `runInSession(...)`. Usa `session_check` cuando continúes una sesión existente identificada por `session_id`, no para iniciar una sesión nueva desde cero.
 La diferencia de `session_max_concurrent_requests` es que se trata de un límite del cliente que regula las solicitudes que se solapan y apuntan al mismo `session_id`.
@@ -1472,7 +1471,7 @@ El ajuste forzado `join_use_nulls = 1` se mantiene cuando reutilizas una consult
 En tiempo de ejecución, las expresiones calculadas siguen la propagación de NULL de ClickHouse: cuando ClickHouse devuelve NULL (por una entrada NULL o por una fila de una unión izquierda sin coincidencia), el valor es `null`. Su tipo en TypeScript es el `TData` que declaras (o el tipo fijo de la función auxiliar) y no se amplía automáticamente, así que declara `| null` (por ejemplo, `fn.plus<number | null>(...)`) o envuelve la entrada con `fn.coalesce(...)` cuando una entrada puede ser NULL.
 
 ## Escrituras
-<!-- src:d7555d6e -->
+<!-- src:5d78750d -->
 
 ### `insert(table).values(...)`
 
@@ -1571,7 +1570,7 @@ Admite:
 - una matriz normal
 - un `AsyncIterable`
 
-Una matriz normal vacía no hace nada en el cliente, pero aun así notifica a los hooks de instrumentación un ciclo de vida de inserción correcto con `rowCount: 0`. ClickHouse controla qué ocurre con los campos desconocidos; pasa ajustes como `input_format_skip_unknown_fields: 1` cuando quieras que el servidor ignore campos JSON adicionales. Las columnas anidadas se envían como matrices aplanadas de `column.field` (ClickHouse `flatten_nested = 1`, el valor predeterminado), así que `{ lines: [{ sku: "a" }] }` funciona tanto con `insert().values()` como con `insertJsonEachRow()`.
+Una matriz normal vacía no hace nada en el cliente, pero aun así notifica a los hooks de los plugins un ciclo de vida de inserción correcto con `rowCount: 0`. ClickHouse controla qué ocurre con los campos desconocidos; pasa ajustes como `input_format_skip_unknown_fields: 1` cuando quieras que el servidor ignore campos JSON adicionales. Las columnas anidadas se envían como matrices aplanadas de `column.field` (ClickHouse `flatten_nested = 1`, el valor predeterminado), así que `{ lines: [{ sku: "a" }] }` funciona tanto con `insert().values()` como con `insertJsonEachRow()`.
 
 Con un esquema de tabla, `insertJsonEachRow()` envía una `Date` de JavaScript en una columna `DateTime`/`DateTime64` como exactamente los mismos ticks enteros que `insert().values()` y deja que el analizador predeterminado de ClickHouse `date_time_input_format = basic` se encargue de las cadenas; por eso ambas rutas interpretan igual las cadenas de fecha y hora. Un número JSON que pases directamente en una columna `DateTime64` se interpreta como ticks con `JSONEachRow` y como segundos Unix con `.values()`.
 
@@ -2563,13 +2562,12 @@ await db.replicasStatus();
 ```
 
 ## Observabilidad
-<!-- src:8021e8d9 -->
+<!-- src:37125a8e -->
 
-`ck-orm` incluye tres capas de observabilidad integradas:
+`ck-orm` incluye dos capas de observabilidad:
 
-- `logger`
-- `tracing`
-- `instrumentation`
+- `logger` y `logLevel` para el registro integrado
+- `plugins` para los hooks del ciclo de vida de las consultas; el trazado de OpenTelemetry se distribuye como el plugin `ck-orm/otel`
 
 ### Logger
 
@@ -2601,56 +2599,109 @@ const db = clickhouseClient({
 });
 ```
 
-### Trazado
+### Plugin de OpenTelemetry
+
+Instala `@opentelemetry/api` y añade el plugin:
 
 ```ts
 import { clickhouseClient } from "ck-orm";
-import { trace } from "@opentelemetry/api";
+import { otelTracing } from "ck-orm/otel";
 
 const db = clickhouseClient({
   databaseUrl: "http://127.0.0.1:8123/telemetry_lab",
-  tracing: {
-    tracer: trace.getTracer("ck-orm-example"),
-    includeStatement: false,
-    includeRowCount: true,
-  },
+  plugins: [
+    otelTracing({
+      includeStatement: false,
+      includeRowCount: true,
+    }),
+  ],
 });
 ```
 
-El trazado obtiene el nombre de la base de datos, la dirección del servidor, el puerto del servidor y el tiempo de espera de la solicitud a partir de la configuración de `clickhouseClient(...)`. Pasa las etiquetas de nivel de servicio mediante `tracing.attributes`; las claves que empiezan por `db.` se ignoran para que el código de la aplicación no pueda sobrescribir los atributos de base de datos integrados.
+El plugin usa `trace.getTracer("ck-orm")` salvo que pases `tracer`. Obtiene el nombre de la base de datos, la dirección del servidor, el puerto del servidor y el tiempo de espera de la solicitud a partir de la configuración de `clickhouseClient(...)`. Pasa las etiquetas de nivel de servicio mediante `attributes`; las claves que empiezan por `db.` se ignoran para que el código de la aplicación no pueda sobrescribir los atributos de base de datos integrados.
 
-En sistemas de trazado compartidos, es más seguro usar `includeStatement: false`. La biblioteca usa `true` de forma predeterminada; desactiva esta opción cuando los nombres de las tablas o columnas, o la forma de la consulta, no deban salir del perímetro del servicio. Los valores vinculados no se incorporan a la sentencia compactada, pero la forma del SQL puede seguir resultando sensible desde el punto de vista operativo.
+En sistemas de trazado compartidos, es más seguro usar `includeStatement: false`. El valor predeterminado es `true`; desactiva esta opción cuando los nombres de las tablas o columnas, o la forma de la consulta, no deban salir del perímetro del servicio. Los valores vinculados no se incorporan a la sentencia compactada, pero la forma del SQL puede seguir resultando sensible desde el punto de vista operativo.
 
-### Instrumentación personalizada
+#### Spans del lado del servidor
+
+Establece `propagateTraceContext: true` para enviar con cada solicitud el contexto de trazado W3C del span (`traceparent`, `tracestate`). ClickHouse registra entonces sus propios spans de la consulta, como `HTTPHandler`, `query` y las etapas del pipeline, como hijos del span de ck-orm. El plugin reenvía solo esas dos cabeceras, nunca `baggage` ni las cabeceras de proveedor de tu propagador global, y únicamente para los spans muestreados: ClickHouse registra spans de servidor para cada contexto de trazado que recibe, esté muestreado o no. El plugin inyecta mediante el propagador registrado globalmente, que el SDK de OpenTelemetry configura por defecto con el contexto de trazado W3C; si no hay ningún propagador registrado, no se envía nada.
 
 ```ts
-import type { ClickHouseORMInstrumentation } from "ck-orm";
-
-const instrumentation: ClickHouseORMInstrumentation = {
-  onQueryStart(event) {
-    console.log("start", event.operation, event.statement);
-  },
-  onQuerySuccess(event) {
-    console.log("success", event.durationMs, event.rowCount);
-  },
-  onQueryError(event) {
-    console.error("error", event.error);
-  },
-};
-
 const db = clickhouseClient({
   databaseUrl: "http://127.0.0.1:8123/telemetry_lab",
-  instrumentation: [instrumentation],
+  plugins: [otelTracing({ propagateTraceContext: true })],
 });
 ```
 
-Tipos de eventos públicos:
+ClickHouse escribe estos spans en `system.opentelemetry_span_log` y no los exporta; consulta [Tracing ClickHouse with OpenTelemetry](https://clickhouse.com/docs/operations/opentelemetry) para exportarlos a un sistema de trazado. Los spans de servidor incluyen `clickhouse.query_id`, que coincide con `db.query.id` en el span de ck-orm, y notifican los fallos mediante `clickhouse.exception_code` en lugar del estado del span.
 
+Si pasas tu propio `traceparent` en `http_headers`, este sustituye al del plugin; pasa también el `tracestate` correspondiente, o el `tracestate` del plugin se enviará junto con él.
+
+En los navegadores, `traceparent` hace que la solicitud falle en la comprobación previa de CORS salvo que ClickHouse permita esa cabecera y, como solo las solicitudes muestreadas la llevan, los fallos parecen aleatorios. El valor predeterminado de `http_options_response` no la permite, así que activa la propagación en los navegadores solo después de añadirla en un archivo de `config.d`:
+
+```xml
+<clickhouse>
+  <http_options_response replace="replace">
+    <header><name>Access-Control-Allow-Origin</name><value>*</value></header>
+    <header><name>Access-Control-Allow-Headers</name><value>origin, x-requested-with, x-clickhouse-format, x-clickhouse-user, x-clickhouse-key, Authorization, traceparent, tracestate</value></header>
+    <header><name>Access-Control-Allow-Methods</name><value>POST, GET, OPTIONS</value></header>
+    <header><name>Access-Control-Max-Age</name><value>86400</value></header>
+  </http_options_response>
+</clickhouse>
+```
+
+### Escribir plugins
+
+Un plugin es un objeto con un `name` y hasta tres hooks:
+
+```ts
+import { clickhouseClient, type ClickHouseORMPlugin } from "ck-orm";
+
+const slowQueries = (thresholdMs: number): ClickHouseORMPlugin => ({
+  name: "slow-queries",
+  onQuerySuccess(event) {
+    if (event.durationMs >= thresholdMs) {
+      console.warn("slow query", event.querySummary, event.durationMs);
+    }
+  },
+});
+
+const db = clickhouseClient({
+  databaseUrl: "http://127.0.0.1:8123/telemetry_lab",
+  plugins: [slowQueries(500)],
+});
+```
+
+`onQueryStart` puede devolver cabeceras para esa solicitud:
+
+```ts
+const requestSource: ClickHouseORMPlugin = {
+  name: "request-source",
+  onQueryStart() {
+    return { http_headers: { "x-request-source": "billing-worker" } };
+  },
+};
+```
+
+Los plugins siguen estas reglas:
+
+- Los hooks se ejecutan para cada solicitud que ck-orm envía a ClickHouse: consultas, flujos, comandos, inserciones, funciones auxiliares de DDL, `ping()`, `replicasStatus()` y la limpieza de tablas temporales de `runInSession()`. Solo las solicitudes que cancelan un flujo abandonado y esperan a que se desbloquee su sesión (`KILL QUERY` y el sondeo posterior) no ejecutan hooks.
+- Cada `onQueryStart` va seguido de exactamente un `onQuerySuccess` o un `onQueryError` con el mismo `executionId`; en un flujo, esto ocurre cuando el iterador termina o se cierra. Un flujo que el llamador detiene antes de tiempo cuenta como correcto e informa de las filas leídas hasta ese momento. Asocia el estado de cada solicitud a su `executionId`.
+- Los hooks `onQueryStart` se ejecutan en orden de registro, y todos terminan antes de enviar la solicitud. `onQuerySuccess` y `onQueryError` se ejecutan en orden inverso. El logger integrado siempre se ejecuta en la capa más externa.
+- La cabecera de un plugin posterior sustituye a la de uno anterior. Los `http_headers` explícitos, ya sean del cliente o de una solicitud concreta, sustituyen a las cabeceras de los plugins. Los plugins no pueden sustituir la cabecera `Authorization` construida a partir de las credenciales de conexión ni la cabecera `X-ClickHouse-Replica-Tag` que envían las sesiones.
+- Un hook que lanza una excepción se registra con el nombre del plugin y no afecta a la consulta ni a los demás plugins. Las cabeceras de un `onQueryStart` que lanza una excepción o devuelve una cabecera no válida se descartan.
+- Los eventos son de solo lectura. Los plugins no pueden cambiar el SQL, los parámetros, los ajustes ni los resultados.
+- Los hooks se esperan (`await`) en la ruta de la consulta. Almacena en búfer el trabajo lento, como la exportación por red, en lugar de esperarlo dentro de un hook.
+
+Tipos públicos de observabilidad:
+
+- `ClickHouseORMPlugin`
+- `ClickHouseORMQueryStartResult`
 - `ClickHouseORMQueryEvent`
 - `ClickHouseORMQueryResultEvent`
 - `ClickHouseORMQueryErrorEvent`
 - `ClickHouseORMQueryStatistics`
-- `ClickHouseORMTracingOptions`
+- `ClickHouseORMTracingOptions` (de `ck-orm/otel`)
 - `ClickHouseORMLogLevel`
 
 Los campos de evento integrados incluyen `databaseName`, `serverAddress`, `serverPort`, `requestTimeoutMs`, `statementHash`, `querySummary`, `queryId`, `sessionId` y `tableName` cuando ck-orm puede identificar una sola tabla sin adivinarla a partir del SQL sin formato. Las consultas JSON que cargan todos los resultados también incluyen las estadísticas de respuesta de ClickHouse cuando el servidor las devuelve: `serverElapsedMs`, `readRows`, `readBytes`, `resultRows` y `rowsBeforeLimitAtLeast`.
@@ -2727,7 +2778,7 @@ const toPublicQueryError = (error: unknown) => {
 No devuelvas `responseText` ni el `message` sin procesar del error a clientes que no sean de confianza. ClickHouse puede incluir fragmentos SQL y nombres de objetos en el texto del error.
 
 ## Seguridad
-<!-- src:c2dbb125 -->
+<!-- src:062d0032 -->
 
 `ck-orm` está diseñado para que, de forma predeterminada, sea difícil construir SQL inseguro.
 
@@ -2755,9 +2806,11 @@ Si necesitas DDL de tablas temporales que solo pueda ejecutar código de confian
 
 ### Exposición de datos de trazado
 
-`tracing.includeStatement` tiene `true` como valor predeterminado, por lo que el texto SQL compactado se adjunta a los spans como `db.statement` y `db.query.text`.
+`otelTracing()` adjunta el texto SQL compactado a los spans como `db.statement` y `db.query.text` porque `includeStatement` tiene `true` como valor predeterminado.
 
 Los valores vinculados se guardan por separado como parámetros con nombre de ClickHouse y no aparecen en el texto de la sentencia, pero los nombres de tabla y columna y la forma de la consulta sí aparecen en la salida de trazado. Si el sistema de trazado es compartido o está fuera del host, desactiva `includeStatement` o filtra `db.statement` / `db.query.text` en el colector.
+
+Los spans de servidor de ClickHouse también registran la sentencia como `db.statement` en `system.opentelemetry_span_log`. Esa tabla permanece en el servidor ClickHouse salvo que la exportes.
 
 ### Respuestas de error
 

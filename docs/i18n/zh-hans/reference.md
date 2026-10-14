@@ -1,5 +1,5 @@
 ## 安装
-<!-- src:8558838e -->
+<!-- src:03d420fc -->
 
 ```bash [bun]
 bun add ck-orm
@@ -14,10 +14,10 @@ pnpm add ck-orm
 ```
 
 ```bash [yarn]
-yarn add ck-orm @opentelemetry/api
+yarn add ck-orm
 ```
 
-ck-orm 有一个对等依赖项：`@opentelemetry/api`。Bun、npm 和 pnpm 会自动安装它；Yarn 不会，所以要在 Yarn 命令里显式加上它。
+ck-orm 没有必需依赖。`@opentelemetry/api` 是可选的对等依赖项，只有 `ck-orm/otel` 插件会用到它；使用该插件时，请和 ck-orm 一起安装。
 
 ## 快速上手
 <!-- src:d7ba4246 -->
@@ -722,7 +722,7 @@ ckType.qbit("embedding", ckType.float32(), { dimensions: 8 });
 插入行的推断结构和 `typeof table.$inferInsert` 一致；调用 `insert(table).values(...)` 时，可以省略带 ClickHouse 默认值或生成表达式的列。生成的 `INSERT` 列列表永远不会包含 `MATERIALIZED` 和 `ALIAS` 列；显式传入这些列会被拒绝。
 
 ## 客户端配置
-<!-- src:0d752985 -->
+<!-- src:26d96c74 -->
 
 用 `clickhouseClient()` 创建客户端：
 
@@ -799,8 +799,7 @@ const db = clickhouseClient({
 | `session_max_concurrent_requests` | 此客户端内每个 `session_id` 允许同时在途的最大请求数（默认 `1`） |
 | `compression.response` | 默认值为 `false` 时，流式请求会发送 `enable_http_compression = 0`，让行在 ClickHouse 生成后立即到达。非流式请求沿用服务器默认值（ClickHouse 26.3+ 会在客户端接受压缩时压缩响应）。设为 `true` 会压缩所有响应；稀疏流可能要等压缩块填满后才有数据返回 |
 | `logger` / `logLevel` | 日志记录器集成 |
-| `tracing` | OpenTelemetry 集成 |
-| `instrumentation` | 自定义查询生命周期 Hook |
+| `plugins` | 查询生命周期插件，例如来自 `ck-orm/otel` 的 `otelTracing()` |
 
 这些会话生命周期控制项特意设计为请求级别。把 `session_timeout` 传给单个查询或 `runInSession(...)`。继续使用现有 `session_id` 时才用 `session_check`；初始化全新会话时不要用。
 `session_max_concurrent_requests` 不一样：它是客户端级的限制机制，会限制发往同一 `session_id` 的并发请求。
@@ -1420,7 +1419,7 @@ const rows = await db
 计算表达式在运行时遵循 ClickHouse 的 NULL 传播规则：ClickHouse 返回 NULL 时（输入是 NULL，或左连接的行没有匹配），值就是 `null`。这些表达式的 TypeScript 类型就是你声明的 `TData`（或辅助函数的固定类型），不会自动放宽为可空类型；因此输入可能为 NULL 时，需要声明 `| null`（例如 `fn.plus<number | null>(...)`），或用 `fn.coalesce(...)` 包装输入。
 
 ## 写入
-<!-- src:d7555d6e -->
+<!-- src:5d78750d -->
 
 ### `insert(table).values(...)`
 
@@ -1519,7 +1518,7 @@ await db.insertJsonEachRow("tmp_scope", [
 - 普通数组
 - 一个 `AsyncIterable`
 
-空的普通数组会在客户端被视为无操作，但插桩 Hook 仍会收到一次成功的插入生命周期报告，其中包含 `rowCount: 0`。未知字段由 ClickHouse 处理；如果想让服务器忽略额外的 JSON 字段，就传入 `input_format_skip_unknown_fields: 1` 之类的设置。嵌套列会以扁平化后的 `column.field` 数组发送（ClickHouse 默认 `flatten_nested = 1`），所以 `{ lines: [{ sku: "a" }] }` 在 `insert().values()` 和 `insertJsonEachRow()` 中都能正常工作。
+空的普通数组会在客户端被视为无操作，但插件 Hook 仍会收到一次成功的插入生命周期报告，其中包含 `rowCount: 0`。未知字段由 ClickHouse 处理；如果想让服务器忽略额外的 JSON 字段，就传入 `input_format_skip_unknown_fields: 1` 之类的设置。嵌套列会以扁平化后的 `column.field` 数组发送（ClickHouse 默认 `flatten_nested = 1`），所以 `{ lines: [{ sku: "a" }] }` 在 `insert().values()` 和 `insertJsonEachRow()` 中都能正常工作。
 
 如果提供了表模式，`insertJsonEachRow()` 会把 `DateTime`/`DateTime64` 列中的 JavaScript `Date` 发送为与 `insert().values()` 完全相同的整数刻度值，并让 ClickHouse 默认的 `date_time_input_format = basic` 解析器继续处理字符串，因此两者解析日期时间字符串的方式一致。你自行在 `DateTime64` 列传入的 JSON 数字，仍会被 `JSONEachRow` 按刻度读取，被 `.values()` 按 Unix 秒读取。
 
@@ -2477,13 +2476,12 @@ await db.replicasStatus();
 ```
 
 ## 可观测性
-<!-- src:8021e8d9 -->
+<!-- src:37125a8e -->
 
-`ck-orm` 内置三种可观测性能力：
+`ck-orm` 提供两层可观测性能力：
 
-- `logger`
-- `tracing`
-- `instrumentation`
+- `logger` 和 `logLevel`：内置日志记录
+- `plugins`：查询生命周期 Hook；OpenTelemetry 追踪以 `ck-orm/otel` 插件的形式提供
 
 ### 日志记录器
 
@@ -2515,58 +2513,111 @@ const db = clickhouseClient({
 });
 ```
 
-### 追踪
+### OpenTelemetry 插件
+
+先安装 `@opentelemetry/api`，再添加插件：
 
 ```ts
 import { clickhouseClient } from "ck-orm";
-import { trace } from "@opentelemetry/api";
+import { otelTracing } from "ck-orm/otel";
 
 const db = clickhouseClient({
   databaseUrl: "http://127.0.0.1:8123/telemetry_lab",
-  tracing: {
-    tracer: trace.getTracer("ck-orm-example"),
-    includeStatement: false,
-    includeRowCount: true,
-  },
+  plugins: [
+    otelTracing({
+      includeStatement: false,
+      includeRowCount: true,
+    }),
+  ],
 });
 ```
 
-追踪会根据 `clickhouseClient(...)` 的配置得到数据库名、服务器地址、服务器端口和请求超时。
-服务级标签通过 `tracing.attributes` 传入；以 `db.` 开头的键会被忽略，避免应用代码覆盖内置的数据库属性。
+除非传入 `tracer`，插件会使用 `trace.getTracer("ck-orm")`。它会根据 `clickhouseClient(...)` 的配置得到数据库名、服务器地址、服务器端口和请求超时。
+服务级标签通过 `attributes` 传入；以 `db.` 开头的键会被忽略，避免应用代码覆盖内置的数据库属性。
 
-`includeStatement: false` 对共享追踪后端更安全。库默认值是 `true`；如果表名、列名或查询结构不应离开服务边界，就关闭它。
+`includeStatement: false` 对共享追踪后端更安全。默认值是 `true`；如果表名、列名或查询结构不应离开服务边界，就关闭它。
 绑定值不会嵌入精简后的 SQL 语句，但 SQL 结构在运维上仍可能敏感。
 
-### 自定义插桩
+#### 服务端 span
+
+设置 `propagateTraceContext: true`，每个请求都会带上该 span 的 W3C 追踪上下文（`traceparent`、`tracestate`）。这样 ClickHouse 会为这次查询记录自己的 span，例如 `HTTPHandler`、`query` 和各个流水线阶段，并把它们挂在 ck-orm 的 span 之下。插件只转发这两个请求头，绝不会转发全局 propagator 产生的 `baggage` 或厂商专有请求头，而且只对已采样的 span 转发：ClickHouse 对收到的每个追踪上下文都会记录服务端 span，不管它有没有被采样。插件通过全局注册的 propagator 注入，OpenTelemetry SDK 默认将其设为 W3C 追踪上下文；没有注册 propagator 时，不会发送任何内容。
 
 ```ts
-import type { ClickHouseORMInstrumentation } from "ck-orm";
-
-const instrumentation: ClickHouseORMInstrumentation = {
-  onQueryStart(event) {
-    console.log("start", event.operation, event.statement);
-  },
-  onQuerySuccess(event) {
-    console.log("success", event.durationMs, event.rowCount);
-  },
-  onQueryError(event) {
-    console.error("error", event.error);
-  },
-};
-
 const db = clickhouseClient({
   databaseUrl: "http://127.0.0.1:8123/telemetry_lab",
-  instrumentation: [instrumentation],
+  plugins: [otelTracing({ propagateTraceContext: true })],
 });
 ```
 
-公开的事件类型：
+ClickHouse 把这些 span 写入 `system.opentelemetry_span_log`，不会自行导出；要导出到追踪后端，请参阅 [Tracing ClickHouse with OpenTelemetry](https://clickhouse.com/docs/operations/opentelemetry)。服务端 span 带有 `clickhouse.query_id`，它与 ck-orm span 上的 `db.query.id` 一致；失败通过 `clickhouse.exception_code` 报告，而不是 span 状态。
 
+如果你在 `http_headers` 中传入自己的 `traceparent`，它会覆盖插件的；请同时传入与之匹配的 `tracestate`，否则插件的 `tracestate` 仍会一起发出。
+
+在浏览器中，除非 ClickHouse 允许 `traceparent` 请求头，否则带上它的请求会通不过 CORS 预检；又因为只有已采样的请求才带这个头，失败看起来是随机的。默认的 `http_options_response` 不允许它，所以只有在 `config.d` 文件中加上它之后，才能在浏览器里启用传播：
+
+```xml
+<clickhouse>
+  <http_options_response replace="replace">
+    <header><name>Access-Control-Allow-Origin</name><value>*</value></header>
+    <header><name>Access-Control-Allow-Headers</name><value>origin, x-requested-with, x-clickhouse-format, x-clickhouse-user, x-clickhouse-key, Authorization, traceparent, tracestate</value></header>
+    <header><name>Access-Control-Allow-Methods</name><value>POST, GET, OPTIONS</value></header>
+    <header><name>Access-Control-Max-Age</name><value>86400</value></header>
+  </http_options_response>
+</clickhouse>
+```
+
+### 编写插件
+
+插件是一个带 `name` 的对象，最多可以有三个 Hook：
+
+```ts
+import { clickhouseClient, type ClickHouseORMPlugin } from "ck-orm";
+
+const slowQueries = (thresholdMs: number): ClickHouseORMPlugin => ({
+  name: "slow-queries",
+  onQuerySuccess(event) {
+    if (event.durationMs >= thresholdMs) {
+      console.warn("slow query", event.querySummary, event.durationMs);
+    }
+  },
+});
+
+const db = clickhouseClient({
+  databaseUrl: "http://127.0.0.1:8123/telemetry_lab",
+  plugins: [slowQueries(500)],
+});
+```
+
+`onQueryStart` 可以为当前请求返回请求头：
+
+```ts
+const requestSource: ClickHouseORMPlugin = {
+  name: "request-source",
+  onQueryStart() {
+    return { http_headers: { "x-request-source": "billing-worker" } };
+  },
+};
+```
+
+插件遵循以下规则：
+
+- ck-orm 发给 ClickHouse 的每个请求都会运行 Hook：查询、流式读取、命令、插入、DDL 辅助函数、`ping()`、`replicasStatus()`，以及 `runInSession()` 中的临时表清理。只有取消被放弃的流并等待其会话解锁的请求（`KILL QUERY` 及其后的轮询）不会运行 Hook。
+- 每个 `onQueryStart` 之后，都会有且只有一个带相同 `executionId` 的 `onQuerySuccess` 或 `onQueryError`；对于流，这发生在迭代器结束或被关闭时。调用方提前停止的流算作成功，并报告到那时为止已读取的行数。按请求保存的状态请以 `executionId` 作为键。
+- `onQueryStart` 按注册顺序运行，并且全部完成后才会发送请求。`onQuerySuccess` 和 `onQueryError` 按相反顺序运行。内置的日志记录器始终在最外层运行。
+- 后面的插件设置的请求头会覆盖前面的。显式传入的 `http_headers`（无论是客户端级还是请求级）会覆盖插件的请求头。插件不能覆盖由连接凭据生成的 `Authorization` 请求头，也不能覆盖会话发送的 `X-ClickHouse-Replica-Tag` 请求头。
+- 抛出异常的 Hook 会连同插件名一起写入日志，不影响查询，也不影响其他插件。抛出异常的 `onQueryStart`，或返回了无效请求头的 `onQueryStart`，它的请求头会被丢弃。
+- 事件是只读的。插件不能修改 SQL、参数、设置或结果。
+- Hook 在查询路径上会被 await。网络导出之类的慢操作请先缓冲，不要在 Hook 里 await。
+
+公开的可观测性类型：
+
+- `ClickHouseORMPlugin`
+- `ClickHouseORMQueryStartResult`
 - `ClickHouseORMQueryEvent`
 - `ClickHouseORMQueryResultEvent`
 - `ClickHouseORMQueryErrorEvent`
 - `ClickHouseORMQueryStatistics`
-- `ClickHouseORMTracingOptions`
+- `ClickHouseORMTracingOptions`（来自 `ck-orm/otel`）
 - `ClickHouseORMLogLevel`
 
 内置事件字段包括 `databaseName`、`serverAddress`、`serverPort`、`requestTimeoutMs`、`statementHash`、`querySummary`、`queryId`、`sessionId`；如果 ck-orm 无需从原始 SQL 猜测就能识别出单个表，还会包括 `tableName`。
@@ -2644,7 +2695,7 @@ const toPublicQueryError = (error: unknown) => {
 不要把 `responseText` 或原始错误 `message` 返回给不受信任的客户端。ClickHouse 的错误文本可能包含 SQL 片段和对象名。
 
 ## 安全
-<!-- src:c2dbb125 -->
+<!-- src:062d0032 -->
 
 `ck-orm` 默认就让构造不安全的 SQL 变得很难。
 
@@ -2672,10 +2723,12 @@ const toPublicQueryError = (error: unknown) => {
 
 ### 追踪数据暴露
 
-`tracing.includeStatement` 默认是 `true`，所以会把压缩空白后的 SQL 文本作为 `db.statement` 和 `db.query.text` 附加到 span 上。
+`otelTracing()` 会把压缩空白后的 SQL 文本作为 `db.statement` 和 `db.query.text` 附加到 span 上，因为 `includeStatement` 默认是 `true`。
 
 绑定值会单独存储为 ClickHouse 具名参数，不包含在语句文本中；但表名、列名和查询结构仍会出现在追踪输出中。
 如果追踪后端是共享的，或者部署在主机之外，请关闭 `includeStatement`，或者在收集器中过滤 `db.statement` / `db.query.text`。
+
+ClickHouse 服务端 span 也会把语句记录为 `system.opentelemetry_span_log` 中的 `db.statement`。除非你导出这张表，否则它只留在 ClickHouse 服务器上。
 
 ### 错误响应
 

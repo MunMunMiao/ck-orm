@@ -550,8 +550,9 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
 
     const db = clickhouseClient({
       host: "http://localhost:8123",
-      instrumentation: [
+      plugins: [
         {
+          name: "probe",
           onQuerySuccess(event) {
             successes.push({
               rowCount: event.rowCount,
