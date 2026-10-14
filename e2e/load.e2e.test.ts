@@ -1,11 +1,11 @@
-import { expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { ckSql, ckTable, ckType } from "./ck-orm";
 import { createE2EDb, createTempTableName } from "./shared";
 import { describeE2E } from "./test-helpers";
 
 // Heavy load tests are gated behind CK_ORM_E2E_LOAD=1 because they take
 // 30+ seconds each and aren't appropriate for the default e2e job.
-const loadDescribe = process.env.CK_ORM_E2E_LOAD === "1" ? describeE2E : describeE2E.skip;
+const loadDescribe = process.env.CK_ORM_E2E_LOAD === "1" ? describeE2E : describe.skip;
 
 const ROW_COUNT = Number(process.env.CK_ORM_E2E_LOAD_ROWS ?? 1_000_000);
 
