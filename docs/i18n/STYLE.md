@@ -7,6 +7,7 @@ Maintenance commands (run in `docs/`):
 
 - `bun run i18n:status` lists, per language, which sections are `current`, `stale`, `unmarked` or `missing` against the English source.
 - `bun run i18n:status --hashes` prints the hash that goes into each `<!-- src:HASH -->` marker.
+- `bun run i18n:status --strict` exits with 1 unless every language is fully current; CI runs it.
 - `bun run build` fails when a translation changes the heading structure, the code blocks or the link anchors.
 
 ## 1. What is translated and what is not

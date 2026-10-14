@@ -87,6 +87,11 @@ jobs:
         run: bun test
         working-directory: docs
 
+      # Fails when an English section changed without its translations being updated.
+      - name: Check translations
+        run: bun run i18n:status --strict
+        working-directory: docs
+
       # `bun check` first, then the build: fails on type errors in the examples or links to missing headings.
       - name: Build docs
         run: bun run build
