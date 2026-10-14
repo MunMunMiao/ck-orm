@@ -1250,7 +1250,7 @@ where (
 limit 10
 ```
 
-La mise en forme ne modifie que les espaces blancs. Chaque clause démarre sur une nouvelle ligne, les éléments du `select` sont placés un par ligne, les sous-requêtes et les CTE sont indentées, et les conditions d'un groupe `and` ou `or` sont placées une par ligne. Les arguments d'une fonction restent sur leur ligne, le texte entre guillemets n'est jamais modifié, et une instruction qui contient des commentaires SQL est renvoyée telle quelle. Dans le corps d'un `insert().values()`, chaque ligne insérée tient sur sa propre ligne. La mise en forme n'a jamais d'effet sur la requête envoyée.
+La mise en forme ne modifie que les espaces blancs. Chaque clause démarre sur une nouvelle ligne, les éléments du `select` sont placés un par ligne, les sous-requêtes et les CTE sont indentées, et les conditions d'un groupe `and` ou `or` sont placées une par ligne. Les arguments d'une fonction restent sur leur ligne, le texte entre guillemets n'est jamais modifié, et une instruction qui contient des commentaires SQL est renvoyée telle quelle. Dans le corps d'un `insert().values()`, chaque ligne insérée occupe sa propre ligne de texte. La mise en forme n'a jamais d'effet sur la requête envoyée.
 
 ### Sous-requêtes et CTE
 

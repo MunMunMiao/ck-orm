@@ -1249,7 +1249,7 @@ where (
 limit 10
 ```
 
-El formato legible solo cambia los espacios en blanco. Cada cláusula empieza en una línea nueva, los elementos de `select` van uno por línea, las subconsultas y los CTE llevan sangría, y las condiciones de un grupo `and` u `or` van una por línea. Los argumentos de las funciones se quedan en su línea, el texto entrecomillado no se modifica nunca y una sentencia con comentarios SQL se devuelve tal cual. En el cuerpo de un `insert().values()`, cada fila va en su propia línea. El formato legible nunca afecta a la consulta que se envía.
+La salida legible solo cambia los espacios en blanco. Cada cláusula empieza en una línea nueva, los elementos de `select` van uno por línea, las subconsultas y los CTE llevan sangría, y las condiciones de un grupo `and` u `or` van una por línea. Los argumentos de las funciones se quedan en su línea, el texto entrecomillado no se modifica nunca y una sentencia con comentarios SQL se devuelve tal cual. En el cuerpo de un `insert().values()`, cada fila va en su propia línea. La salida legible nunca afecta a la consulta que se envía.
 
 ### Subconsultas y CTE
 
