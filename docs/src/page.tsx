@@ -2,8 +2,8 @@ import { Fragment, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { Example } from "./examples";
 import type { Highlight } from "./highlight";
-import { DEFAULT_TAG, type Locale, localeDir, type Strings } from "./i18n";
-import { CodeBlock, CodeTabs, type Heading, Html } from "./reference";
+import { DEFAULT_TAG, exampleItem, type Locale, localeDir, type Strings } from "./i18n";
+import { CodeBlock, CodeTabs, EXTERNAL_LINK, type Heading, Html } from "./reference";
 
 // Runs before first paint so dark mode never flashes light. No stored choice means Auto (follow the system).
 const THEME_SCRIPT = `var m;try{m=localStorage.getItem("theme")}catch(e){}m=m==="light"||m==="dark"?m:"auto";var r=document.documentElement;r.dataset.theme=m;r.classList.toggle("dark",m==="dark"||(m==="auto"&&matchMedia("(prefers-color-scheme: dark)").matches))`;
@@ -57,6 +57,52 @@ const Globe = () => (
   <svg viewBox="0 0 20 20" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
     <circle cx="10" cy="10" r="7.5" />
     <path d="M2.8 10h14.4M10 2.5c2 2.1 3 4.6 3 7.5s-1 5.4-3 7.5c-2-2.1-3-4.6-3-7.5s1-5.4 3-7.5Z" />
+  </svg>
+);
+
+// Outline icons like Globe and the theme icons: no fill, 1.5 px stroke, glyph about 15 px inside the 20 px box.
+const GitHubMark = () => (
+  <svg
+    viewBox="-2 -2 28 28"
+    className="size-5"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2.1"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22" />
+  </svg>
+);
+
+const LlmsMark = () => (
+  <svg
+    viewBox="0 0 20 20"
+    className="size-5"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <path d="M5.5 2.5h6l4 4v10a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1v-13a1 1 0 0 1 1-1ZM11.5 2.5v4h4M7.5 10h5M7.5 13h5" />
+  </svg>
+);
+
+const NpmMark = () => (
+  <svg
+    viewBox="0 0 20 20"
+    className="size-5"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <rect x="2.5" y="2.5" width="15" height="15" rx="1.5" />
+    <path d="M6 14V6h8v8h-2.5V8.5h-3V14Z" />
   </svg>
 );
 
@@ -245,6 +291,7 @@ const WithToc = ({ label, headings, children }: { label: string; headings: Headi
 );
 
 const NAV_LINK = "rounded-sm px-2 py-1.5 text-muted hover:text-fg aria-[current=page]:text-fg";
+const ICON_LINK = "size-9 place-items-center rounded-sm text-muted hover:text-fg";
 
 const Layout = ({
   page,
@@ -268,12 +315,6 @@ const Layout = ({
   // The switcher adds a control to the header; tighten the spacing below sm so it still fits in 320 px.
   const multi = locales.length > 1;
   const navLink = multi ? `${NAV_LINK} max-sm:px-1.5` : NAV_LINK;
-  const editUrl =
-    page === "examples"
-      ? `${repoUrl}/tree/main/examples`
-      : locale.tag === DEFAULT_TAG
-        ? `${repoUrl}/edit/main/docs/reference.md`
-        : `${repoUrl}/edit/main/docs/i18n/${localeDir(locale.tag)}/reference.md`;
   return (
     <html
       lang={locale.tag}
@@ -346,15 +387,21 @@ const Layout = ({
               >
                 {ui.site.examples}
               </a>
-              <a href={`${siteRoot}llms.txt`} className={`hidden sm:block ${navLink}`}>
-                llms.txt
+              <a href={`${siteRoot}llms.txt`} className={`hidden sm:grid ${ICON_LINK}`} aria-label="llms.txt">
+                <LlmsMark />
               </a>
-              <a href="https://www.npmjs.com/package/ck-orm" className={`hidden sm:block ${navLink}`}>
-                npm
+              <a
+                href="https://www.npmjs.com/package/ck-orm"
+                className={`hidden sm:grid ${ICON_LINK}`}
+                aria-label="npm"
+                {...EXTERNAL_LINK}
+              >
+                <NpmMark />
               </a>
-              <a href={repoUrl} className={navLink}>
-                GitHub
+              <a href={repoUrl} className={`grid ${ICON_LINK}`} aria-label="GitHub" {...EXTERNAL_LINK}>
+                <GitHubMark />
               </a>
+              <ThemeButton ui={ui.theme} />
               <LanguageSwitcher
                 locale={locale}
                 locales={locales}
@@ -362,7 +409,6 @@ const Layout = ({
                 page={page}
                 label={ui.site.language}
               />
-              <ThemeButton ui={ui.theme} />
             </nav>
           </div>
         </header>
@@ -372,12 +418,6 @@ const Layout = ({
         <footer className="border-t border-rule">
           <div className="mx-auto flex max-w-[80rem] flex-wrap gap-x-6 gap-y-2 px-4 py-8 text-sm text-muted sm:px-6">
             <span>{ui.site.license}</span>
-            <a href={editUrl} className="hover:text-fg">
-              {ui.site.editPage}
-            </a>
-            <a href={`${siteRoot}llms.txt`} className="hover:text-fg">
-              {ui.site.llmsFooter}
-            </a>
           </div>
         </footer>
 
@@ -454,10 +494,14 @@ const ExamplesPage = ({
   examples,
   highlight,
 }: PageBase & { examples: Example[]; highlight: Highlight }) => {
-  const headings: Heading[] = examples.map((example) => ({
+  const sections = examples.map((example) => ({
+    example,
+    item: exampleItem(ui, example.id, locale.tag),
+  }));
+  const headings: Heading[] = sections.map(({ example, item }) => ({
     level: 2,
     id: example.id,
-    content: example.id,
+    content: item.title,
     section: example.id,
   }));
   return (
@@ -480,7 +524,7 @@ const ExamplesPage = ({
             <p className="mt-6 max-w-[62ch] text-lg leading-relaxed text-muted">
               {fill(ui.examples.intro, {
                 folder: (
-                  <a href={`${repoUrl}/tree/main/examples`} className={CTA}>
+                  <a href={`${repoUrl}/tree/main/examples`} className={CTA} {...EXTERNAL_LINK}>
                     examples/
                   </a>
                 ),
@@ -488,20 +532,20 @@ const ExamplesPage = ({
                 package: <code className="font-mono text-[0.9em] text-fg">package.json</code>,
               })}
             </p>
-            {examples.map((example) => (
+            {sections.map(({ example, item }) => (
               <section key={example.id} aria-labelledby={example.id}>
                 <h2 id={example.id} data-section={example.id} className="section-title">
-                  {example.id}
+                  {item.title}
                 </h2>
+                <p className="mt-4 text-muted">{item.summary}</p>
+                {item.notes && <p className="mt-4 text-muted">{item.notes}</p>}
                 <a
                   href={`${repoUrl}/blob/main/${example.path}`}
-                  className="mt-3 inline-block font-mono text-[0.8125rem] text-muted underline decoration-rule underline-offset-4 hover:text-fg"
+                  className="mt-4 inline-block font-mono text-[0.8125rem] text-muted underline decoration-rule underline-offset-4 hover:text-fg"
+                  {...EXTERNAL_LINK}
                 >
                   {example.path}
                 </a>
-                {ui.examples.details[example.id] && (
-                  <p className="mt-4 text-muted">{ui.examples.details[example.id]}</p>
-                )}
                 <div className="mt-4">
                   <CodeBlock
                     language="bash"
@@ -512,7 +556,7 @@ const ExamplesPage = ({
                 <div className="mt-4">
                   <CodeTabs
                     id={`example-${example.id}`}
-                    label={fillString(ui.examples.tabsLabel, { title: example.id })}
+                    label={fillString(ui.examples.tabsLabel, { title: item.title })}
                     tabs={[
                       { label: "main.ts", html: highlight(example.source, "ts") },
                       { label: "SQL", html: highlight(example.sql, "sql") },

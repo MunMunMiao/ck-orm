@@ -111,6 +111,24 @@ describe("renderReference", () => {
     const error = message(() => render("## Alpha\n\ntext\n\n[bad](#missing)", undefined, canonical));
     expect(error).toContain("links to missing headings: missing");
   });
+
+  test("opens links that leave the site in a new tab, and no others", () => {
+    const markdown =
+      "## Alpha\n\n[repo](../src/a.ts) [web](https://clickhouse.com/docs) [self](https://site.test/examples/) [in page](#alpha)";
+    const { html } = renderReference(markdown, highlight, {
+      linkBaseUrl: "https://example.com/docs/",
+      siteUrl: "https://site.test",
+      ui,
+      source: "reference.md",
+    });
+    const newTab = (html.match(/<a [^>]*>/g) ?? []).filter(
+      (tag) => tag.includes('target="_blank"') && tag.includes('rel="noopener"'),
+    );
+    expect(newTab.map((tag) => /href="([^"]*)"/.exec(tag)?.[1])).toEqual([
+      "https://example.com/src/a.ts",
+      "https://clickhouse.com/docs",
+    ]);
+  });
 });
 
 describe("findTranslations", () => {

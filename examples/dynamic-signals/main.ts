@@ -1,11 +1,11 @@
 /**
- * Dynamic signals
+ * Filtering Map signals
  *
  * Adapted from Darwinium's official model-signal Map use case:
  * https://clickhouse.com/blog/fast-feature-rich-and-mutable-clickhouse-powers-darwiniums-security-and-fraud-analytics-use-cases
  */
 import type { ClickHouseORMClient } from "ck-orm";
-import { ck, ckSql, ckTable, ckType, clickhouseClient, fn } from "ck-orm";
+import { ck, ckTable, ckType, clickhouseClient, fn } from "ck-orm";
 
 const interactions = ckTable("interactions", {
   interactionId: ckType.string("interaction_id"),
@@ -28,8 +28,8 @@ export const run = (
       { interactionId: "empty", signals: {} },
     ]);
 
-    const score = ckSql<number>`${interactions.signals}[${signal}]`;
-    // A missing key reads as 0, not NULL: existence and the score are separate checks.
+    // arrayElement reads a Map by key. A missing key reads as 0, not NULL: existence and the score are separate checks.
+    const score = fn.arrayElement<number>(interactions.signals, signal);
     // At >= 0.8, only above (0.9) and boundary (0.8) qualify; zero is a real score.
     return session
       .select({ interactionId: interactions.interactionId, score })

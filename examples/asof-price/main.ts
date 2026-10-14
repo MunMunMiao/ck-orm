@@ -1,11 +1,11 @@
 /**
- * ASOF price
+ * Latest quote with ASOF JOIN
  *
  * Inspired by Coinhall's time-series analytics; synthetic data, not customer SQL.
  * Matches each trade to the latest same-symbol quote at or before its time.
  */
 import type { ClickHouseORMClient } from "ck-orm";
-import { ckSql, ckTable, ckType, clickhouseClient } from "ck-orm";
+import { ck, ckTable, ckType, clickhouseClient } from "ck-orm";
 
 const trades = ckTable("trades", {
   tradeId: ckType.uint32("trade_id"),
@@ -95,25 +95,17 @@ export const run = (db: ClickHouseORMClient) =>
     ]);
 
     // ck-orm keeps Decimal JSON values as strings; unmatched prices remain null.
-    return session.execute(ckSql`SELECT
-      t.tradeId,
-      t.symbol,
-      q.price
-    FROM
-    (
-      SELECT trade_id AS tradeId, symbol, trade_time AS tradeTime
-      FROM ${trades}
-      ORDER BY symbol, tradeTime
-    ) AS t
-    ASOF LEFT JOIN
-    (
-      SELECT symbol, quote_time AS quoteTime, price
-      FROM ${quotes}
-      ORDER BY symbol, quoteTime
-    ) AS q
-    ON t.symbol = q.symbol AND t.tradeTime >= q.quoteTime
-    ORDER BY t.tradeId
-    SETTINGS join_use_nulls = 1`);
+    return session
+      .select({ tradeId: trades.tradeId, symbol: trades.symbol, price: quotes.price })
+      .from(trades)
+      .asofLeftJoin(
+        quotes,
+        ck.and(
+          ck.eq(trades.symbol, quotes.symbol),
+          ck.gte(trades.tradeTime, quotes.quoteTime),
+        ),
+      )
+      .orderBy(ck.asc(trades.tradeId));
   });
 
 if (import.meta.main) {

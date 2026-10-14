@@ -7,8 +7,6 @@ export default {
     language: "Langue",
     closeNav: "Fermer la navigation",
     license: "Licence MIT",
-    editPage: "Modifier cette page sur GitHub",
-    llmsFooter: "llms.txt pour les agents d'IA",
   },
   theme: {
     label: "Thème : {mode}. Passer à {next}.",
@@ -48,17 +46,78 @@ export default {
     heading: "Exemples",
     intro:
       "Chaque exemple est un projet exécutable dans {folder} : un {main} et un {package}. Cette page affiche ce même fichier. La génération du site l'exécute avec ck-orm ; l'onglet SQL liste ainsi chaque requête reçue par ClickHouse. Le commentaire de fin de fichier indique les lignes affichées.",
-    details: {
-      "website-analytics":
-        "Compte les pages vues et le nombre exact de visiteurs distincts par chemin pour un seul site sur un intervalle UTC [start, end). Utilise des tables temporaires de session ; un même visiteur peut être compté sur plusieurs chemins.",
-      "usage-metering":
-        "Agrège l'utilisation par locataire, utilisateur et minute UTC sur plusieurs lots d'insertion. Exécutez cet exemple de manière séquentielle dans une base de données jetable avec les autorisations CREATE, SELECT, INSERT et DROP. Utilise des tables persistantes à noms fixes et une vue matérialisée, et ne supprime que les objets qu'il a créés avec succès. L'interruption du processus ou la perte d'une réponse CREATE peut laisser des objets à inspecter manuellement.",
-      "request-latency":
-        "Agrège le nombre de requêtes réussies, la latence moyenne pondérée et les percentiles p95/p99 exacts par locataire, opération et minute UTC. Exécutez cet exemple de manière séquentielle dans une base de données jetable avec les autorisations CREATE, SELECT, INSERT et DROP. Ne supprime que ses tables à noms fixes et sa vue matérialisée créées avec succès ; l'interruption du processus ou la perte d'une réponse CREATE peut laisser des objets. Les états de quantiles exacts conservent tous les échantillons : évaluez donc la consommation mémoire pour les charges de production.",
-      "asof-price":
-        "ASOF LEFT JOIN associe chaque transaction à la cotation la plus récente du même symbole dont l'horodatage est antérieur ou égal à celui de la transaction. Les prix Decimal restent des chaînes et, en l'absence de cotation historique, la valeur renvoyée est null. Utilise des tables temporaires de session.",
-      "dynamic-signals":
-        "Filtre les signaux évolutifs du modèle dans Map(String, Float64), en vérifiant l'existence de la clé avant d'appliquer un seuil inclusif. Un zéro stocké reste un véritable score. Utilise des tables temporaires de session.",
+    items: {
+      "decimal-sum": {
+        title: "Totaux Decimal exacts",
+        summary:
+          "Calcule la somme d'une colonne Decimal(20, 5) et décode le total en chaîne, pour qu'il ne passe jamais par un nombre à virgule flottante.",
+      },
+      "literal-search": {
+        title: "Recherche littérale sûre",
+        summary:
+          'Les valeurs sont transmises sous forme de paramètres de requête typés, sans jamais être concaténées dans le SQL, et ck.contains échappe % et _ pour que "alpha%" corresponde littéralement.',
+      },
+      "left-join": {
+        title: "Jointure à gauche avec NULL",
+        summary:
+          "leftJoin() envoie join_use_nulls = 1, donc les colonnes sans correspondance du côté droit sont NULL dans ClickHouse et null dans le type de la ligne.",
+      },
+      "website-analytics": {
+        title: "Analytique web",
+        summary:
+          "Compte les pages vues et le nombre exact de visiteurs distincts par chemin pour un seul site sur un intervalle UTC [start, end).",
+        notes: "Utilise des tables temporaires de session ; un même visiteur peut être compté sur plusieurs chemins.",
+      },
+      "asof-price": {
+        title: "Dernière cotation avec ASOF JOIN",
+        summary:
+          "ASOF LEFT JOIN associe chaque transaction à la cotation la plus récente du même symbole dont l'horodatage est antérieur ou égal à celui de la transaction. Les prix Decimal restent des chaînes et, en l'absence de cotation historique, la valeur renvoyée est null.",
+        notes: "Utilise des tables temporaires de session.",
+      },
+      "dynamic-signals": {
+        title: "Filtrage des signaux Map",
+        summary:
+          "Filtre les signaux évolutifs du modèle dans Map(String, Float64), en vérifiant l'existence de la clé avant d'appliquer un seuil inclusif. Un zéro stocké reste un véritable score.",
+        notes: "Utilise des tables temporaires de session.",
+      },
+      "trace-list": {
+        title: "Liste de traces avec filtres et total",
+        summary:
+          "Construit une seule liste de filtres à partir de critères facultatifs et l'utilise à la fois pour la page LIMIT/OFFSET et pour le nombre total, si bien qu'une page au-delà de la dernière indique toujours le total.",
+        notes: "Utilise des tables temporaires de session.",
+      },
+      "support-tickets": {
+        title: "Colonnes typées avec validation à l'exécution",
+        summary:
+          "Des colonnes Enum8, un type marqué avec $type et une structure JSON avec $type restreignent les types des lignes, et un validateur Standard Schema écrit à la main normalise les adresses électroniques et rejette une adresse invalide avant tout envoi.",
+        notes: "Utilise des tables temporaires de session.",
+      },
+      "bluesky-events": {
+        title: "Requêtes sur des charges utiles JSON d'événements",
+        summary:
+          "En reprenant les requêtes de ClickHouse JSONBench, compte les événements Bluesky par collection via des chemins JSON typés, puis lit les publications avec un chemin dynamique converti et un sous-objet JSON.",
+        notes: "Utilise des tables temporaires de session.",
+      },
+      "cdc-rollup": {
+        title: "Agrégation de lignes CDC dans ClickHouse",
+        summary:
+          "Déduplique les lignes CDC de Postgres avec FINAL et les agrège en chiffre d'affaires quotidien avec INSERT ... SELECT, si bien que seules les lignes finales sont renvoyées à JavaScript.",
+        notes: "Utilise des tables temporaires de session.",
+      },
+      "usage-metering": {
+        title: "Mesure d'utilisation",
+        summary:
+          "Agrège l'utilisation par locataire, utilisateur et minute UTC sur plusieurs lots d'insertion, avec une vue matérialisée déclenchée par l'insertion.",
+        notes:
+          "Exécutez cet exemple de manière séquentielle dans une base de données jetable avec les autorisations CREATE, SELECT, INSERT et DROP. Utilise des tables persistantes à noms fixes et une vue matérialisée, et ne supprime que les objets qu'il a créés avec succès. L'interruption du processus ou la perte d'une réponse CREATE peut laisser des objets à inspecter manuellement.",
+      },
+      "request-latency": {
+        title: "Percentiles de latence des requêtes",
+        summary:
+          "Agrège le nombre de requêtes réussies, la latence moyenne pondérée et les percentiles p95/p99 exacts par locataire, opération et minute UTC, avec une vue matérialisée déclenchée par l'insertion.",
+        notes:
+          "Exécutez cet exemple de manière séquentielle dans une base de données jetable avec les autorisations CREATE, SELECT, INSERT et DROP. Ne supprime que ses tables à noms fixes et sa vue matérialisée créées avec succès ; l'interruption du processus ou la perte d'une réponse CREATE peut laisser des objets. Les états de quantiles exacts conservent tous les échantillons : évaluez donc la consommation mémoire pour les charges de production.",
+      },
     },
     tabsLabel: "{title} : code source et SQL",
   },

@@ -114,7 +114,17 @@ export type Reference = {
 export type OutlineItem = { level: 2 | 3 | 4; id: string; text: string };
 export type Fence = { language: string; code: string };
 
-type RenderOptions = { linkBaseUrl: string; ui: Strings["code"]; source: string; canonical?: Reference };
+type RenderOptions = {
+  linkBaseUrl: string;
+  /** Links to this site stay in the current tab; every other http(s) link opens in a new one. */
+  siteUrl?: string;
+  ui: Strings["code"];
+  source: string;
+  canonical?: Reference;
+};
+
+/** Attributes for a link that leaves the site: a new tab that gets no access to this page. */
+export const EXTERNAL_LINK = { target: "_blank", rel: "noopener" } as const;
 
 const missingLinks = (markdown: string, anchors: Map<string, string>) => [
   ...new Set([...markdown.matchAll(/\]\(#([^)\s]+)\)/g)].map((match) => match[1]).filter((id) => !anchors.has(id))),
@@ -177,7 +187,8 @@ const validateTranslation = (reference: Reference, canonical: Reference, markdow
 };
 
 export const renderReference = (markdown: string, highlight: Highlight, options: RenderOptions): Reference => {
-  const { linkBaseUrl, ui, source, canonical } = options;
+  const { linkBaseUrl, siteUrl, ui, source, canonical } = options;
+  const siteOrigin = siteUrl && new URL(siteUrl).origin;
   const slug = createSlugger();
   const headings: Heading[] = [];
   const anchors = new Map<string, string>();
@@ -221,9 +232,15 @@ export const renderReference = (markdown: string, highlight: Highlight, options:
         const tabs = parseCodeTabs(code).map((tab) => ({ label: tab.label, html: highlight(tab.code, tab.language) }));
         return <CodeTabs id={`code-group-${++codeGroups}`} label={ui.variants} tabs={tabs} copy={ui.copy} />;
       },
-      a: ({ href, children }) => (
-        <a href={/^(?:[a-z]+:|#)/i.test(href) ? href : new URL(href, linkBaseUrl).href}>{children}</a>
-      ),
+      a: ({ href, children }) => {
+        const url = /^(?:[a-z]+:|#)/i.test(href) ? href : new URL(href, linkBaseUrl).href;
+        const external = /^https?:/i.test(url) && new URL(url).origin !== siteOrigin;
+        return (
+          <a href={url} {...(external ? EXTERNAL_LINK : {})}>
+            {children}
+          </a>
+        );
+      },
       table: ({ children }) => (
         <div className="table-wrap">
           <table>{children}</table>

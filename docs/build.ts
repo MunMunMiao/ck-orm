@@ -33,6 +33,7 @@ const defaultLocale = LOCALES[0];
 const defaultStrings = STRINGS[DEFAULT_TAG];
 const englishReference = renderReference(englishBody, highlight, {
   linkBaseUrl,
+  siteUrl,
   ui: defaultStrings.code,
   source: "docs/reference.md",
 });
@@ -62,6 +63,7 @@ for (const translation of await findTranslations()) {
       strings,
       reference: renderReference(stripSourceMarkers(body), highlight, {
         linkBaseUrl,
+        siteUrl,
         ui: strings.code,
         source,
         canonical: englishReference,

@@ -1,34 +1,50 @@
 /**
- * Request latency with insert-triggered materialized aggregation.
+ * Request latency percentiles
+ *
+ * Insert-triggered materialized aggregation.
  * Inspired by Inigo's materialized-view analytics in the ClickHouse blog.
  * quantilesExact is deterministic for these small fixtures and retains all samples;
  * it is a demonstration choice, not a recommendation for production memory usage.
  */
 import type { ClickHouseORMClient } from "ck-orm";
-import { ck, ckSql, ckTable, ckType, clickhouseClient, fn } from "ck-orm";
+import { ck, ckTable, ckType, clickhouseClient, fn } from "ck-orm";
 
-const requests = ckTable("ck_orm_example_latency_requests", {
-  tenantId: ckType.string("tenant_id"),
-  operation: ckType.string(),
-  occurredAt: ckType.dateTime64("occurred_at", { precision: 3, timezone: "UTC" }),
-  status: ckType.uint16(),
-  latencyMs: ckType.float64("latency_ms"),
-});
+const requests = ckTable(
+  "ck_orm_example_latency_requests",
+  {
+    tenantId: ckType.string("tenant_id"),
+    operation: ckType.string(),
+    occurredAt: ckType.dateTime64("occurred_at", { precision: 3, timezone: "UTC" }),
+    status: ckType.uint16(),
+    latencyMs: ckType.float64("latency_ms"),
+  },
+  (table) => ({
+    engine: "MergeTree",
+    orderBy: [table.tenantId, table.operation, table.occurredAt],
+  }),
+);
 
-const minutes = ckTable("ck_orm_example_latency_minutes", {
-  tenantId: ckType.string("tenant_id"),
-  operation: ckType.string(),
-  minute: ckType.dateTime64({ precision: 3, timezone: "UTC" }),
-  requestsState: ckType.aggregateFunction("requests_state", { name: "count" }),
-  averageState: ckType.aggregateFunction("average_state", {
-    name: "avg",
-    args: [ckType.float64()],
+const minutes = ckTable(
+  "ck_orm_example_latency_minutes",
+  {
+    tenantId: ckType.string("tenant_id"),
+    operation: ckType.string(),
+    minute: ckType.dateTime64({ precision: 3, timezone: "UTC" }),
+    requestsState: ckType.aggregateFunction("requests_state", { name: "count" }),
+    averageState: ckType.aggregateFunction("average_state", {
+      name: "avg",
+      args: [ckType.float64()],
+    }),
+    latencyState: ckType.aggregateFunction("latency_state", {
+      name: "quantilesExact(0.95, 0.99)",
+      args: [ckType.float64()],
+    }),
+  },
+  (table) => ({
+    engine: "AggregatingMergeTree",
+    orderBy: [table.tenantId, table.operation, table.minute],
   }),
-  latencyState: ckType.aggregateFunction("latency_state", {
-    name: "quantilesExact(0.95, 0.99)",
-    args: [ckType.float64()],
-  }),
-});
+);
 const viewName = "ck_orm_example_latency_mv";
 
 // Persistent tables are required. Use an isolated database; do not run concurrently.
@@ -45,41 +61,37 @@ export const run = async (db: ClickHouseORMClient) => {
     p99Ms: number;
   }[] = [];
   try {
-    await db.command(ckSql`CREATE TABLE ${requests}
-(
-  tenant_id String,
-  operation String,
-  occurred_at DateTime64(3, 'UTC'),
-  status UInt16,
-  latency_ms Float64
-)
-ENGINE = MergeTree
-ORDER BY (tenant_id, operation, occurred_at)`);
+    await db.createTable(requests);
     created.push(requests.originalName);
 
-    await db.command(ckSql`CREATE TABLE ${minutes}
-(
-  tenant_id String,
-  operation String,
-  minute DateTime64(3, 'UTC'),
-  requests_state AggregateFunction(count),
-  average_state AggregateFunction(avg, Float64),
-  latency_state AggregateFunction(quantilesExact(0.95, 0.99), Float64)
-)
-ENGINE = AggregatingMergeTree
-ORDER BY (tenant_id, operation, minute)`);
+    await db.createTable(minutes);
     created.push(minutes.originalName);
 
-    await db.command(ckSql`CREATE MATERIALIZED VIEW ${ckSql.identifier(viewName)}
-TO ${minutes} AS
-SELECT tenant_id, operation,
-  toStartOfInterval(occurred_at, INTERVAL 1 MINUTE, 'UTC') AS minute,
-  countState() AS requests_state,
-  avgState(latency_ms) AS average_state,
-  quantilesExactState(0.95, 0.99)(latency_ms) AS latency_state
-FROM ${requests}
-WHERE status >= 200 AND status < 300
-GROUP BY tenant_id, operation, minute`);
+    const minute = fn.call<Date>(
+      "toStartOfInterval",
+      requests.occurredAt,
+      fn.toIntervalMinute(1),
+      "UTC",
+    );
+    await db.createMaterializedView(viewName, {
+      to: minutes,
+      as: db
+        .select({
+          tenantId: requests.tenantId,
+          operation: requests.operation,
+          minute,
+          requestsState: fn.call<string>("countState"),
+          averageState: fn.call<string>("avgState", requests.latencyMs),
+          latencyState: fn.withParams<string>(
+            "quantilesExactState",
+            [0.95, 0.99],
+            requests.latencyMs,
+          ),
+        })
+        .from(requests)
+        .where(ck.gte(requests.status, 200), ck.lt(requests.status, 300))
+        .groupBy(requests.tenantId, requests.operation, minute),
+    });
     created.push(viewName);
 
     const samples = Array.from({ length: 21 }, (_, index) => ({
@@ -186,7 +198,7 @@ GROUP BY tenant_id, operation, minute`);
     // Keep the plural aggregate family and the same levels as the stored state.
     const quantiles = fn.withParams<number[]>(
       "quantilesExactMerge",
-      [ckSql`0.95`, ckSql`0.99`],
+      [0.95, 0.99],
       minutes.latencyState,
     );
     rows = await db
@@ -218,7 +230,7 @@ GROUP BY tenant_id, operation, minute`);
     // Only acknowledged CREATEs are owned; a colliding object is never dropped.
     for (const name of created.reverse()) {
       try {
-        await db.command(ckSql`DROP TABLE ${ckSql.identifier(name)} SYNC`);
+        await db.dropTable(name, { sync: true });
       } catch (error) {
         errors.push(error);
       }

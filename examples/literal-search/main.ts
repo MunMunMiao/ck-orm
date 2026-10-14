@@ -1,5 +1,5 @@
 /**
- * Literal search
+ * Safe literal search
  *
  * Values are sent as typed query parameters, never spliced into SQL. `ck.contains` also escapes `%` and `_`, so `"alpha%"` matches literally.
  */

@@ -1,5 +1,5 @@
 /**
- * Decimal sum
+ * Exact Decimal totals
  *
  * `fn.sum` over a `Decimal(20, 5)` column is cast to `Decimal(38, 5)` and decoded as a string, so totals never pass through a float.
  */

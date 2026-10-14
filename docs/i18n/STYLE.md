@@ -23,7 +23,8 @@ Maintenance commands (run in `docs/`):
 | Product and technical proper nouns, API names, keywords, identifiers | Keep in English (see section 3). |
 | UI strings (`docs/src/strings/*.ts`) | Translate the values only; placeholders `{mode} {next} {folder} {main} {package} {title}` stay verbatim. |
 | `llms.txt` and the other llms files | English only. |
-| Example notes and example code on the examples page | English only. Only the page chrome is translated (UI table). |
+| Example titles, summaries and notes on the examples page | Translate (UI table, `examples.items`); identifiers, SQL keywords and type names inside them stay in English. |
+| Example code on the examples page | English only. |
 
 Other format rules:
 

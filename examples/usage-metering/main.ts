@@ -1,30 +1,46 @@
 /**
- * Usage metering with insert-triggered materialized aggregation.
+ * Usage metering
+ *
+ * Insert-triggered materialized aggregation.
  * Inspired by https://openmeter.io/blog/how-openmeter-uses-clickhouse-for-usage-metering
  * These fixtures and SQL are a minimal demonstration, not OpenMeter's implementation.
  */
 import type { ClickHouseORMClient } from "ck-orm";
-import { ck, ckSql, ckTable, ckType, clickhouseClient, fn } from "ck-orm";
+import { ck, ckTable, ckType, clickhouseClient, fn } from "ck-orm";
 
-const events = ckTable("ck_orm_example_usage_events", {
-  tenantId: ckType.string("tenant_id"),
-  userId: ckType.string("user_id"),
-  meter: ckType.string(),
-  occurredAt: ckType.dateTime64("occurred_at", { precision: 3, timezone: "UTC" }),
-  units: ckType.uint64(),
-});
-
-const minutes = ckTable("ck_orm_example_usage_minutes", {
-  tenantId: ckType.string("tenant_id"),
-  userId: ckType.string("user_id"),
-  meter: ckType.string(),
-  minute: ckType.dateTime64({ precision: 3, timezone: "UTC" }),
-  usageState: ckType.aggregateFunction("usage_state", {
-    name: "sum",
-    args: [ckType.uint64()],
+const events = ckTable(
+  "ck_orm_example_usage_events",
+  {
+    tenantId: ckType.string("tenant_id"),
+    userId: ckType.string("user_id"),
+    meter: ckType.string(),
+    occurredAt: ckType.dateTime64("occurred_at", { precision: 3, timezone: "UTC" }),
+    units: ckType.uint64(),
+  },
+  (table) => ({
+    engine: "MergeTree",
+    orderBy: [table.tenantId, table.userId, table.meter, table.occurredAt],
   }),
-  eventsState: ckType.aggregateFunction("events_state", { name: "count" }),
-});
+);
+
+const minutes = ckTable(
+  "ck_orm_example_usage_minutes",
+  {
+    tenantId: ckType.string("tenant_id"),
+    userId: ckType.string("user_id"),
+    meter: ckType.string(),
+    minute: ckType.dateTime64({ precision: 3, timezone: "UTC" }),
+    usageState: ckType.aggregateFunction("usage_state", {
+      name: "sum",
+      args: [ckType.uint64()],
+    }),
+    eventsState: ckType.aggregateFunction("events_state", { name: "count" }),
+  },
+  (table) => ({
+    engine: "AggregatingMergeTree",
+    orderBy: [table.tenantId, table.userId, table.meter, table.minute],
+  }),
+);
 const viewName = "ck_orm_example_usage_mv";
 
 // Persistent tables are required. Use an isolated database; do not run concurrently.
@@ -39,39 +55,32 @@ export const run = async (db: ClickHouseORMClient) => {
     events: string;
   }[] = [];
   try {
-    await db.command(ckSql`CREATE TABLE ${events}
-(
-  tenant_id String,
-  user_id String,
-  meter String,
-  occurred_at DateTime64(3, 'UTC'),
-  units UInt64
-)
-ENGINE = MergeTree
-ORDER BY (tenant_id, user_id, meter, occurred_at)`);
+    await db.createTable(events);
     created.push(events.originalName);
 
-    await db.command(ckSql`CREATE TABLE ${minutes}
-(
-  tenant_id String,
-  user_id String,
-  meter String,
-  minute DateTime64(3, 'UTC'),
-  usage_state AggregateFunction(sum, UInt64),
-  events_state AggregateFunction(count)
-)
-ENGINE = AggregatingMergeTree
-ORDER BY (tenant_id, user_id, meter, minute)`);
+    await db.createTable(minutes);
     created.push(minutes.originalName);
 
-    await db.command(ckSql`CREATE MATERIALIZED VIEW ${ckSql.identifier(viewName)}
-TO ${minutes} AS
-SELECT tenant_id, user_id, meter,
-  toStartOfInterval(occurred_at, INTERVAL 1 MINUTE, 'UTC') AS minute,
-  sumState(units) AS usage_state,
-  countState() AS events_state
-FROM ${events}
-GROUP BY tenant_id, user_id, meter, minute`);
+    const minute = fn.call<Date>(
+      "toStartOfInterval",
+      events.occurredAt,
+      fn.toIntervalMinute(1),
+      "UTC",
+    );
+    await db.createMaterializedView(viewName, {
+      to: minutes,
+      as: db
+        .select({
+          tenantId: events.tenantId,
+          userId: events.userId,
+          meter: events.meter,
+          minute,
+          usageState: fn.call<string>("sumState", events.units),
+          eventsState: fn.call<string>("countState"),
+        })
+        .from(events)
+        .groupBy(events.tenantId, events.userId, events.meter, minute),
+    });
     created.push(viewName);
 
     await db.insert(events).values([
@@ -182,7 +191,7 @@ GROUP BY tenant_id, user_id, meter, minute`);
     // Only acknowledged CREATEs are owned; a colliding object is never dropped.
     for (const name of created.reverse()) {
       try {
-        await db.command(ckSql`DROP TABLE ${ckSql.identifier(name)} SYNC`);
+        await db.dropTable(name, { sync: true });
       } catch (error) {
         errors.push(error);
       }

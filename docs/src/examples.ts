@@ -1,11 +1,15 @@
 import { type ClickHouseORMClient, ckSql, ckTable, ckType, clickhouseClient } from "ck-orm";
 import { format } from "sql-formatter";
 import * as asofPrice from "../../examples/asof-price/main";
+import * as blueskyEvents from "../../examples/bluesky-events/main";
+import * as cdcRollup from "../../examples/cdc-rollup/main";
 import * as decimalSum from "../../examples/decimal-sum/main";
 import * as dynamicSignals from "../../examples/dynamic-signals/main";
 import * as leftJoin from "../../examples/left-join/main";
 import * as literalSearch from "../../examples/literal-search/main";
 import * as requestLatency from "../../examples/request-latency/main";
+import * as supportTickets from "../../examples/support-tickets/main";
+import * as traceList from "../../examples/trace-list/main";
 import * as usageMetering from "../../examples/usage-metering/main";
 import * as websiteAnalytics from "../../examples/website-analytics/main";
 
@@ -78,9 +82,14 @@ const layout = (statement: string) => {
   if (/^insert\b/i.test(statement)) {
     laidOut = statement.replaceAll("), (", "),\n(");
   } else if (/^(select|with)\b/i.test(statement)) {
-    const lines = format(statement, { language: "clickhouse", keywordCase: "preserve", tabWidth: 2 })
-      .split("\n")
-      .map((line) => line.trimEnd());
+    let formatted: string;
+    try {
+      formatted = format(statement, { language: "clickhouse", keywordCase: "preserve", tabWidth: 2 });
+    } catch {
+      // sql-formatter cannot parse some ClickHouse syntax, such as JSON subcolumns (`json.^path`, `json.path.:Type`).
+      return statement;
+    }
+    const lines = formatted.split("\n").map((line) => line.trimEnd());
     // sql-formatter puts every clause body on its own line; keep one-line bodies next to their keyword.
     const compact: string[] = [];
     for (let index = 0; index < lines.length; index++) {
@@ -146,11 +155,15 @@ const example = async (id: string, run: Run): Promise<Example> => ({
 // Written by hand, in display order.
 export const examples = [
   await example("decimal-sum", decimalSum.run),
-  await example("left-join", leftJoin.run),
   await example("literal-search", literalSearch.run),
+  await example("left-join", leftJoin.run),
+  await example("trace-list", traceList.run),
+  await example("support-tickets", supportTickets.run),
   await example("website-analytics", websiteAnalytics.run),
-  await example("usage-metering", usageMetering.run),
-  await example("request-latency", requestLatency.run),
   await example("asof-price", asofPrice.run),
   await example("dynamic-signals", dynamicSignals.run),
+  await example("bluesky-events", blueskyEvents.run),
+  await example("cdc-rollup", cdcRollup.run),
+  await example("usage-metering", usageMetering.run),
+  await example("request-latency", requestLatency.run),
 ];

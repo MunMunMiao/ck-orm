@@ -1,5 +1,5 @@
 /**
- * Left join
+ * Left join with NULLs
  *
  * `leftJoin()` sends `join_use_nulls = 1`, so unmatched right-side columns are `NULL` in ClickHouse and `null` in the row type.
  */
