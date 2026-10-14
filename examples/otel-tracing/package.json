@@ -1,0 +1,14 @@
+{
+  "name": "ck-orm-example-otel-tracing",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun main.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/sdk-trace-node": "^2.7.0",
+    "ck-orm": "file:../.."
+  }
+}

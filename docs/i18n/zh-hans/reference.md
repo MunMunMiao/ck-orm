@@ -1,5 +1,5 @@
 ## 安装
-<!-- src:03d420fc -->
+<!-- src:e86aaf8a -->
 
 ```bash [bun]
 bun add ck-orm
@@ -17,10 +17,10 @@ pnpm add ck-orm
 yarn add ck-orm
 ```
 
-ck-orm 没有必需依赖。`@opentelemetry/api` 是可选的对等依赖项，只有 `ck-orm/otel` 插件会用到它；使用该插件时，请和 ck-orm 一起安装。
+ck-orm 没有必需依赖。OpenTelemetry 追踪是单独的入口 `ck-orm/otel`，`@opentelemetry/api` 是可选的对等依赖项，只有这个入口会用到它。`ck-orm` 主入口从不导入 OpenTelemetry，所以不做追踪的应用、浏览器端的打包产物和边缘 worker 既不用安装它，也不会把它打包进去。要追踪查询，请按[OpenTelemetry 插件](#opentelemetry-plugin)里的步骤设置。
 
 ## 快速上手
-<!-- src:d7ba4246 -->
+<!-- src:847057c0 -->
 
 下面的示例只用一张表，方便看清主流程。
 
@@ -99,13 +99,28 @@ const rows = await query;
 
 对 `Decimal` 列调用 `fn.sum` 时，结果会自动转成 `Decimal(P, S)`，并返回 `string`，这样精度才不会丢。详情见[表达式中的 Decimal 精度](#decimal-precision-in-expressions)。
 
+### 4. 观测查询
+
+`plugins` 可以挂到 ck-orm 发给 ClickHouse 的每个请求上。SDK 运行起来之后，`ck-orm/otel` 的 `otelTracing()` 会把每个请求变成一个 OpenTelemetry span；设置步骤见[OpenTelemetry 插件](#opentelemetry-plugin)，自己写钩子见[编写插件](#writing-plugins)。
+
+```ts
+import { clickhouseClient } from "ck-orm";
+import { otelTracing } from "ck-orm/otel";
+
+export const db = clickhouseClient({
+  host: "http://127.0.0.1:8123",
+  database: "telemetry_lab",
+  plugins: [otelTracing()],
+});
+```
+
 ## 示例
 <!-- src:c8f5c20b -->
 
 [示例页面](https://ck-orm.lyz.cloud/examples/)展示可运行的查询，并列出每条查询发给 ClickHouse 的确切 SQL。每个示例都是 [`examples/`](../examples) 里的独立项目，各自带测试。可运行的 ClickHouse 测试都在 [`e2e/`](../e2e) 里，其中 [`e2e/scenarios.ts`](../e2e/scenarios.ts) 还包含贴近生产环境的场景模式。
 
 ## 心智模型
-<!-- src:a26a2ce8 -->
+<!-- src:a6fa96d2 -->
 
 用 `ck-orm` 时，先记住这些边界：
 
@@ -117,6 +132,7 @@ const rows = await query;
 - 数据库连接挂在 `clickhouseClient(...)` 上。
 - 默认走查询构建器；需要 ClickHouse 专用表达式时，再用原始 SQL。
 - `runInSession()` 是 ClickHouse 的会话辅助函数，不是事务。
+- `plugins` 观察 ck-orm 发出的每个请求；追踪是按需启用的 `ck-orm/otel` 插件，不在主入口里。
 - `leftJoin()` 和 `asofLeftJoin()` 默认使用 SQL 风格的 NULL 语义。
 - 大数或高风险数值结果要谨慎解码，不要静默强制转换。
 
@@ -1518,7 +1534,7 @@ await db.insertJsonEachRow("tmp_scope", [
 - 普通数组
 - 一个 `AsyncIterable`
 
-空的普通数组会在客户端被视为无操作，但插件 Hook 仍会收到一次成功的插入生命周期报告，其中包含 `rowCount: 0`。未知字段由 ClickHouse 处理；如果想让服务器忽略额外的 JSON 字段，就传入 `input_format_skip_unknown_fields: 1` 之类的设置。嵌套列会以扁平化后的 `column.field` 数组发送（ClickHouse 默认 `flatten_nested = 1`），所以 `{ lines: [{ sku: "a" }] }` 在 `insert().values()` 和 `insertJsonEachRow()` 中都能正常工作。
+空的普通数组会在客户端被视为无操作，但插件钩子仍会收到一次成功的插入生命周期报告，其中包含 `rowCount: 0`。未知字段由 ClickHouse 处理；如果想让服务器忽略额外的 JSON 字段，就传入 `input_format_skip_unknown_fields: 1` 之类的设置。嵌套列会以扁平化后的 `column.field` 数组发送（ClickHouse 默认 `flatten_nested = 1`），所以 `{ lines: [{ sku: "a" }] }` 在 `insert().values()` 和 `insertJsonEachRow()` 中都能正常工作。
 
 如果提供了表模式，`insertJsonEachRow()` 会把 `DateTime`/`DateTime64` 列中的 JavaScript `Date` 发送为与 `insert().values()` 完全相同的整数刻度值，并让 ClickHouse 默认的 `date_time_input_format = basic` 解析器继续处理字符串，因此两者解析日期时间字符串的方式一致。你自行在 `DateTime64` 列传入的 JSON 数字，仍会被 `JSONEachRow` 按刻度读取，被 `.values()` 按 Unix 秒读取。
 
@@ -2478,12 +2494,12 @@ await db.replicasStatus();
 ```
 
 ## 可观测性
-<!-- src:37125a8e -->
+<!-- src:11c06560 -->
 
 `ck-orm` 提供两层可观测性能力：
 
 - `logger` 和 `logLevel`：内置日志记录
-- `plugins`：查询生命周期 Hook；OpenTelemetry 追踪以 `ck-orm/otel` 插件的形式提供
+- `plugins`：查询生命周期钩子；OpenTelemetry 追踪以 `ck-orm/otel` 插件的形式提供
 
 ### 日志记录器
 
@@ -2517,7 +2533,48 @@ const db = clickhouseClient({
 
 ### OpenTelemetry 插件
 
-先安装 `@opentelemetry/api`，再添加插件：
+`ck-orm/otel` 的 `otelTracing()` 会为 ck-orm 发给 ClickHouse 的每个请求记录一个客户端 span。它放在单独的入口里：`ck-orm` 主入口从不导入 OpenTelemetry，所以不做追踪的应用、浏览器端的打包产物和边缘 worker 不会为它付出任何代价。`@opentelemetry/api` 是可选的对等依赖项，只有 `ck-orm/otel` 会导入它。
+
+#### 设置
+
+ck-orm 通过 OpenTelemetry API 创建 span，而 API 本身什么都不会记录：SDK 注册 tracer provider 之前，所有 span 都会被丢弃。ck-orm 不会启动 SDK，也不会选择导出器，这两件事由你的应用在启动时做一次。
+
+先安装 API、SDK 和导出器。下面用的是 Node.js SDK 加 OTLP/HTTP 导出器；任何能注册 tracer provider 的 SDK 都可以，包括浏览器端的 SDK。
+
+```bash [bun]
+bun add @opentelemetry/api @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-http
+```
+
+```bash [npm]
+npm install @opentelemetry/api @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-http
+```
+
+```bash [pnpm]
+pnpm add @opentelemetry/api @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-http
+```
+
+```bash [yarn]
+yarn add @opentelemetry/api @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-http
+```
+
+在第一次查询之前启动 SDK，比如放进入口文件最先导入的模块里：
+
+```ts
+// instrumentation.ts
+import { NodeSDK } from "@opentelemetry/sdk-node";
+import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
+
+export const sdk = new NodeSDK({
+  serviceName: "billing-worker",
+  traceExporter: new OTLPTraceExporter(),
+});
+
+sdk.start();
+```
+
+导出器默认发送到 `http://localhost:4318/v1/traces`；设置标准的 `OTEL_EXPORTER_OTLP_ENDPOINT` 环境变量或传入 `url` 可以改掉它。SDK 还会注册上下文管理器和 W3C 传播器，span 的父子关系与 `propagateTraceContext` 都依赖它们。运行时间很短的进程退出前必须 `await sdk.shutdown()`，否则最后几个 span 会丢失。
+
+然后把插件加到客户端上：
 
 ```ts
 import { clickhouseClient } from "ck-orm";
@@ -2534,6 +2591,12 @@ const db = clickhouseClient({
 });
 ```
 
+不接 Collector 也能看到 span：[OpenTelemetry 追踪示例](https://ck-orm.lyz.cloud/examples/#otel-tracing)用内存导出器，并把插件记录的内容打印出来。
+
+#### Span
+
+span 的类型是 `CLIENT`。返回行的查询，span 名称是 `clickhouse QUERY`；其他请求叫 `clickhouse <OPERATION>`，例如 `clickhouse INSERT` 或 `clickhouse CREATE`。查询开始时处于活动状态的 span 会成为它的父 span，比如框架的 OpenTelemetry 插桩为每个 HTTP 请求开的那个 span。
+
 除非传入 `tracer`，插件会使用 `trace.getTracer("ck-orm")`。它会根据 `clickhouseClient(...)` 的配置得到数据库名、服务器地址、服务器端口和请求超时。
 服务级标签通过 `attributes` 传入；以 `db.` 开头的键会被忽略，避免应用代码覆盖内置的数据库属性。
 
@@ -2542,7 +2605,7 @@ const db = clickhouseClient({
 
 #### 服务端 span
 
-设置 `propagateTraceContext: true`，每个请求都会带上该 span 的 W3C 追踪上下文（`traceparent`、`tracestate`）。这样 ClickHouse 会为这次查询记录自己的 span，例如 `HTTPHandler`、`query` 和各个流水线阶段，并把它们挂在 ck-orm 的 span 之下。插件只转发这两个请求头，绝不会转发全局 propagator 产生的 `baggage` 或厂商专有请求头，而且只对已采样的 span 转发：ClickHouse 对收到的每个追踪上下文都会记录服务端 span，不管它有没有被采样。插件通过全局注册的 propagator 注入，OpenTelemetry SDK 默认将其设为 W3C 追踪上下文；没有注册 propagator 时，不会发送任何内容。
+设置 `propagateTraceContext: true`，每个请求都会带上该 span 的 W3C 追踪上下文（`traceparent`、`tracestate`）。这样 ClickHouse 会为这次查询记录自己的 span，例如 `HTTPHandler`、`query` 和各个流水线阶段，并把它们挂在 ck-orm 的 span 之下。插件只转发这两个请求头，绝不会转发全局传播器产生的 `baggage` 或厂商专有请求头，而且只对已采样的 span 转发：ClickHouse 对收到的每个追踪上下文都会记录服务端 span，不管它有没有被采样。插件通过全局注册的传播器注入，OpenTelemetry SDK 默认将其设为 W3C 追踪上下文；没有注册传播器时，不会发送任何内容。
 
 ```ts
 const db = clickhouseClient({
@@ -2570,7 +2633,7 @@ ClickHouse 把这些 span 写入 `system.opentelemetry_span_log`，不会自行�
 
 ### 编写插件
 
-插件是一个带 `name` 的对象，最多可以有三个 Hook：
+插件是一个带 `name` 的对象，最多可以有三个钩子：
 
 ```ts
 import { clickhouseClient, type ClickHouseORMPlugin } from "ck-orm";
@@ -2601,15 +2664,17 @@ const requestSource: ClickHouseORMPlugin = {
 };
 ```
 
+[查询插件示例](https://ck-orm.lyz.cloud/examples/#query-plugins)运行了一个插件：它在 `onQueryStart` 中返回一个请求头，并在 `onQuerySuccess` 和 `onQueryError` 中记录每条语句，输出按语句实际执行的顺序排列。
+
 插件遵循以下规则：
 
-- ck-orm 发给 ClickHouse 的每个请求都会运行 Hook：查询、流式读取、命令、插入、DDL 辅助函数、`ping()`、`replicasStatus()`，以及 `runInSession()` 中的临时表清理。只有取消被放弃的流并等待其会话解锁的请求（`KILL QUERY` 及其后的轮询）不会运行 Hook。
+- ck-orm 发给 ClickHouse 的每个请求都会运行钩子：查询、流式读取、命令、插入、DDL 辅助函数、`ping()`、`replicasStatus()`，以及 `runInSession()` 中的临时表清理。只有取消被放弃的流并等待其会话解锁的请求（`KILL QUERY` 及其后的轮询）不会运行钩子。
 - 每个 `onQueryStart` 之后，都会有且只有一个带相同 `executionId` 的 `onQuerySuccess` 或 `onQueryError`；对于流，这发生在迭代器结束或被关闭时。调用方提前停止的流算作成功，并报告到那时为止已读取的行数。按请求保存的状态请以 `executionId` 作为键。
 - `onQueryStart` 按注册顺序运行，并且全部完成后才会发送请求。`onQuerySuccess` 和 `onQueryError` 按相反顺序运行。内置的日志记录器始终在最外层运行。
 - 后面的插件设置的请求头会覆盖前面的。显式传入的 `http_headers`（无论是客户端级还是请求级）会覆盖插件的请求头。插件不能覆盖由连接凭据生成的 `Authorization` 请求头，也不能覆盖会话发送的 `X-ClickHouse-Replica-Tag` 请求头。
-- 抛出异常的 Hook 会连同插件名一起写入日志，不影响查询，也不影响其他插件。抛出异常的 `onQueryStart`，或返回了无效请求头的 `onQueryStart`，它的请求头会被丢弃。
+- 抛出异常的钩子会连同插件名一起写入日志，不影响查询，也不影响其他插件。抛出异常的 `onQueryStart`，或返回了无效请求头的 `onQueryStart`，它的请求头会被丢弃。
 - 事件是只读的。插件不能修改 SQL、参数、设置或结果。
-- Hook 在查询路径上会被 await。网络导出之类的慢操作请先缓冲，不要在 Hook 里 await。
+- 钩子在查询路径上会被 await。网络导出之类的慢操作请先缓冲，不要在钩子里 await。
 
 公开的可观测性类型：
 

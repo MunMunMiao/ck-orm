@@ -1,5 +1,5 @@
 ## 安裝
-<!-- src:03d420fc -->
+<!-- src:e86aaf8a -->
 
 ```bash [bun]
 bun add ck-orm
@@ -17,10 +17,10 @@ pnpm add ck-orm
 yarn add ck-orm
 ```
 
-ck-orm 沒有必要的依賴。`@opentelemetry/api` 是選用的同儕依賴，只有 `ck-orm/otel` 外掛程式會用到；使用該外掛程式時，請和 ck-orm 一起安裝。
+ck-orm 沒有必要的依賴。OpenTelemetry 追蹤是獨立的進入點 `ck-orm/otel`，`@opentelemetry/api` 是選用的 peer dependency，只有這個進入點會用到。`ck-orm` 的主進入點從不匯入 OpenTelemetry，所以不追蹤的應用程式、瀏覽器打包產物或邊緣 worker 既不用安裝 OpenTelemetry，也不會把它打包進去。要追蹤查詢，請依照 [OpenTelemetry 外掛程式](#opentelemetry-plugin)的設定步驟操作。
 
 ## 快速上手
-<!-- src:d7ba4246 -->
+<!-- src:847057c0 -->
 
 下面的範例只用一張資料表，主要流程會比較容易看懂。
 
@@ -99,13 +99,28 @@ const rows = await query;
 
 `fn.sum` 對 `Decimal` 欄位會自動轉型成 `Decimal(P, S)`，並回傳 `string` 以完整保留精確度。請見 [運算式中的 Decimal 精確度](#decimal-precision-in-expressions)。
 
+### 4. 觀察查詢
+
+`plugins` 能介入 ck-orm 送給 ClickHouse 的每個請求。只要有 SDK 在執行，`ck-orm/otel` 的 `otelTracing()` 就會把每個請求變成一個 OpenTelemetry span；設定步驟見 [OpenTelemetry 外掛程式](#opentelemetry-plugin)，自己寫 hook 則見[撰寫外掛程式](#writing-plugins)。
+
+```ts
+import { clickhouseClient } from "ck-orm";
+import { otelTracing } from "ck-orm/otel";
+
+export const db = clickhouseClient({
+  host: "http://127.0.0.1:8123",
+  database: "telemetry_lab",
+  plugins: [otelTracing()],
+});
+```
+
 ## 範例
 <!-- src:c8f5c20b -->
 
 [範例頁面](https://ck-orm.lyz.cloud/examples/) 會展示可執行的查詢，並列出每個查詢實際傳給 ClickHouse 的完整 SQL。每個範例都是 [`examples/`](../examples) 中的專案，也有各自的測試。ClickHouse 的可執行測試放在 [`e2e/`](../e2e)，其中 [`e2e/scenarios.ts`](../e2e/scenarios.ts) 放了貼近正式環境的情境 schema。
 
 ## 心智模型
-<!-- src:a26a2ce8 -->
+<!-- src:a6fa96d2 -->
 
 使用 `ck-orm` 時，記得把下面這些界線分清楚：
 
@@ -117,6 +132,7 @@ const rows = await query;
 - `clickhouseClient(...)` 負責資料庫連線
 - 建構器查詢是預設方式；遇到 ClickHouse 專用運算式時，也可以使用原始 SQL
 - `runInSession()` 是 ClickHouse 的工作階段輔助工具，不是交易
+- `plugins` 可觀察 ck-orm 送出的每個請求；追蹤是需要自行加入的 `ck-orm/otel` 外掛程式，不在主進入點裡
 - `leftJoin()` 和 `asofLeftJoin()` 預設採用 SQL 風格的 NULL 語意
 - 數值很大或風險較高的結果會採保守方式解碼，不會默默強制轉型
 
@@ -1447,7 +1463,7 @@ await db.insert(probeTelemetry).values({
 
 ### `insert(table).fromSelect(select)`
 
-用 `.fromSelect(...)` 編譯單一 `INSERT INTO target (cols) SELECT ...` 陳述式，讓 ClickHouse 在伺服器端實體化 SELECT。資料列不會經過 Node 處理程序；很適合先把大型來源資料表需要的部分篩出來一次，再在 `runInSession` 內讓多個後續查詢重用這份已實體化的資料。
+用 `.fromSelect(...)` 編譯單一 `INSERT INTO target (cols) SELECT ...` 陳述式，讓 ClickHouse 在伺服器端實體化 SELECT。資料列不會經過 Node 程序；很適合先把大型來源資料表需要的部分篩出來一次，再在 `runInSession` 內讓多個後續查詢重用這份已實體化的資料。
 
 ```ts
 await db.runInSession(async (session) => {
@@ -1498,7 +1514,7 @@ await db.runInSession(async (session) => {
 
 如果想讓 TS 層強制一定要提供 nested 資料（`Pattern D`，也就是不允許空 nested 陣列的業務契約），請啟用 `ckType.nested({...}).requiredOnInsert()`。這條鏈會回傳一個欄位，其 `$inferInsert` 資料形狀會把 `events` 列為必要；`.fromSelect()` 必須使用 nested 欄位參照投影模式，或改用逐列傳入值的方式。
 
-> **JSON 傳輸格式注意事項**：`.values()` 會把 JSON 欄位轉成加引號的 `JSON.stringify(...)` 文字，放進 Values 主體。ClickHouse 會把這個字面值解析後存入 JSON 欄位。`.fromSelect()` 完全在伺服器端執行，所以 JSON 值不會在 JS 處理程序中往返。兩條路徑儲存的資料完全相同。
+> **JSON 傳輸格式注意事項**：`.values()` 會把 JSON 欄位轉成加引號的 `JSON.stringify(...)` 文字，放進 Values 主體。ClickHouse 會把這個字面值解析後存入 JSON 欄位。`.fromSelect()` 完全在伺服器端執行，所以 JSON 值不會在 JS 程序中往返。兩條路徑儲存的資料完全相同。
 
 ### `insertJsonEachRow()`
 
@@ -2485,7 +2501,7 @@ await db.replicasStatus();
 ```
 
 ## 可觀察性
-<!-- src:37125a8e -->
+<!-- src:11c06560 -->
 
 `ck-orm` 提供兩層可觀察性功能：
 
@@ -2524,7 +2540,48 @@ const db = clickhouseClient({
 
 ### OpenTelemetry 外掛程式
 
-先安裝 `@opentelemetry/api`，再加入外掛程式：
+`ck-orm/otel` 的 `otelTracing()` 會為 ck-orm 送給 ClickHouse 的每個請求記錄一個用戶端 span（跨度）。它放在獨立的進入點：`ck-orm` 的主進入點從不匯入 OpenTelemetry，所以不追蹤的應用程式、瀏覽器打包產物和邊緣 worker 不會多出任何成本。`@opentelemetry/api` 是選用的 peer dependency，只有 `ck-orm/otel` 會匯入它。
+
+#### 設定步驟
+
+ck-orm 透過 OpenTelemetry API 建立 span，但光有 API 不會記錄任何東西：在 SDK 註冊 tracer provider 之前，所有 span 都會被丟棄。ck-orm 不會啟動 SDK，也不會替你選匯出器，這兩件事都由你的應用程式在啟動時做一次。
+
+請安裝 API、SDK 和匯出器。下面用的是 Node.js SDK 搭配 OTLP/HTTP 匯出器；只要能註冊 tracer provider，任何 SDK 都可以，瀏覽器版也一樣。
+
+```bash [bun]
+bun add @opentelemetry/api @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-http
+```
+
+```bash [npm]
+npm install @opentelemetry/api @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-http
+```
+
+```bash [pnpm]
+pnpm add @opentelemetry/api @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-http
+```
+
+```bash [yarn]
+yarn add @opentelemetry/api @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-http
+```
+
+請在第一次查詢之前啟動 SDK，例如放在應用程式進入點最先匯入的模組裡：
+
+```ts
+// instrumentation.ts
+import { NodeSDK } from "@opentelemetry/sdk-node";
+import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
+
+export const sdk = new NodeSDK({
+  serviceName: "billing-worker",
+  traceExporter: new OTLPTraceExporter(),
+});
+
+sdk.start();
+```
+
+匯出器預設會送到 `http://localhost:4318/v1/traces`；要改的話，設定標準的 `OTEL_EXPORTER_OTLP_ENDPOINT` 環境變數，或傳入 `url`。SDK 也會註冊脈絡管理器和 W3C 傳播器，span 的父子關係以及 `propagateTraceContext` 都要靠它們。執行時間很短的程序在結束前必須先 `await sdk.shutdown()`，否則最後的 span 會遺失。
+
+接著把外掛程式加到用戶端：
 
 ```ts
 import { clickhouseClient } from "ck-orm";
@@ -2541,13 +2598,19 @@ const db = clickhouseClient({
 });
 ```
 
+不架設收集器也想看到 span 的話，可以參考 [OpenTelemetry 追蹤範例](https://ck-orm.lyz.cloud/examples/#otel-tracing)，它用記憶體內的匯出器，並印出外掛程式記錄到的內容。
+
+#### Span
+
+span 的種類是 `CLIENT`。會回傳資料列的查詢，span 名稱是 `clickhouse QUERY`；其他請求一律叫 `clickhouse <OPERATION>`，例如 `clickhouse INSERT` 或 `clickhouse CREATE`。查詢開始時哪個 span 正在作用中，新 span 就成為它的子 span，例如框架的 OpenTelemetry 檢測替每個 HTTP 請求開啟的 span。
+
 除非傳入 `tracer`，否則外掛程式會使用 `trace.getTracer("ck-orm")`。它會從 `clickhouseClient(...)` 設定取得資料庫名稱、伺服器位址、伺服器連接埠和請求逾時。服務層級的標籤請透過 `attributes` 傳入；以 `db.` 開頭的鍵會被忽略，因此應用程式無法覆寫內建的資料庫屬性。
 
 共用的追蹤後端建議使用較安全的 `includeStatement: false`。預設值是 `true`；如果不希望資料表名稱、欄位名稱或查詢的資料形狀離開服務邊界，請將它關閉。繫結值不會嵌入精簡後的陳述式，但 SQL 的資料形狀在營運上仍可能屬於敏感資訊。
 
-#### 伺服器端區間
+#### 伺服器端 span
 
-設定 `propagateTraceContext: true`，就會在每個請求中附上該區間的 W3C 追蹤脈絡（`traceparent`、`tracestate`）。ClickHouse 隨後會替查詢記錄自己的區間，例如 `HTTPHandler`、`query` 和管線階段，並把它們記為 ck-orm 區間的子區間。外掛程式只轉送這兩個標頭，絕不轉送全域 propagator 產生的 `baggage` 或廠商標頭，而且只對有取樣的區間轉送：ClickHouse 對收到的每個追蹤脈絡都會記錄伺服器區間，不論有沒有取樣。外掛程式透過全域註冊的 propagator 注入，OpenTelemetry SDK 預設將其設為 W3C 追蹤脈絡；沒有註冊 propagator 時，不會送出任何內容。
+設定 `propagateTraceContext: true`，就會在每個請求中附上該 span 的 W3C 追蹤脈絡（`traceparent`、`tracestate`）。ClickHouse 隨後會替查詢記錄自己的 span，例如 `HTTPHandler`、`query` 和管線階段，並把它們記為 ck-orm span 的子 span。外掛程式只轉送這兩個標頭，絕不轉送全域傳播器產生的 `baggage` 或廠商標頭，而且只對有取樣的 span 轉送：ClickHouse 對收到的每個追蹤脈絡都會記錄伺服器 span，不論有沒有取樣。外掛程式透過全域註冊的傳播器注入，OpenTelemetry SDK 預設將其設為 W3C 追蹤脈絡；沒有註冊傳播器時，不會送出任何內容。
 
 ```ts
 const db = clickhouseClient({
@@ -2556,7 +2619,7 @@ const db = clickhouseClient({
 });
 ```
 
-ClickHouse 會把這些區間寫入 `system.opentelemetry_span_log`，不會匯出；如何把它們匯出到追蹤後端，請參閱[使用 OpenTelemetry 追蹤 ClickHouse](https://clickhouse.com/docs/operations/opentelemetry)。伺服器區間帶有 `clickhouse.query_id`，與 ck-orm 區間上的 `db.query.id` 相符，並透過 `clickhouse.exception_code` 而不是區間狀態回報失敗。
+ClickHouse 會把這些 span 寫入 `system.opentelemetry_span_log`，不會匯出；如何把它們匯出到追蹤後端，請參閱[使用 OpenTelemetry 追蹤 ClickHouse](https://clickhouse.com/docs/operations/opentelemetry)。伺服器 span 帶有 `clickhouse.query_id`，與 ck-orm span 上的 `db.query.id` 相符，並透過 `clickhouse.exception_code` 而不是 span 狀態回報失敗。
 
 如果你在 `http_headers` 中傳入自己的 `traceparent`，它會覆寫外掛程式的；請一併傳入對應的 `tracestate`，否則外掛程式的 `tracestate` 會隨它一起送出。
 
@@ -2605,6 +2668,8 @@ const requestSource: ClickHouseORMPlugin = {
   },
 };
 ```
+
+[查詢外掛程式範例](https://ck-orm.lyz.cloud/examples/#query-plugins)會執行一個外掛程式：它從 `onQueryStart` 回傳標頭，並在 `onQuerySuccess` 和 `onQueryError` 中依實際執行的順序記錄每條陳述式。
 
 外掛程式遵循這些規則：
 
@@ -2715,7 +2780,7 @@ const toPublicQueryError = (error: unknown) => {
 - 每個請求只允許一個頂層陳述式
 - 連線設定衍生的授權標頭不能由呼叫端提供的 `http_headers` 覆寫
 - 結構化連線設定不接受內嵌在 `host` 的認證資訊
-- 追蹤目的端資料會先正規化，再附加到區間
+- 追蹤目的端資料會先正規化，再附加到 span
 
 ### 只供可信內容使用的 API
 
@@ -2729,11 +2794,11 @@ const toPublicQueryError = (error: unknown) => {
 
 ### 追蹤資料的暴露範圍
 
-`otelTracing()` 會把壓縮後的 SQL 文字以 `db.statement` 和 `db.query.text` 附加到區間，因為 `includeStatement` 預設是 `true`。
+`otelTracing()` 會把壓縮後的 SQL 文字以 `db.statement` 和 `db.query.text` 附加到 span，因為 `includeStatement` 預設是 `true`。
 
 繫結值會另外存成 ClickHouse 具名參數，不會放進陳述式文字；但資料表名稱、欄位名稱和查詢形狀仍會出現在追蹤輸出中。如果追蹤後端是共用的，或不在服務主機上，請停用 `includeStatement`，或在收集器中過濾 `db.statement` / `db.query.text`。
 
-ClickHouse 伺服器區間也會在 `system.opentelemetry_span_log` 中把陳述式記為 `db.statement`。除非你匯出，否則該資料表只會留在 ClickHouse 伺服器上。
+ClickHouse 伺服器 span 也會在 `system.opentelemetry_span_log` 中把陳述式記為 `db.statement`。除非你匯出，否則該資料表只會留在 ClickHouse 伺服器上。
 
 ### 錯誤回應
 

@@ -1,5 +1,5 @@
 ## 安裝
-<!-- src:03d420fc -->
+<!-- src:e86aaf8a -->
 
 ```bash [bun]
 bun add ck-orm
@@ -17,10 +17,10 @@ pnpm add ck-orm
 yarn add ck-orm
 ```
 
-ck-orm 沒有必要的依賴項。`@opentelemetry/api` 是可選的 peer dependency，只供 `ck-orm/otel` 插件使用；使用該插件時，請連同 ck-orm 一併安裝。
+ck-orm 沒有必要的依賴項。OpenTelemetry 追蹤放在獨立的進入點 `ck-orm/otel`，`@opentelemetry/api` 是只供它使用的可選 peer dependency。主進入點 `ck-orm` 絕不會匯入 OpenTelemetry，所以不做追蹤的應用程式、瀏覽器打包檔案和邊緣 worker 不會安裝，也不會打包 OpenTelemetry 的任何內容。要追蹤查詢，請按 [OpenTelemetry 插件](#opentelemetry-plugin) 的設定步驟操作。
 
 ## 快速開始
-<!-- src:d7ba4246 -->
+<!-- src:847057c0 -->
 
 以下範例只用一個資料表，主要流程會比較容易理解。
 
@@ -99,13 +99,28 @@ const rows = await query;
 
 `fn.sum` 處理 `Decimal` 欄位時，會自動轉為 `Decimal(P, S)`，再返回 `string`，以免損失精確度。見 [運算式中的 Decimal 精確度](#decimal-precision-in-expressions)。
 
+### 4. 觀察查詢
+
+`plugins` 會在 ck-orm 送往 ClickHouse 的每個請求上執行 hook。SDK 啟動後，`ck-orm/otel` 提供的 `otelTracing()` 會把每個請求變成一個 OpenTelemetry span；設定步驟見 [OpenTelemetry 插件](#opentelemetry-plugin)，自行撰寫 hook 見 [撰寫插件](#writing-plugins)。
+
+```ts
+import { clickhouseClient } from "ck-orm";
+import { otelTracing } from "ck-orm/otel";
+
+export const db = clickhouseClient({
+  host: "http://127.0.0.1:8123",
+  database: "telemetry_lab",
+  plugins: [otelTracing()],
+});
+```
+
 ## 範例
 <!-- src:c8f5c20b -->
 
 [範例頁面](https://ck-orm.lyz.cloud/examples/) 會展示可執行的查詢，以及每個查詢實際送往 ClickHouse 的 SQL。每個範例都是 [`examples/`](../examples) 內的獨立項目，各自有測試。可執行的 ClickHouse 測試覆蓋範圍放在 [`e2e/`](../e2e)，其中包括 [`e2e/scenarios.ts`](../e2e/scenarios.ts) 內貼近生產環境的場景模式。
 
 ## 心智模型
-<!-- src:a26a2ce8 -->
+<!-- src:a6fa96d2 -->
 
 使用 `ck-orm` 時，請記住以下界線：
 
@@ -117,6 +132,7 @@ const rows = await query;
 - 數據庫連線放在 `clickhouseClient(...)` 上
 - 建構器查詢是預設路徑；遇到 ClickHouse 專用運算式時，可使用原始 SQL
 - `runInSession()` 是 ClickHouse 的工作階段輔助工具，不是交易
+- `plugins` 會觀察 ck-orm 送出的每個請求；追蹤是需要自行啟用的 `ck-orm/otel` 插件，不包含在主進入點內
 - `leftJoin()` 和 `asofLeftJoin()` 預設使用 SQL 風格的 NULL 語義
 - 數值較大或風險較高的結果會以保守方式解碼，而不是靜默強制轉換
 
@@ -2487,7 +2503,7 @@ await db.replicasStatus();
 ```
 
 ## 可觀測性
-<!-- src:37125a8e -->
+<!-- src:11c06560 -->
 
 `ck-orm` 提供兩層可觀測性：
 
@@ -2526,7 +2542,48 @@ const db = clickhouseClient({
 
 ### OpenTelemetry 插件
 
-先安裝 `@opentelemetry/api`，再加入插件：
+`ck-orm/otel` 的 `otelTracing()` 會為 ck-orm 送往 ClickHouse 的每個請求記錄一個客戶端 span。它放在獨立的進入點：主進入點 `ck-orm` 絕不會匯入 OpenTelemetry，所以不做追蹤的應用程式、瀏覽器打包檔案和邊緣 worker 不會有任何額外開銷。`@opentelemetry/api` 是可選的 peer dependency，只有 `ck-orm/otel` 會匯入它。
+
+#### 設定步驟
+
+ck-orm 用 OpenTelemetry API 建立 span，但單靠 API 不會記錄任何內容：SDK 註冊 tracer provider 之前，所有 span 都會被丟棄。ck-orm 不會啟動 SDK，也不會選擇匯出器，這兩件事都由你的應用程式在啟動時完成一次。
+
+安裝 API、SDK 和匯出器。以下使用 Node.js SDK 和 OTLP/HTTP 匯出器；只要能註冊 tracer provider，任何 SDK 都可以，包括瀏覽器端的 SDK。
+
+```bash [bun]
+bun add @opentelemetry/api @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-http
+```
+
+```bash [npm]
+npm install @opentelemetry/api @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-http
+```
+
+```bash [pnpm]
+pnpm add @opentelemetry/api @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-http
+```
+
+```bash [yarn]
+yarn add @opentelemetry/api @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-http
+```
+
+在第一次查詢之前啟動 SDK，例如放在進入點最先匯入的模組中：
+
+```ts
+// instrumentation.ts
+import { NodeSDK } from "@opentelemetry/sdk-node";
+import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
+
+export const sdk = new NodeSDK({
+  serviceName: "billing-worker",
+  traceExporter: new OTLPTraceExporter(),
+});
+
+sdk.start();
+```
+
+除非你設定標準的 `OTEL_EXPORTER_OTLP_ENDPOINT` 環境變量或傳入 `url`，否則匯出器會把資料送到 `http://localhost:4318/v1/traces`。SDK 同時會註冊 context manager 和 W3C propagator，span 的父子關係和 `propagateTraceContext` 都依賴它們。執行時間很短的進程在結束前必須 `await sdk.shutdown()`，否則最後的 span 會遺失。
+
+然後把插件加入客戶端：
 
 ```ts
 import { clickhouseClient } from "ck-orm";
@@ -2542,6 +2599,12 @@ const db = clickhouseClient({
   ],
 });
 ```
+
+沒有收集器也能查看 span：[OpenTelemetry 追蹤範例](https://ck-orm.lyz.cloud/examples/#otel-tracing) 使用記憶體內的匯出器，並印出插件記錄的內容。
+
+#### Span
+
+span 的類型是 `CLIENT`。返回資料列的查詢，名稱是 `clickhouse QUERY`；其他請求的名稱是 `clickhouse <OPERATION>`，例如 `clickhouse INSERT` 或 `clickhouse CREATE`。查詢開始時哪個 span 處於作用中，ck-orm 的 span 就成為它的子項，例如框架的 OpenTelemetry 插裝為每個 HTTP 請求開啟的 span。
 
 除非你傳入 `tracer`，否則插件會使用 `trace.getTracer("ck-orm")`。它會從 `clickhouseClient(...)` 的配置取得數據庫名稱、伺服器地址、伺服器連接埠和請求逾時。把服務層級標籤傳入 `attributes`；以 `db.` 開頭的鍵會被忽略，讓應用程式碼無法覆寫內建的數據庫屬性。
 
@@ -2608,13 +2671,15 @@ const requestSource: ClickHouseORMPlugin = {
 };
 ```
 
+[查詢插件範例](https://ck-orm.lyz.cloud/examples/#query-plugins) 執行一個插件：它從 `onQueryStart` 返回標頭，並由 `onQuerySuccess` 和 `onQueryError` 按執行順序記錄每條語句。
+
 插件遵循以下規則：
 
 - hook 會為 ck-orm 送往 ClickHouse 的每個請求執行：查詢、串流、命令、插入、DDL 輔助工具、`ping()`、`replicasStatus()`，以及 `runInSession()` 中的暫存資料表清理。只有取消已放棄的串流並等待其工作階段解鎖的請求（`KILL QUERY` 及其後的輪詢）不會執行 hook。
 - 每個 `onQueryStart` 之後，必定有且只有一個 `onQuerySuccess` 或 `onQueryError`，並帶有相同的 `executionId`；對串流而言，這發生在迭代器完成或被關閉時。呼叫端提前停止的串流算作成功，並回報截至當時已讀取的列數。請以 `executionId` 作為每個請求狀態的鍵。
 - `onQueryStart` hook 按註冊順序執行，並且全部完成後才會送出請求。`onQuerySuccess` 和 `onQueryError` 按相反順序執行。內建記錄器永遠在最外層執行。
 - 較後的插件所提供的標頭會覆寫較前的。明確指定的 `http_headers`（不論是客戶端層級還是個別請求）會覆寫插件標頭。插件不能覆寫由連線登入憑證產生的 `Authorization` 標頭，也不能覆寫工作階段送出的 `X-ClickHouse-Replica-Tag` 標頭。
-- 拋出錯誤的 hook 會連同插件名稱一併記錄，不會影響查詢或其他插件。拋出錯誤或返回無效標頭的 `onQueryStart`，其標頭會被捨棄。
+- 擲回錯誤的 hook 會連同插件名稱一併記錄，不會影響查詢或其他插件。擲回錯誤或返回無效標頭的 `onQueryStart`，其標頭會被捨棄。
 - 事件是唯讀的。插件不能更改 SQL、參數、設定或結果。
 - hook 在查詢路徑上會被等待。網絡匯出之類的慢速工作請先緩衝，不要在 hook 中等待。
 

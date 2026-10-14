@@ -19,7 +19,7 @@ UI 字串維持短而可掃讀：導覽項用名詞（例如「範例」「語�
 | 英文原句 | 不自然 | 建議 |
 |---|---|---|
 | Use `ck-orm` with these boundaries in mind: | 使用 `ck-orm` 時，請牢記以下邊界： | 使用 `ck-orm` 時，記得把下面這些界線分清楚： |
-| `@opentelemetry/api` is an optional peer dependency used only by the `ck-orm/otel` plugin; install it alongside ck-orm when you use that plugin. | `@opentelemetry/api` 是可選的對等依賴項，僅由 `ck-orm/otel` 外掛使用；使用該外掛時，請將其與 ck-orm 一併安裝。 | `@opentelemetry/api` 是選用的同儕依賴，只有 `ck-orm/otel` 外掛程式會用到；使用該外掛程式時，請和 ck-orm 一起安裝。 |
+| The main `ck-orm` entry never imports OpenTelemetry, so an application, browser bundle or edge worker that does not trace installs and bundles none of it. | `ck-orm` 的主要進入點絕不會匯入 OpenTelemetry，因此未使用追蹤功能的應用程式、瀏覽器打包檔案或邊緣 worker，將不會安裝亦不會打包其任何內容。 | `ck-orm` 的主進入點從不匯入 OpenTelemetry，所以不追蹤的應用程式、瀏覽器打包產物或邊緣 worker 既不用安裝 OpenTelemetry，也不會把它打包進去。 |
 | That means: | 這意味著： | 也就是說： |
 | `ck-orm` is designed to make unsafe SQL construction difficult by default. | `ck-orm` 的設計旨在預設使不安全 SQL 建構變得困難。 | `ck-orm` 預設讓你很難組出不安全的 SQL。 |
 
@@ -101,12 +101,25 @@ UI 字串維持短而可掃讀：導覽項用名詞（例如「範例」「語�
 | client; connection; server; replica; request; response; transport; HTTP request | 用戶端；連線；伺服器；副本；請求；回應；傳輸；HTTP 請求 | no | attested — https://developer.mozilla.org/zh-TW/docs/Web/API/Fetch_API/Using_Fetch | client 也有「客戶端」用法；本指南統一「用戶端」。
 | timeout; settings; configuration; config; option; session; temporary-table workflow; transaction | 逾時；設定；設定；設定；選項；工作階段；暫存資料表流程；交易 | no | attested — https://learn.microsoft.com/zh-tw/windows-server/administration/windows-commands/query-session and https://learn.microsoft.com/zh-tw/sql/t-sql/language-elements/transactions-transact-sql?view=sql-server-ver17 | 若 config 是識別字則保留識別字；普通說明譯為「設定」。
 | concurrency; lifecycle; cleanup; runtime method; execute; fetch; abort; cancel | 並行；生命週期；清理；執行階段方法；執行；擷取；中止；取消 | no | inferred — from Taiwan runtime/API terminology | concurrency 尚無本次可引用的固定臺灣詞形，採 plain textbook rendering。
-| observability; tracing; span; logging; logger; metrics; instrumentation | 可觀察性；追蹤；區間；記錄；記錄器；指標；儀器化 | no | attested — https://learn.microsoft.com/zh-tw/azure/well-architected/operational-excellence/observability and https://learn.microsoft.com/zh-tw/agent-framework/agents/observability | 官方頁面混用可觀察性／可觀測性；本指南選「可觀察性」。span 用「區間」。
-| hook | hook | yes | attested — https://zh-hans.react.dev/reference/react/hooks | React 語境的 Hook 是開發者實際保留的技術術語；臺灣 React 語料也保留 Hook：https://react.com.tw/reference/react/use。
-| plugin | 外掛程式 | no | inferred — Taiwan Microsoft/Windows localization uses 「外掛程式」 for plug-in; I did not open a page confirming it for this project | 未逐頁核對來源，故標 inferred；識別字 `plugins`、`ClickHouseORMPlugin` 保留原文。 |
+| observability; tracing; logging; logger; metrics | 可觀察性；追蹤；記錄；記錄器；指標 | no | attested — https://learn.microsoft.com/zh-tw/azure/well-architected/operational-excellence/observability and https://learn.microsoft.com/zh-tw/agent-framework/agents/observability | 「可觀察性」（Microsoft Learn）與「可觀測性」（AWS、Google Cloud）依廠商而異，Microsoft 自己的頁面也偶爾混用；本指南選「可觀察性」。
+| span | span（可觀察性一節首次出現時寫「span（跨度）」，之後只寫 span） | yes | attested — https://learn.microsoft.com/zh-tw/agent-framework/agents/observability and https://learn.microsoft.com/zh-tw/azure/azure-monitor/app/opentelemetry-add-modify | 不譯為「區間」。Microsoft Agent Framework observability 頁面（zh-tw）只寫「區間」1 次，「跨度」卻有 5 次；Azure Monitor opentelemetry-add-modify 頁面（zh-tw）兩者都沒用。AWS、Google Cloud 的 zh-TW 文件寫「跨度」或「範圍」，或直接保留 Span；iThome 文章保留 Span（約 330 次，「跨度」僅 1 次）。子標題寫 `#### Span`。「區間」表示範圍、間隔時不是 span，不在此限。 |
+| instrumentation | 檢測 | no | attested — https://learn.microsoft.com/zh-tw/azure/azure-monitor/app/opentelemetry-add-modify and https://docs.aws.amazon.com/zh_tw/xray/latest/devguide/xray-sdk-migration.html and https://cloud.google.com/trace/docs/setup?hl=zh-TW | Azure Monitor opentelemetry-add-modify 頁面（zh-tw）用「檢測」31 次、「儀器化」0 次；AWS X-Ray devguide（zh_tw）和 Google Cloud Trace（zh-TW）同樣用「檢測」。不用「儀器化」。Microsoft Agent Framework observability 頁面（zh-tw）則寫「儀器化」「儀器」，同一廠商內並不一致，本指南依多數來源選「檢測」。 |
+| exporter | 匯出器 | no | attested — https://learn.microsoft.com/zh-tw/azure/azure-monitor/app/opentelemetry-configuration and https://learn.microsoft.com/zh-tw/azure/azure-monitor/app/opentelemetry-add-modify | Microsoft Azure Monitor 頁面（zh-tw）寫「匯出器」；AWS、Google Cloud 也有「匯出工具」的寫法，兩者都通，本指南統一「匯出器」。 |
+| Collector | 收集器 | no | attested — https://docs.aws.amazon.com/zh_tw/xray/latest/devguide/xray-sdk-migration.html and https://cloud.google.com/trace/docs/setup?hl=zh-TW | AWS X-Ray 移轉頁面（zh_tw）寫「收集器」26 次；Google Cloud Trace（zh-TW）也寫「收集器」。 |
+| propagator | 傳播器 | no | attested — https://docs.aws.amazon.com/zh_tw/xray/latest/devguide/xray-sdk-migration.html and https://learn.microsoft.com/zh-tw/agent-framework/agents/observability | AWS X-Ray 移轉頁面（zh_tw）寫「X-Ray 傳播器」，Microsoft Agent Framework observability 頁面（zh-tw）寫「OpenTelemetry 傳播器」。識別字 `propagateTraceContext` 保留原文。 |
+| tracer provider | tracer provider | yes | inferred — OpenTelemetry API 的類別名稱 `TracerProvider` | AWS 與 Microsoft 的繁中文件只零星寫「追蹤器提供者」，沒有穩定的譯法，且它是 API 識別字，因此保留英文。 |
+| context manager | 脈絡管理器 | no | unverified — 沒有找到臺灣來源 | Python 的 zh-tw 詞彙表把 with 陳述式的 context manager 譯為「情境管理器」，那是另一個概念，本指南不採用；這裡是 OpenTelemetry 的 context manager，需母語者確認。 |
+| SDK | SDK | yes | attested — https://learn.microsoft.com/zh-tw/azure/azure-monitor/app/javascript-sdk | SDK 是縮寫，與 API 一樣原樣保留。 |
+| hook | hook | yes | attested — https://zh-hans.react.dev/reference/react/hooks and https://react.com.tw/reference/react/hooks | React 語境的 Hook 是開發者實際保留的技術術語；臺灣社群站 react.com.tw（非官方翻譯）也保留英文 Hook。Microsoft Win32 文件（zh-tw）把 Windows 的 hook 寫成「掛鉤」，屬於另一個領域的用法，本指南不採用。 |
+| plugin | 外掛程式 | no | attested — https://learn.microsoft.com/zh-tw/azure/azure-monitor/app/javascript-sdk and https://docs.aws.amazon.com/zh_tw/xray/latest/devguide/xray-sdk-migration.html and https://zh.wikipedia.org/zh-tw/外掛程式 | Microsoft Azure Monitor JavaScript SDK 頁面（zh-tw）寫「外掛程式」，AWS X-Ray 移轉頁面（zh_tw）寫「服務外掛程式」；中文維基百科「外掛程式」條目的臺灣用字欄列出「外掛程式」「外掛」「擴充功能」。「插件」是中國大陸用法，不使用。識別字 `plugins`、`ClickHouseORMPlugin` 保留原文。 |
 | event; error; exception; throws; rejects; error model; validation error; stack; retry | 事件；錯誤；例外；拋出；拒絕；錯誤模型；驗證錯誤；堆疊；重試 | no | attested — https://learn.microsoft.com/zh-tw/dotnet/api/system.servicemodel.dispatcher.ierrorhandler?view=netcore-1.1 and https://developer.mozilla.org/zh-TW/docs/Web/API/Fetch_API/Using_Fetch | call stack 可寫「呼叫堆疊」。
 | security; SQL injection; untrusted input; identifier quoting; escaping; credentials; password; allow-list; permission | 安全性；SQL 注入；不受信任的輸入；識別字引用；跳脫；認證資訊；密碼；允許清單；權限 | no | attested — https://developer.mozilla.org/zh-TW/docs/Glossary/SQL_Injection and https://learn.microsoft.com/zh-tw/aspnet/core/fundamentals/servers/kestrel/security-considerations?view=aspnetcore-10.0 | SQL 保留；injection 譯為「注入」。
-| installation; install; peer dependency; version; pin a version; release; breaking change | 安裝；安裝；同儕依賴；版本；鎖定版本；發行；重大變更 | no | attested — https://prisma.tw/docs/orm/prisma-client/observability-and-logging/opentelemetry-tracing | Prisma 繁中直接將 peer dependency 寫成「同儕依賴」；其他詞形見 Microsoft Learn zh-TW。
+| installation; install; version; pin a version; release; breaking change | 安裝；安裝；版本；鎖定版本；發行；重大變更 | no | attested — https://learn.microsoft.com/zh-tw/dotnet/framework/migration-guide/version-compatibility | 詞形見 Microsoft Learn zh-TW。
+| peer dependency | peer dependency | 是 | inferred — X 搜尋（grok-4.7，2026-10-15；貼文未另行重新驗證） | 「同儕依賴」「對等依賴」「同儕相依」「對等相依」「同層依賴」在 X 上都沒有可用的台灣開發者貼文；prisma.tw 是非官方社群翻譯站，只有一處寫「peer dependency（同儕依賴）」；台灣部落格有「對等依賴」（realnewbie.com），多數直接寫英文。因此保留英文。一般詞 dependency 仍用「依賴」。 |
+| entry point | 進入點 | no | attested — https://learn.microsoft.com/zh-tw/dotnet/csharp/fundamentals/program-structure/main-command-line | Microsoft C# Main 命令列頁面（zh-tw）「進入點」「入口點」並用；本指南選「進入點」。
+| process | 程序 | no | attested — https://learn.microsoft.com/zh-tw/dotnet/standard/threading/threads-and-threading and https://docs.aws.amazon.com/zh_tw/lambda/latest/dg/lambda-runtime-environment.html | 指作業系統的 process 時寫「程序」（Microsoft 執行緒頁面、AWS Lambda 執行環境頁面）；不寫「處理程序」。
+| edge | 邊緣 | no | attested — https://docs.aws.amazon.com/zh_tw/AmazonCloudFront/latest/DeveloperGuide/edge-functions.html | AWS CloudFront 寫「邊緣函數」，Microsoft Front Door 寫「邊緣位置」；`edge worker` 寫「邊緣 worker」。
+| in-memory | 記憶體內 | no | attested — https://learn.microsoft.com/zh-tw/sql/relational-databases/in-memory-oltp/overview-and-usage-scenarios | Microsoft 記憶體內 OLTP 頁面（zh-tw）也寫「記憶體內部」；兩種都可以，本指南用「記憶體內」。
 | before 1.0; pre-release; migration; production; example; runnable | 1.0 之前；預發行；遷移；正式環境；範例；可執行 | no | attested — https://learn.microsoft.com/zh-tw/ef/core/managing-schemas/migrations/applying | schema migration 寫「schema 遷移」；production 不寫成「生產」。
 | reference; documentation; page; section; caveat; note | 參考資料；文件；頁面；章節；注意事項；備註 | no | attested — https://developer.mozilla.org/zh-TW/docs/Web/API/Fetch_API/Using_Fetch and https://learn.microsoft.com/zh-tw/dotnet/standard/metadata-and-self-describing-components |
 | behavior; semantics; contract; mode; public API; stable; internal; deprecated; shape; surface; layer | 行為；語意；契約；模式；公開 API；穩定；內部；已棄用；資料形狀；介面範圍；層 | no | inferred — from Taiwan API and framework terminology | shape、surface 的固定臺灣搭配仍需母語者確認。
@@ -139,19 +152,20 @@ UI 字串維持短而可掃讀：導覽項用名詞（例如「範例」「語�
 使用 `ck-orm` 時，記得把下面這些界線分清楚：
 
 - `ckType.*` 定義 schema 的欄位型別
-- `ckTable(...)` 定義資料表 schema
+- `ckTable(...)` 定義資料表的 schema
 - `ck.*` 是查詢輔助工具的命名空間
 - `fn.*` 是 SQL 函式輔助工具的命名空間
 - schema 描述資料表和欄位，不描述資料庫名稱
 - `clickhouseClient(...)` 負責資料庫連線
 - 建構器查詢是預設方式；遇到 ClickHouse 專用運算式時，也可以使用原始 SQL
 - `runInSession()` 是 ClickHouse 的工作階段輔助工具，不是交易
-- `leftJoin()` 預設採用 SQL 風格的 NULL 語意
-- 大型或風險較高的數值結果會採保守方式解碼，不會默默強制轉型
+- `plugins` 可觀察 ck-orm 送出的每個請求；追蹤是需要自行加入的 `ck-orm/otel` 外掛程式，不在主進入點裡
+- `leftJoin()` 和 `asofLeftJoin()` 預設採用 SQL 風格的 NULL 語意
+- 數值很大或風險較高的結果會採保守方式解碼，不會默默強制轉型
 
 #### 安裝
 
-ck-orm 沒有必要的依賴。`@opentelemetry/api` 是選用的同儕依賴，只有 `ck-orm/otel` 外掛程式會用到；使用該外掛程式時，請和 ck-orm 一起安裝。
+ck-orm 沒有必要的依賴。OpenTelemetry 追蹤是獨立的進入點 `ck-orm/otel`，`@opentelemetry/api` 是選用的 peer dependency，只有這個進入點會用到。`ck-orm` 的主進入點從不匯入 OpenTelemetry，所以不追蹤的應用程式、瀏覽器打包產物或邊緣 worker 既不用安裝 OpenTelemetry，也不會把它打包進去。要追蹤查詢，請依照 [OpenTelemetry 外掛程式](#opentelemetry-plugin)的設定步驟操作。
 
 ### 9. Sources consulted
 
@@ -161,20 +175,23 @@ ck-orm 沒有必要的依賴。`@opentelemetry/api` 是選用的同儕依賴，�
 - [Microsoft Learn zh-TW SQL tables](https://learn.microsoft.com/zh-tw/sql/relational-databases/tables/tables?view=sql-server-ver17)、[CREATE TABLE](https://learn.microsoft.com/zh-tw/sql/t-sql/statements/create-table-transact-sql?view=sql-server-ver17)、[transactions](https://learn.microsoft.com/zh-tw/sql/t-sql/language-elements/transactions-transact-sql?view=sql-server-ver17)：確認資料庫、資料表、欄位、暫存資料表、交易、陳述式和復原。
 - [Microsoft Learn zh-TW ADO.NET parameters](https://learn.microsoft.com/zh-tw/sql/connect/ado-net/sql/table-valued-parameters?view=sql-server-ver17)、[placeholder](https://learn.microsoft.com/zh-tw/aspnet/web-pages/overview/getting-started/introducing-aspnet-web-pages-2/form-basics)：確認參數、資料列、結果集、批次、串流和預留位置。
 - [Microsoft Learn zh-TW query builder](https://learn.microsoft.com/zh-tw/sql/tools/visual-studio-code-extensions/github-copilot/smart-query-builder?view=sql-server-ver17)：確認查詢建構器、聯結、篩選和彙總。
-- [Microsoft Learn zh-TW observability](https://learn.microsoft.com/zh-tw/azure/well-architected/operational-excellence/observability)、[Agent Framework observability](https://learn.microsoft.com/zh-tw/agent-framework/agents/observability)：確認可觀察性、追蹤、區間、指標、記錄和儀器化；來源自身混用可觀察性／可觀測性，因此本指南明確選定前者。
+- [Microsoft Learn zh-TW observability](https://learn.microsoft.com/zh-tw/azure/well-architected/operational-excellence/observability)、[Agent Framework observability](https://learn.microsoft.com/zh-tw/agent-framework/agents/observability)：確認可觀察性、追蹤、指標和記錄；來源自身混用可觀察性／可觀測性，因此本指南明確選定前者。Agent Framework 頁面只用「區間」1 次、「跨度」5 次，不能支持「區間」，span 因此保留英文。
+- [Microsoft Learn zh-TW Azure Monitor](https://learn.microsoft.com/zh-tw/azure/azure-monitor/app/opentelemetry-add-modify)、[Azure Monitor 設定](https://learn.microsoft.com/zh-tw/azure/azure-monitor/app/opentelemetry-configuration)、[Azure Monitor JavaScript SDK](https://learn.microsoft.com/zh-tw/azure/azure-monitor/app/javascript-sdk)、[AWS X-Ray 移轉](https://docs.aws.amazon.com/zh_tw/xray/latest/devguide/xray-sdk-migration.html)、[Google Cloud Trace](https://cloud.google.com/trace/docs/setup?hl=zh-TW)：確認檢測、匯出器（匯出工具）、收集器、傳播器和外掛程式。
+- [Microsoft Learn zh-TW 執行緒](https://learn.microsoft.com/zh-tw/dotnet/standard/threading/threads-and-threading)、[AWS Lambda 執行環境](https://docs.aws.amazon.com/zh_tw/lambda/latest/dg/lambda-runtime-environment.html)、[AWS CloudFront 邊緣函數](https://docs.aws.amazon.com/zh_tw/AmazonCloudFront/latest/DeveloperGuide/edge-functions.html)、[C# Main 命令列](https://learn.microsoft.com/zh-tw/dotnet/csharp/fundamentals/program-structure/main-command-line)：確認程序、邊緣和進入點。
 - [Microsoft Learn zh-TW session](https://learn.microsoft.com/zh-tw/windows-server/administration/windows-commands/query-session)、[session timeout](https://learn.microsoft.com/zh-tw/microsoft-365/enterprise/session-timeouts?view=o365-worldwide)：確認工作階段和逾時；來源也混用會話，本指南選工作階段。
 - [Microsoft Learn zh-TW built-in types](https://learn.microsoft.com/zh-tw/dotnet/csharp/fundamentals/types/built-in-types)、[nullable](https://learn.microsoft.com/zh-tw/dotnet/csharp/language-reference/builtin-types/nullable-reference-types)：確認位元、字面值、浮點數、布林值、型別和可為 NULL。
 - [Microsoft Learn zh-TW migration](https://learn.microsoft.com/zh-tw/ef/core/managing-schemas/migrations/applying)、[version compatibility](https://learn.microsoft.com/zh-tw/dotnet/framework/migration-guide/version-compatibility)：確認遷移、相容性、重大變更和已棄用。
 - [ClickHouse data types](https://clickhouse.com/docs/en/sql-reference/data-types/tuple)、[TypeScript documentation](https://www.typescriptlang.org/docs/)、[Prisma Taiwan](https://prisma.tw/docs/orm/prisma-schema/overview/generators)：確認 ClickHouse 型別、產品名稱與 schema／DSL 等技術名稱的保留邊界。
-- [React 中文 Hook 文件](https://zh-hans.react.dev/reference/react/hooks)、[React Taiwan](https://react.com.tw/reference/react/use)：確認 React 語境的 Hook 是開發者實際保留的技術術語。
-- [Prisma 繁體中文 OpenTelemetry 追蹤](https://prisma.tw/docs/orm/prisma-client/observability-and-logging/opentelemetry-tracing)：確認 peer dependency 的台灣中文寫法「同儕依賴」。
+- [React 中文 Hook 文件](https://zh-hans.react.dev/reference/react/hooks)、[React Taiwan](https://react.com.tw/reference/react/hooks)（社群站，非官方翻譯）：確認 React 語境的 Hook 是開發者實際保留的技術術語。
+- [Prisma 繁體中文 OpenTelemetry 追蹤](https://prisma.tw/docs/orm/prisma-client/observability-and-logging/opentelemetry-tracing)：非官方社群翻譯站，只有一處寫「peer dependency（同儕依賴）」，證據偏弱，見第 10 節。
 - [教育部《重訂標點符號手冊》](https://language.moe.gov.tw/001/Upload/FILES/SITE_CONTENT/M0001/HAU/haushou.htm)、[Microsoft Traditional Chinese Style Guide（鏡像）](https://www.pendeba.org/sites/pendeba.future.org/files/zho-twn-styleguide.pdf)：確認標點、空格、直接語氣、主動句和排版規則。
 
 ### 10. Open questions
 
 - 「資料表引擎」是否比保留 table engine 更符合熟悉 ClickHouse 的臺灣開發者用語。
 - 「參數繫結」是否比「繫結參數」或「參數化」更自然。
-- OpenTelemetry 的 span 寫成「區間」是否比「跨度」或保留 span 更容易讀懂。
+- span 目前保留英文，並在首次出現時附「跨度」；Microsoft 用「跨度」、iThome 多保留 Span，是否改成直接用「跨度」需臺灣母語開發者確認。
+- peer dependency 已改為保留英文（2026-10-15 決定）：「同儕依賴」只有一個非官方站的單一用例，X 上五種中文譯名都沒有台灣開發者貼文，台灣部落格多數直接寫英文，另有「對等依賴」（realnewbie.com）。若母語者認為應譯，再從「對等依賴」與「同儕依賴」中選一個。
 - 「資料形狀」是否是 shape 在 API 文件中的自然臺灣譯法，還是應改成「結構」。
 - client 選「用戶端」而不是「客戶端」，以及 session 選「工作階段」而不是「會話」，應由臺灣母語開發者確認全站一致性。
 

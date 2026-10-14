@@ -1,5 +1,5 @@
 ## Installation de ck-orm
-<!-- src:03d420fc -->
+<!-- src:e86aaf8a -->
 
 ```bash [bun]
 bun add ck-orm
@@ -17,10 +17,10 @@ pnpm add ck-orm
 yarn add ck-orm
 ```
 
-ck-orm n'a aucune dépendance obligatoire. `@opentelemetry/api` est une dépendance entre pairs facultative, utilisée uniquement par le plugin `ck-orm/otel` ; installez-la avec ck-orm quand vous utilisez ce plugin.
+ck-orm n'a aucune dépendance obligatoire. Le traçage OpenTelemetry est un point d'entrée distinct, `ck-orm/otel`, et `@opentelemetry/api` est une dépendance entre pairs facultative que lui seul utilise. Le point d'entrée principal `ck-orm` n'importe jamais OpenTelemetry : une application, un bundle pour navigateur ou un worker edge qui ne trace pas n'installe ni n'embarque rien de tout cela. Pour tracer vos requêtes, suivez la mise en place décrite dans [Plugin OpenTelemetry](#opentelemetry-plugin).
 
 ## Prise en main
-<!-- src:d7ba4246 -->
+<!-- src:847057c0 -->
 
 Les exemples ci-dessous utilisent une seule table pour que le déroulé principal reste facile à suivre.
 
@@ -99,13 +99,28 @@ Les requêtes construites sont des semi-promesses : `await query` les exécute
 
 Sur une colonne `Decimal`, `fn.sum` convertit automatiquement le résultat en `Decimal(P, S)` et renvoie `string` pour préserver la précision — voir [Précision de Decimal dans les expressions](#decimal-precision-in-expressions).
 
+### 4. Observer les requêtes
+
+Les `plugins` se branchent sur chaque requête que ck-orm envoie à ClickHouse. `otelTracing()`, fourni par `ck-orm/otel`, transforme chaque requête en span OpenTelemetry dès qu'un SDK est démarré ; la mise en place est décrite dans [Plugin OpenTelemetry](#opentelemetry-plugin), et [Écrire des plugins](#writing-plugins) explique comment écrire vos propres hooks.
+
+```ts
+import { clickhouseClient } from "ck-orm";
+import { otelTracing } from "ck-orm/otel";
+
+export const db = clickhouseClient({
+  host: "http://127.0.0.1:8123",
+  database: "telemetry_lab",
+  plugins: [otelTracing()],
+});
+```
+
 ## Exemples
 <!-- src:c8f5c20b -->
 
 La [page d'exemples](https://ck-orm.lyz.cloud/examples/) présente des requêtes exécutables avec le SQL exact qu'elles envoient à ClickHouse. Chaque exemple est un projet dans [`examples/`](../examples), avec son propre test. Les tests ClickHouse exécutables sont dans [`e2e/`](../e2e), qui contient notamment des schémas de scénarios proches de la production dans [`e2e/scenarios.ts`](../e2e/scenarios.ts).
 
 ## Modèle mental
-<!-- src:a26a2ce8 -->
+<!-- src:a6fa96d2 -->
 
 Gardez ces limites en tête quand vous utilisez `ck-orm` :
 
@@ -117,6 +132,7 @@ Gardez ces limites en tête quand vous utilisez `ck-orm` :
 - la connexion à la base de données passe par `clickhouseClient(...)`
 - les requêtes construites sont le choix par défaut ; le SQL brut reste disponible pour les expressions propres à ClickHouse
 - `runInSession()` est une fonction utilitaire de session ClickHouse, pas une transaction
+- `plugins` observent chaque requête envoyée par ck-orm ; le traçage est le plugin `ck-orm/otel`, à activer explicitement et séparé du point d'entrée principal
 - `leftJoin()` et `asofLeftJoin()` utilisent par défaut la sémantique SQL des valeurs nulles
 - les résultats numériques volumineux ou à risque sont décodés avec prudence, sans conversion silencieuse
 
@@ -2567,7 +2583,7 @@ await db.replicasStatus();
 ```
 
 ## Observabilité
-<!-- src:37125a8e -->
+<!-- src:11c06560 -->
 
 `ck-orm` propose deux couches d'observabilité :
 
@@ -2606,7 +2622,48 @@ const db = clickhouseClient({
 
 ### Plugin OpenTelemetry
 
-Installez `@opentelemetry/api`, puis ajoutez le plugin :
+`otelTracing()`, fourni par `ck-orm/otel`, enregistre un span client pour chaque requête que ck-orm envoie à ClickHouse. Il a son propre point d'entrée : le point d'entrée principal `ck-orm` n'importe jamais OpenTelemetry, donc les applications, les bundles pour navigateur et les workers edge qui ne tracent pas ne supportent aucun surcoût. `@opentelemetry/api` est une dépendance entre pairs facultative que seul `ck-orm/otel` importe.
+
+#### Mise en place
+
+ck-orm crée les spans via l'API OpenTelemetry, et l'API seule n'enregistre rien : tant qu'aucun SDK n'a enregistré de fournisseur de traceurs, tous les spans sont ignorés. ck-orm ne démarre aucun SDK et ne choisit aucun exportateur ; votre application fait les deux, une seule fois, au démarrage.
+
+Installez l'API, un SDK et un exportateur. Cet exemple utilise le SDK Node.js avec l'exportateur OTLP/HTTP ; tout SDK qui enregistre un fournisseur de traceurs convient, y compris celui du navigateur.
+
+```bash [bun]
+bun add @opentelemetry/api @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-http
+```
+
+```bash [npm]
+npm install @opentelemetry/api @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-http
+```
+
+```bash [pnpm]
+pnpm add @opentelemetry/api @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-http
+```
+
+```bash [yarn]
+yarn add @opentelemetry/api @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-http
+```
+
+Démarrez le SDK avant la première requête, par exemple dans un module que votre point d'entrée importe en premier :
+
+```ts
+// instrumentation.ts
+import { NodeSDK } from "@opentelemetry/sdk-node";
+import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
+
+export const sdk = new NodeSDK({
+  serviceName: "billing-worker",
+  traceExporter: new OTLPTraceExporter(),
+});
+
+sdk.start();
+```
+
+L'exportateur envoie les spans à `http://localhost:4318/v1/traces`, sauf si vous définissez la variable standard `OTEL_EXPORTER_OTLP_ENDPOINT` ou transmettez `url`. Le SDK enregistre aussi le gestionnaire de contexte et le propagateur W3C dont dépendent la relation parent-enfant entre les spans et `propagateTraceContext`. Un processus de courte durée doit appeler `await sdk.shutdown()` avant de se terminer, sinon ses derniers spans sont perdus.
+
+Ajoutez ensuite le plugin au client :
 
 ```ts
 import { clickhouseClient } from "ck-orm";
@@ -2622,6 +2679,12 @@ const db = clickhouseClient({
   ],
 });
 ```
+
+Pour voir les spans sans collecteur, l'[exemple de traçage OpenTelemetry](https://ck-orm.lyz.cloud/examples/#otel-tracing) utilise un exportateur en mémoire et affiche ce que le plugin a enregistré.
+
+#### Spans
+
+Les spans sont de type `CLIENT`. Ils s'appellent `clickhouse QUERY` pour les requêtes qui renvoient des lignes et `clickhouse <OPERATION>` pour tout le reste, par exemple `clickhouse INSERT` ou `clickhouse CREATE`. Un span devient l'enfant du span actif au moment où la requête démarre, par exemple celui que l'instrumentation OpenTelemetry de votre framework ouvre pour chaque requête HTTP.
 
 Le plugin utilise `trace.getTracer("ck-orm")` sauf si vous transmettez `tracer`. Il déduit le nom de la base de données, l'adresse du serveur, son port et le délai d'expiration des requêtes de la configuration de `clickhouseClient(...)`. Transmettez les libellés propres au service via `attributes` ; les clés qui commencent par `db.` sont ignorées pour que le code applicatif ne puisse pas écraser les attributs de base de données intégrés.
 
@@ -2642,7 +2705,7 @@ ClickHouse écrit ces spans dans `system.opentelemetry_span_log` et ne les expor
 
 Si vous transmettez votre propre `traceparent` dans `http_headers`, il remplace celui du plugin ; transmettez aussi le `tracestate` correspondant, sinon le `tracestate` du plugin est envoyé avec lui.
 
-Dans les navigateurs, `traceparent` fait échouer la requête de pré-vérification CORS tant que ClickHouse n'autorise pas cet en-tête, et comme seules les requêtes échantillonnées le portent, les échecs semblent aléatoires. Le `http_options_response` par défaut ne l'autorise pas : activez donc la propagation dans les navigateurs seulement après l'avoir ajouté dans un fichier `config.d` :
+Dans les navigateurs, `traceparent` fait échouer la requête préliminaire CORS tant que ClickHouse n'autorise pas cet en-tête, et comme seules les requêtes échantillonnées le portent, les échecs semblent aléatoires. Le `http_options_response` par défaut ne l'autorise pas : activez donc la propagation dans les navigateurs seulement après l'avoir ajouté dans un fichier `config.d` :
 
 ```xml
 <clickhouse>
@@ -2688,9 +2751,11 @@ const requestSource: ClickHouseORMPlugin = {
 };
 ```
 
+L'[exemple de plugins de requête](https://ck-orm.lyz.cloud/examples/#query-plugins) exécute un plugin qui renvoie un en-tête dans `onQueryStart` et journalise chaque instruction dans `onQuerySuccess` et `onQueryError`, dans l'ordre d'exécution.
+
 Les plugins suivent ces règles :
 
-- Les hooks s'exécutent pour chaque requête que ck-orm envoie à ClickHouse : requêtes, flux, commandes, insertions, helpers DDL, `ping()`, `replicasStatus()` et le nettoyage des tables temporaires dans `runInSession()`. Seules les requêtes qui annulent un flux abandonné et attendent le déverrouillage de sa session (`KILL QUERY` et l'interrogation qui suit) n'exécutent pas les hooks.
+- Les hooks s'exécutent pour chaque requête que ck-orm envoie à ClickHouse : requêtes, flux, commandes, insertions, fonctions utilitaires DDL, `ping()`, `replicasStatus()` et le nettoyage des tables temporaires dans `runInSession()`. Seules les requêtes qui annulent un flux abandonné et attendent le déverrouillage de sa session (`KILL QUERY` et l'interrogation qui suit) n'exécutent pas les hooks.
 - Chaque `onQueryStart` est suivi d'exactement un `onQuerySuccess` ou un `onQueryError` avec le même `executionId` ; pour un flux, cela se produit quand l'itérateur se termine ou est fermé. Un flux que l'appelant arrête plus tôt compte comme un succès et indique les lignes lues jusque-là. Indexez l'état propre à chaque requête par `executionId`.
 - Les hooks `onQueryStart` s'exécutent dans l'ordre d'enregistrement, et tous se terminent avant l'envoi de la requête. `onQuerySuccess` et `onQueryError` s'exécutent dans l'ordre inverse. Le logger intégré s'exécute toujours à l'extérieur de tous les plugins.
 - L'en-tête d'un plugin ultérieur remplace celui d'un plugin antérieur. Les `http_headers` explicites, au niveau du client ou de la requête, remplacent les en-têtes des plugins. Les plugins ne peuvent pas remplacer l'en-tête `Authorization` construit à partir des identifiants de connexion ni l'en-tête `X-ClickHouse-Replica-Tag` que les sessions envoient.

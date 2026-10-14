@@ -1,5 +1,5 @@
 ## Instalación
-<!-- src:03d420fc -->
+<!-- src:e86aaf8a -->
 
 ```bash [bun]
 bun add ck-orm
@@ -17,10 +17,10 @@ pnpm add ck-orm
 yarn add ck-orm
 ```
 
-ck-orm no tiene dependencias obligatorias. `@opentelemetry/api` es una peer dependency opcional que solo usa el plugin `ck-orm/otel`; instálala junto con ck-orm cuando uses ese plugin.
+ck-orm no tiene dependencias obligatorias. El trazado de OpenTelemetry es un punto de entrada aparte, `ck-orm/otel`, y `@opentelemetry/api` es una peer dependency opcional que solo usa ese punto de entrada. El punto de entrada principal `ck-orm` nunca importa OpenTelemetry, así que una aplicación, un bundle de navegador o un worker de edge que no usa el trazado no instala ni empaqueta nada de OpenTelemetry. Para trazar consultas, sigue la configuración del [plugin de OpenTelemetry](#opentelemetry-plugin).
 
 ## Inicio rápido
-<!-- src:d7ba4246 -->
+<!-- src:847057c0 -->
 
 Los ejemplos siguientes usan una sola tabla para que sea fácil seguir el recorrido principal.
 
@@ -99,13 +99,28 @@ Las consultas del constructor son thenable: `await query` las ejecuta directamen
 
 `fn.sum` sobre una columna `Decimal` convierte automáticamente a `Decimal(P, S)` y devuelve `string` para conservar toda la precisión; consulta [Precisión de Decimal en expresiones](#decimal-precision-in-expressions).
 
+### 4. Observa las consultas
+
+Los `plugins` añaden hooks a cada solicitud que ck-orm envía a ClickHouse. `otelTracing()`, de `ck-orm/otel`, convierte cada solicitud en un span de OpenTelemetry cuando hay un SDK en marcha; la configuración está en [Plugin de OpenTelemetry](#opentelemetry-plugin), y [Escribir plugins](#writing-plugins) explica cómo crear tus propios hooks.
+
+```ts
+import { clickhouseClient } from "ck-orm";
+import { otelTracing } from "ck-orm/otel";
+
+export const db = clickhouseClient({
+  host: "http://127.0.0.1:8123",
+  database: "telemetry_lab",
+  plugins: [otelTracing()],
+});
+```
+
 ## Ejemplos
 <!-- src:c8f5c20b -->
 
 La [página de ejemplos](https://ck-orm.lyz.cloud/examples/) muestra consultas que puedes ejecutar y el SQL exacto que cada una envía a ClickHouse. Cada ejemplo es un proyecto en [`examples/`](../examples) con su propia prueba. Las pruebas de ClickHouse que puedes ejecutar están en [`e2e/`](../e2e), donde también encontrarás los esquemas de escenarios parecidos a los de producción de [`e2e/scenarios.ts`](../e2e/scenarios.ts).
 
 ## Modelo mental
-<!-- src:a26a2ce8 -->
+<!-- src:a6fa96d2 -->
 
 Ten en cuenta estos límites al usar `ck-orm`:
 
@@ -117,6 +132,7 @@ Ten en cuenta estos límites al usar `ck-orm`:
 - La conexión a la base de datos se configura en `clickhouseClient(...)`.
 - Las consultas del constructor son la opción predeterminada; para expresiones específicas de ClickHouse puedes usar SQL sin formato.
 - `runInSession()` es una función auxiliar de sesión de ClickHouse, no una transacción.
+- Los `plugins` observan cada solicitud que envía ck-orm; el trazado es el plugin `ck-orm/otel`, que se activa de forma explícita y queda fuera del punto de entrada principal.
 - `leftJoin()` y `asofLeftJoin()` usan la semántica SQL de NULL de forma predeterminada.
 - Los resultados numéricos grandes o de alto riesgo se decodifican con cautela, en vez de convertirse silenciosamente.
 
@@ -2564,7 +2580,7 @@ await db.replicasStatus();
 ```
 
 ## Observabilidad
-<!-- src:37125a8e -->
+<!-- src:11c06560 -->
 
 `ck-orm` incluye dos capas de observabilidad:
 
@@ -2603,7 +2619,48 @@ const db = clickhouseClient({
 
 ### Plugin de OpenTelemetry
 
-Instala `@opentelemetry/api` y añade el plugin:
+`otelTracing()`, de `ck-orm/otel`, registra un span de cliente por cada solicitud que ck-orm envía a ClickHouse. Está en su propio punto de entrada: el punto de entrada principal `ck-orm` nunca importa OpenTelemetry, así que las aplicaciones, los bundles de navegador y los workers de edge que no usan trazado no asumen ningún coste. `@opentelemetry/api` es una peer dependency opcional que solo importa `ck-orm/otel`.
+
+#### Configurar OpenTelemetry
+
+ck-orm crea los spans mediante la API de OpenTelemetry, y la API por sí sola no registra nada: mientras ningún SDK registre un `TracerProvider`, todos los spans se descartan. ck-orm no inicia un SDK ni elige un exportador, así que tu aplicación hace ambas cosas, una sola vez, al arrancar.
+
+Instala la API, un SDK y un exportador. Este ejemplo usa el SDK de Node.js con el exportador OTLP/HTTP; vale cualquier SDK que registre un `TracerProvider`, incluido el de navegador.
+
+```bash [bun]
+bun add @opentelemetry/api @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-http
+```
+
+```bash [npm]
+npm install @opentelemetry/api @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-http
+```
+
+```bash [pnpm]
+pnpm add @opentelemetry/api @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-http
+```
+
+```bash [yarn]
+yarn add @opentelemetry/api @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-http
+```
+
+Inicia el SDK antes de la primera consulta, por ejemplo en un módulo que tu punto de entrada importa en primer lugar:
+
+```ts
+// instrumentation.ts
+import { NodeSDK } from "@opentelemetry/sdk-node";
+import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
+
+export const sdk = new NodeSDK({
+  serviceName: "billing-worker",
+  traceExporter: new OTLPTraceExporter(),
+});
+
+sdk.start();
+```
+
+El exportador envía a `http://localhost:4318/v1/traces`, salvo que definas la variable estándar `OTEL_EXPORTER_OTLP_ENDPOINT` o pases `url`. El SDK registra además el gestor de contexto y el propagador W3C, de los que dependen la relación entre spans padre e hijo y `propagateTraceContext`. Un proceso de corta duración debe ejecutar `await sdk.shutdown()` antes de terminar; si no, se pierden sus últimos spans.
+
+Después, añade el plugin al cliente:
 
 ```ts
 import { clickhouseClient } from "ck-orm";
@@ -2620,13 +2677,19 @@ const db = clickhouseClient({
 });
 ```
 
+Si quieres ver los spans sin un Collector, el [ejemplo de trazado con OpenTelemetry](https://ck-orm.lyz.cloud/examples/#otel-tracing) usa un exportador en memoria e imprime lo que ha registrado el plugin.
+
+#### Spans
+
+Los spans son de tipo `CLIENT` y se llaman `clickhouse QUERY` si la consulta devuelve filas y `clickhouse <OPERATION>` en el resto de los casos, como `clickhouse INSERT` o `clickhouse CREATE`. Un span pasa a ser hijo del span que esté activo cuando empieza la consulta, por ejemplo, el que la instrumentación de OpenTelemetry de tu framework abre para cada solicitud HTTP.
+
 El plugin usa `trace.getTracer("ck-orm")` salvo que pases `tracer`. Obtiene el nombre de la base de datos, la dirección del servidor, el puerto del servidor y el tiempo de espera de la solicitud a partir de la configuración de `clickhouseClient(...)`. Pasa las etiquetas de nivel de servicio mediante `attributes`; las claves que empiezan por `db.` se ignoran para que el código de la aplicación no pueda sobrescribir los atributos de base de datos integrados.
 
 En sistemas de trazado compartidos, es más seguro usar `includeStatement: false`. El valor predeterminado es `true`; desactiva esta opción cuando los nombres de las tablas o columnas, o la forma de la consulta, no deban salir del perímetro del servicio. Los valores vinculados no se incorporan a la sentencia compactada, pero la forma del SQL puede seguir resultando sensible desde el punto de vista operativo.
 
 #### Spans del lado del servidor
 
-Establece `propagateTraceContext: true` para enviar con cada solicitud el contexto de trazado W3C del span (`traceparent`, `tracestate`). ClickHouse registra entonces sus propios spans de la consulta, como `HTTPHandler`, `query` y las etapas del pipeline, como hijos del span de ck-orm. El plugin reenvía solo esas dos cabeceras, nunca `baggage` ni las cabeceras de proveedor de tu propagador global, y únicamente para los spans muestreados: ClickHouse registra spans de servidor para cada contexto de trazado que recibe, esté muestreado o no. El plugin inyecta mediante el propagador registrado globalmente, que el SDK de OpenTelemetry configura por defecto con el contexto de trazado W3C; si no hay ningún propagador registrado, no se envía nada.
+Establece `propagateTraceContext: true` para enviar con cada solicitud el contexto de traza W3C del span (`traceparent`, `tracestate`). ClickHouse registra entonces sus propios spans de la consulta, como `HTTPHandler`, `query` y las etapas del pipeline, como hijos del span de ck-orm. El plugin reenvía solo esas dos cabeceras, nunca `baggage` ni las cabeceras de proveedor de tu propagador global, y únicamente para los spans muestreados: ClickHouse registra spans de servidor para cada contexto de traza que recibe, esté muestreado o no. El plugin inyecta mediante el propagador registrado globalmente, que el SDK de OpenTelemetry configura por defecto con el contexto de traza W3C; si no hay ningún propagador registrado, no se envía nada.
 
 ```ts
 const db = clickhouseClient({
@@ -2684,6 +2747,8 @@ const requestSource: ClickHouseORMPlugin = {
   },
 };
 ```
+
+El [ejemplo de plugins de consulta](https://ck-orm.lyz.cloud/examples/#query-plugins) ejecuta un plugin que devuelve una cabecera desde `onQueryStart` y registra cada sentencia desde `onQuerySuccess` y `onQueryError`, en el orden en que se ejecutaron.
 
 Los plugins siguen estas reglas:
 
@@ -2810,7 +2875,7 @@ Si necesitas DDL de tablas temporales que solo pueda ejecutar código de confian
 
 `otelTracing()` adjunta el texto SQL compactado a los spans como `db.statement` y `db.query.text` porque `includeStatement` tiene `true` como valor predeterminado.
 
-Los valores vinculados se guardan por separado como parámetros con nombre de ClickHouse y no aparecen en el texto de la sentencia, pero los nombres de tabla y columna y la forma de la consulta sí aparecen en la salida de trazado. Si el sistema de trazado es compartido o está fuera del host, desactiva `includeStatement` o filtra `db.statement` / `db.query.text` en el colector.
+Los valores vinculados se guardan por separado como parámetros con nombre de ClickHouse y no aparecen en el texto de la sentencia, pero los nombres de tabla y columna y la forma de la consulta sí aparecen en la salida de trazado. Si el sistema de trazado es compartido o está fuera del host, desactiva `includeStatement` o filtra `db.statement` / `db.query.text` en el Collector.
 
 Los spans de servidor de ClickHouse también registran la sentencia como `db.statement` en `system.opentelemetry_span_log`. Esa tabla permanece en el servidor ClickHouse salvo que la exportes.
 

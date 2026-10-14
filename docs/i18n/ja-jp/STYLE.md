@@ -18,7 +18,7 @@
 
 | English source sentence | BAD. officialese / translationese | Good. colloquial developer Japanese |
 |---|---|---|
-| ck-orm has no required dependencies. `@opentelemetry/api` is an optional peer dependency used only by the `ck-orm/otel` plugin; install it alongside ck-orm when you use that plugin. | **BAD.** ck-ormには必須とされる依存関係というものは存在せず、`@opentelemetry/api`は省略可能なピア依存関係であり、`ck-orm/otel`プラグインによってのみ使用されるものとなっており、そのプラグインを使用する場合にはck-ormと一緒にインストールすることになります。 | ck-ormに必須の依存関係はありません。`@opentelemetry/api`は省略可能なピア依存関係で、`ck-orm/otel`プラグインでのみ使います。そのプラグインを使うときは、ck-ormと一緒にインストールしてください。 |
+| The main `ck-orm` entry never imports OpenTelemetry, so an application, browser bundle or edge worker that does not trace installs and bundles none of it. | **BAD.** メインの`ck-orm`エントリーポイントはOpenTelemetryを決してインポートしないものであるため、トレーシングを行わないアプリケーション、ブラウザー向けバンドル、またはエッジワーカーにおいては、そのいずれもインストールおよびバンドルされることはありません。 | メインの`ck-orm`エントリーポイントはOpenTelemetryをインポートしません。そのため、トレーシングを使わないアプリケーション、ブラウザー向けバンドル、エッジワーカーには、OpenTelemetryがインストールもバンドルもされません。 |
 | The examples below use a single table so the main flow stays easy to follow. | **BAD.** 以下の例は、主要なフローを容易に追跡することができるように、単一のテーブルを使用するものとなります。 | 以下の例では、流れを追いやすくするため、1つのテーブルだけを使います。 |
 | Builder queries are thenable, so `await query` executes the query directly. | **BAD.** ビルダークエリはthenableであるため、`await query`によりクエリを直接実行することができます。 | ビルダーのクエリはthenableなので、`await query`だけでそのまま実行できます。 |
 | Avoid forwarding those details directly to untrusted clients. | **BAD.** これらの詳細を信頼されていないクライアントに直接転送することは回避してください。 | その詳細を、信頼できないクライアントへそのまま返さないでください。 |
@@ -54,7 +54,7 @@
 - 日本語の引用は `「」`、文献名や書名は `『』`、コード・識別子・リテラルはMarkdownのバッククォートを使います。引用符の使い分けはJTFの表記を参照し、コードの正確な表記はプロジェクト契約です。<https://www.jtf.jp/jp/style_guide/pdf/jtf_style_guide.pdf>
 - 通常の本文では、日本語とLatin文字・数字の境界に半角スペースを入れません（`TypeScriptの型`、`HTTPリクエスト`、`1つ`）。JTF v4.0の「全角・半角の間に空白を入れない」規則を採用します。<https://www.jtf.jp/jp/style_guide/pdf/jtf_style_guide.pdf>
 - 複数語の英語固有名詞内部のスペースは保持します（`OpenTelemetry API` など）。コード、URL、製品名、既存の識別子の空白は変更しません。カタカナ複合語の中黒・スペース・無区切りには実務上の揺れがあるため、この文書では読みやすい無区切りを基本にします。JTFの一貫性の原則を参照します。<https://www.jtf.jp/jp/style_guide/pdf/jtf_style_guide.pdf>
-- カタカナの長音は原則として `ー` を付けます。本文では `サーバー`、`ユーザー`、`パラメーター`、`コンピューター`、`メモリー` と書きます。文化庁の「外来語の表記」とJTFの表記を参照します。技術分野や既存の固有名で長音を省く慣用がある場合は、その名前を勝手に変更しません。<https://www.bunka.go.jp/kokugo_nihongo/sisaku/joho/joho/kijun/naikaku/gairai/honbun06.html> <https://www.jtf.jp/jp/style_guide/pdf/jtf_style_guide.pdf>
+- カタカナの長音は原則として `ー` を付けます。本文では `サーバー`、`ユーザー`、`パラメーター`、`コンピューター` と書きます。例外として、JTFの2.1.6は文書内で統一されていれば `メモリ` も一般的だとしており、MicrosoftやClickHouseの日本語資料にも `メモリ内` があるため、このプロジェクトでは「in-memory」を `メモリ内` と書きます。文化庁の「外来語の表記」とJTFの表記を参照します。技術分野や既存の固有名で長音を省く慣用がある場合は、その名前を勝手に変更しません。<https://www.bunka.go.jp/kokugo_nihongo/sisaku/joho/joho/kijun/naikaku/gairai/honbun06.html> <https://www.jtf.jp/jp/style_guide/pdf/jtf_style_guide.pdf>
 - JIS Z 8301に準じる技術文書では3音以上の語尾の長音を省く慣用がある一方、一般向け文書では長音を付けるべきだという整理もあります。本プロジェクトは日本の開発者向け公開文書として、本文の一般語は `サーバー` を採用し、API名・製品名・既存の型名だけ原綴りを保持します。JISの個別規格本文そのものではなく、JIS Z 8301に関する技術文書で確認した対立なので、最終的な社内用語集で再確認します。<https://www.jsa.or.jp/datas/media/10000/md_2464.pdf> <https://www.bunka.go.jp/seisaku/bunkashingikai/kokugo/kokugo_kadai/iinkai_38/pdf/92620301_02.pdf>
 - Unicodeのノーブレークスペースは日本語本文に挿入しません。改行を防ぐ必要があるコード・URL・リテラルは原文のまま保持します。これはJTFの通常の空白なし方針を実装上拡張したプロジェクト規則です。<https://www.jtf.jp/jp/style_guide/pdf/jtf_style_guide.pdf>
 - 三点リーダーは説明文ではできるだけ文を完結させます。省略記号が必要な場合は、原文にある `...` または `…` を保持し、新しい表記を追加しません。これはプロジェクトの形式ルールです。
@@ -77,7 +77,7 @@
 
 ### 6. 用語
 
-`keep English?` が `yes` なのは、SQLキーワード、JavaScriptのプロトコル名、製品名など、開発者がその英語表記を実際に使う場合だけです。API名や識別子という**概念**は日本語にし、実際のAPI名・識別子だけを原綴りで残します。`status` は `attested`（URLで表記を確認）、`inferred`（参照資料からこの文書向けに推定）、`unverified`（出典未確認の教科書的な暫定形。日本語母語話者が確認）を示します。カタカナ語は長音符号を省略せず、コード・識別子・SQL句は原文のままにします。
+`keep English?` が `yes` なのは、SQLキーワード、JavaScriptのプロトコル名、製品名など、開発者がその英語表記を実際に使う場合だけです。API名や識別子という**概念**は日本語にし、実際のAPI名・識別子だけを原綴りで残します。`status` は `attested`（URLで表記を確認）、`inferred`（参照資料からこの文書向けに推定）、`unverified`（出典未確認の教科書的な暫定形。日本語母語話者が確認）を示します。カタカナ語は長音符号を省略せず（`メモリ内` だけは第4節の例外）、コード・識別子・SQL句は原文のままにします。
 
 | English | local rendering | keep English? | status | source / note |
 |---|---|---:|---|---|
@@ -242,9 +242,27 @@
 | logging | ロギング | no | attested | OpenTelemetry日本語のログ資料。<https://opentelemetry.io/ja/docs/concepts/signals/logs/> |
 | logger | ロガー | no | attested | OpenTelemetry日本語のAPI資料。<https://opentelemetry.io/ja/docs/languages/java/api/> |
 | metrics | メトリクス | no | attested | OpenTelemetry日本語用語集。<https://opentelemetry.io/ja/docs/concepts/glossary/> |
-| instrumentation | 計装 | no | attested | OpenTelemetry日本語の計装資料。<https://opentelemetry.io/ja/docs/languages/swift/instrumentation/> |
+| instrumentation | 計装 | no | attested | OpenTelemetry日本語の計装資料は一貫して `計装` を使う。他社資料は揺れる（Microsoft ja-jpは `インストルメンテーション`、Datadog jaは `インスツルメンテーション`、Googleは両方、AWSは主に `計測`）。このプロジェクトはOpenTelemetryに従う。<https://opentelemetry.io/ja/docs/languages/swift/instrumentation/> <https://opentelemetry.io/ja/docs/concepts/instrumentation/> |
 | plugin | プラグイン | no | inferred | 一般的な日本語のIT用語として定着したカタカナ表記から推定。専用の出典は未確認。 |
-| hook | フック | no | attested | Vue日本語ドキュメントのライフサイクルフック。<https://v2.ja.vuejs.org/v2/guide/instance> |
+| hook | フック | no | attested | Vue日本語ドキュメントのライフサイクルフック。OpenTelemetry日本語のローダーフックでも同じ表記。<https://v2.ja.vuejs.org/v2/guide/instance> <https://opentelemetry.io/ja/docs/languages/js/getting-started/nodejs/> |
+| exporter | エクスポーター | no | attested | OpenTelemetry日本語のトレースの資料に `トレースエクスポーター`。Microsoft、Datadog、Elasticも同じ表記。Google Cloudは `エクスポータ` で少数派。<https://opentelemetry.io/ja/docs/concepts/signals/traces/> |
+| in-memory | メモリ内 | no | attested | Microsoft ja-jpの資料に `メモリ内`、OpenTelemetry Collector日本語の設定ページに `メモリ内表現`、ClickHouse日本語のINSERT資料に `メモリ内`。長音を省くのはこの語だけで、理由は第4節の長音の規則を参照。 |
+| tracer provider | トレーサープロバイダー | no | attested | OpenTelemetry日本語のトレースの資料とブラウザー向けの入門ページ（`トレーサープロバイダーの作成`）で確認。<https://opentelemetry.io/ja/docs/concepts/signals/traces/> <https://opentelemetry.io/ja/docs/languages/js/getting-started/browser/> |
+| context manager | コンテキストマネージャー | no | attested | OpenTelemetry日本語のJavaScriptコンテキストの資料の節見出し。<https://opentelemetry.io/ja/docs/languages/js/context/> |
+| propagator | プロパゲーター | no | attested | OpenTelemetry日本語の用語集とコンテキスト伝搬の資料。コンポーネントの資料には `プロパゲータ` が1回だけある。<https://opentelemetry.io/ja/docs/concepts/glossary/> <https://opentelemetry.io/ja/docs/concepts/context-propagation/> |
+| propagation (trace context) | 伝搬 | no | attested | OpenTelemetry日本語のコンテキスト伝搬の資料は `伝搬` を一貫して使い、`伝播` は使わない。この語はトレースコンテキストの意味だけ。`NULL propagation` は別の概念なので `NULL伝播` のままにする。<https://opentelemetry.io/ja/docs/concepts/context-propagation/> |
+| Collector | コレクター | no | attested | OpenTelemetry日本語のCollector資料。製品名として `OpenTelemetry Collector` と書いてもよい。<https://opentelemetry.io/ja/docs/collector/> |
+| SDK | SDK | yes | attested | OpenTelemetry日本語のJavaScript資料で原綴りのまま使われる。<https://opentelemetry.io/ja/docs/languages/js/> |
+| environment variable | 環境変数 | no | attested | OpenTelemetry日本語、Microsoft、Datadogの日本語資料。 |
+| entry point | エントリーポイント | no | attested | Microsoft ja-jpのazure-monitor OpenTelemetry概要とVite日本語のビルドガイド。Datadogは長音なしの `エントリポイント`。<https://learn.microsoft.com/ja-jp/azure/azure-monitor/app/opentelemetry-overview> <https://ja.vite.dev/guide/build.html> |
+| statement | ステートメント | no | attested | ClickHouse日本語のSQLリファレンスの題名 `ClickHouse SQL ステートメント`、Microsoft T-SQL資料の本文。<https://clickhouse.com/docs/jp/sql-reference/statements> |
+| tracing backend | トレーシングバックエンド | no | attested | OpenTelemetry日本語のブラウザー向け入門ページ。`トレースバックエンド` とは書かない。<https://opentelemetry.io/ja/docs/languages/js/getting-started/browser/> |
+| bundle | バンドル | no | attested | Vite日本語のビルドガイド。<https://ja.vite.dev/guide/build.html> |
+| worker | ワーカー | no | attested | MDN日本語のWeb Workers API。複合語の `エッジワーカー` は出典未確認。日本語母語話者が確認する。<https://developer.mozilla.org/ja/docs/Web/API/Web_Workers_API> |
+| short-lived process | 短時間で終わるプロセス | no | unverified | 出典未確認。代案は `短命なプロセス`。日本語母語話者が確認する。 |
+| observe | 観測 | no | inferred | OpenTelemetry日本語の `システムを観測可能にする` とCNCF用語集日本語から推定。`監視` はmonitoringの訳で別の語。 |
+| opt-in | オプトイン | no | attested | Microsoftの分散トレースの概念ページとOpenTelemetry日本語のブログ。<https://learn.microsoft.com/ja-jp/dotnet/core/diagnostics/distributed-tracing-concepts> |
+| browser | ブラウザー | no | attested | MDN、Microsoft、Vite日本語は `ブラウザー`。OpenTelemetry日本語、Datadog、New Relicは `ブラウザ`。このプロジェクトはJTFに従い `ブラウザー` を使う。<https://developer.mozilla.org/ja/docs/Web/API/Web_Workers_API> <https://ja.vite.dev/guide/build.html> |
 | event | イベント | no | attested | OpenTelemetry日本語資料のスパンイベント。<https://opentelemetry.io/ja/docs/concepts/context-propagation/> |
 | error | エラー | no | attested | MDNとReactの日本語ドキュメントの表記。<https://developer.mozilla.org/ja/docs/Web/WebDriver/Reference/Errors> <https://ja.react.dev/learn/react-compiler/debugging> |
 | exception | 例外 | no | attested | TypeScript・JavaScript日本語文書の一般用語。<https://www.typescriptlang.org/ja/docs/handbook/intro-to-js-ts.html> |
@@ -354,12 +372,13 @@
 - データベース接続は`clickhouseClient(...)`に設定します。
 - ビルダーのクエリを基本の経路として使い、ClickHouse固有の式には生SQLも使えます。
 - `runInSession()`はClickHouseのセッションヘルパーであり、トランザクションではありません。
+- `plugins`は、ck-ormが送るすべてのリクエストを観測します。トレーシングは任意で追加する`ck-orm/otel`プラグインで、メインのエントリーポイントには含まれません。
 - `leftJoin()`はデフォルトでSQLと同じNULLの扱いを使います。
 - 桁数が大きい、または精度を失うおそれのある数値結果は、暗黙に変換せず、精度を保ってデコードします。
 
 #### インストール
 
-ck-ormに必須の依存関係はありません。`@opentelemetry/api`は省略可能なピア依存関係で、`ck-orm/otel`プラグインでのみ使います。そのプラグインを使うときは、ck-ormと一緒にインストールしてください。
+ck-ormに必須の依存関係はありません。OpenTelemetryトレーシングは`ck-orm/otel`という別のエントリーポイントで提供され、`@opentelemetry/api`は、そのエントリーポイントでのみ使う省略可能なピア依存関係です。メインの`ck-orm`エントリーポイントはOpenTelemetryをインポートしません。そのため、トレーシングを使わないアプリケーション、ブラウザー向けバンドル、エッジワーカーには、OpenTelemetryがインストールもバンドルもされません。クエリをトレースするには、[OpenTelemetryプラグイン](#opentelemetry-plugin)のセットアップに従ってください。
 
 ### 9. 参照した資料
 

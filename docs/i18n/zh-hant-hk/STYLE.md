@@ -25,7 +25,7 @@
 
 - https://learn.microsoft.com/zh-cn/style-guide/top-10-tips-style-voice
 - https://developers.google.cn/style/tone
-- https://www.ogcio.gov.hk/en/our_work/infrastructure/methodology/glossary/doc/IT_Glossary.pdf
+- https://www.digitalpolicy.gov.hk/en/our_work/digital_infrastructure/methodology/glossary/doc/IT_Glossary.pdf
 
 ### 3. 避免的官方腔和翻譯腔
 
@@ -78,15 +78,15 @@
 
 | English | local rendering | keep English? | status | source / note |
 | --- | --- | --- | --- | --- |
-| schema; schema DSL | schema → 模式；schema DSL → 模式 DSL | 否 | attested | OGCIO、EDB 均列 schema／模式；DSL 是固定縮寫。https://www.ogcio.gov.hk/en/our_work/infrastructure/methodology/glossary/doc/IT_Glossary.pdf |
-| database | database → 數據庫 | 否 | attested | OGCIO 列 database → 數據庫。https://www.ogcio.gov.hk/en/our_work/infrastructure/methodology/glossary/doc/IT_Glossary.pdf |
+| schema; schema DSL | schema → 模式；schema DSL → 模式 DSL | 否 | attested | OGCIO、EDB 均列 schema／模式；DSL 是固定縮寫。https://www.digitalpolicy.gov.hk/en/our_work/digital_infrastructure/methodology/glossary/doc/IT_Glossary.pdf |
+| database | database → 數據庫 | 否 | attested | OGCIO 列 database → 數據庫。https://www.digitalpolicy.gov.hk/en/our_work/digital_infrastructure/methodology/glossary/doc/IT_Glossary.pdf |
 | column | column → 欄位 | 否 | attested | 香港教育局資料庫 FAQ 使用「欄位」。https://cdrcloudsams.edb.gov.hk/%E5%B8%B8%E8%A6%8B%E5%95%8F%E9%A1%8C/ |
 | table | table → 資料表 | 否 | attested | 教育局《資訊及通訊科技課程及評估指引（中四至中六）》（2021）寫「在最多三個資料表中操控當中的數據」「查詢多個資料表」（全文約 18 處）；Microsoft zh-hk 的 Access 說明頁標題也用「資料表」。教育局較舊的課程文件寫「表格」。不要寫成資料庫。https://www.edb.gov.hk/attachment/tc/curriculum-development/kla/technology-edu/curriculum-doc/ICT_C&A%20Guide_c_final.pdf 、https://support.microsoft.com/zh-hk/office/%E5%BB%BA%E7%AB%8B%E7%94%A2%E7%94%9F%E8%B3%87%E6%96%99%E8%A1%A8%E6%9F%A5%E8%A9%A2-96424f9e-82fd-411e-aca4-e21ad0a94f1b |
 | temporary table | temporary table → 暫存資料表 | 否 | inferred | 由 temporary → 暫存和 table → 資料表組合；待香港開發者確認慣用詞。 |
 | table engine | table engine → 資料表引擎 | 否 | unverified | 未找到直接香港用例；採普通技術中文，待母語者確認。 |
 | column type; type definition | column type → 欄位類型；type definition → 類型定義 | 否 | inferred | 由欄位、類型和 Microsoft zh-TW 的型別文件用法推定。https://learn.microsoft.com/zh-tw/dotnet/csharp/language-reference/language-specification/expressions |
 | nullable; optional; required | nullable → 可為 NULL；optional → 可選；required → 必填 | 否 | inferred | 由專案固定的 NULL 和 Microsoft 類型文件中的 optional／required 語義推定。 |
-| default value | default value → 預設值 | 否 | attested | OGCIO 列 default → 預設值。https://www.ogcio.gov.hk/en/our_work/infrastructure/methodology/glossary/doc/IT_Glossary.pdf |
+| default value | default value → 預設值 | 否 | attested | OGCIO 列 default → 預設值。https://www.digitalpolicy.gov.hk/en/our_work/digital_infrastructure/methodology/glossary/doc/IT_Glossary.pdf |
 | modifier | modifier → 修飾符 | 否 | attested | Microsoft zh-TW 語言參考使用「修飾詞／修飾符」；本表統一用「修飾符」。https://learn.microsoft.com/zh-tw/dotnet/csharp/language-reference/keywords/ |
 | materialized column; alias column | materialized column → 物化欄位；alias column → 別名欄位 | 否 | unverified | 未找到直接香港用例；採 ClickHouse 技術語境的普通中文，待母語者確認。 |
 | array | array → 陣列 | 否 | attested | 教育局 ICT Glossary 列 array → 陣列。https://www.edb.gov.hk/attachment/tc/curriculum-development/kla/technology-edu/resources/computer-edu/ICT_glossary.pdf |
@@ -107,7 +107,7 @@
 | typed; untyped | typed → 具類型；untyped → 無類型 | 否 | inferred | 由類型文件的中文句法推定；不是把 typed／untyped 留成英文。 |
 | type assertion | type assertion → 類型斷言 | 否 | unverified | 未找到足夠的香港 TypeScript 用例；採普通技術中文，待母語者確認。 |
 | runtime validation; validator | runtime validation → 執行階段驗證；validator → 驗證器 | 否 | inferred | 由 Microsoft 的 runtime → 執行階段及 validation → 驗證用法組合。https://learn.microsoft.com/zh-tw/aspnet/core/fundamentals/environments?view=aspnetcore-10.0 |
-| encoder; decoder; decoding | encoder → 編碼器；decoder → 解碼器；decoding → 解碼 | 否 | inferred | 由香港 OGCIO 的 encryption／encoding 詞形及普通技術中文組合推定。https://www.ogcio.gov.hk/en/our_work/infrastructure/methodology/glossary/doc/IT_Glossary.pdf |
+| encoder; decoder; decoding | encoder → 編碼器；decoder → 解碼器；decoding → 解碼 | 否 | inferred | 由香港 OGCIO 的 encryption／encoding 詞形及普通技術中文組合推定。https://www.digitalpolicy.gov.hk/en/our_work/digital_infrastructure/methodology/glossary/doc/IT_Glossary.pdf |
 | query | query → 查詢 | 否 | attested | 香港教育局資料庫 FAQ 使用「查詢」；Microsoft zh-TW SQL 文件也使用「查詢」。https://cdrcloudsams.edb.gov.hk/%E5%B8%B8%E8%A6%8B%E5%95%8F%E9%A1%8C/ |
 | query builder | query builder → 查詢建構器 | 否 | inferred | 由 query → 查詢和 builder → 建構器組合；保留功能含義，不留普通英文。 |
 | builder | builder → 建構器 | 否 | unverified | 未找到直接香港用例；採普通技術中文，待母語者確認。 |
@@ -118,12 +118,12 @@
 | null semantics | null semantics → NULL 語義 | 否 | inferred | NULL 是固定 SQL 名稱，semantics 按技術中文譯為「語義」。 |
 | predicate; filter; where clause | predicate → 判斷條件；filter → 篩選條件；where clause → WHERE 子句 | 否 | inferred | 由 SQL 文件常見的條件／篩選／子句寫法推定；WHERE 只保留關鍵字。 |
 | projection; selection (select list) | projection → 投影；selection (select list) → SELECT 清單 | 否 | unverified | 未找到足夠的香港查詢建構器用例；採普通資料庫中文，待母語者確認。 |
-| alias; expression; window expression | alias → 別名；expression → 運算式；window expression → 視窗運算式 | 否 | inferred | 香港沒有單一標準：Microsoft zh-hk 的 Access 說明頁寫「運算式」（僅摘要）；OGCIO 詞彙表的 STIX／CybOX 條目寫「表達式」；教育局課程指引寫「算式」。本表暫保留「運算式」（全文一致），建議待香港讀者確認是否改「表達式」，見第 10 節。https://support.microsoft.com/zh-hk/office/%E5%BB%BA%E7%AB%8B%E7%94%A2%E7%94%9F%E8%B3%87%E6%96%99%E8%A1%A8%E6%9F%A5%E8%A9%A2-96424f9e-82fd-411e-aca4-e21ad0a94f1b 、https://www.ogcio.gov.hk/en/our_work/infrastructure/methodology/glossary/doc/IT_Glossary.pdf 、https://www.edb.gov.hk/attachment/tc/curriculum-development/kla/technology-edu/curriculum-doc/ICT_C&A%20Guide_c_final.pdf |
+| alias; expression; window expression | alias → 別名；expression → 運算式；window expression → 視窗運算式 | 否 | inferred | 香港沒有單一標準：Microsoft zh-hk 的 Access 說明頁寫「運算式」（僅摘要）；OGCIO 詞彙表的 STIX／CybOX 條目寫「表達式」；教育局課程指引寫「算式」。本表暫保留「運算式」（全文一致），建議待香港讀者確認是否改「表達式」，見第 10 節。https://support.microsoft.com/zh-hk/office/%E5%BB%BA%E7%AB%8B%E7%94%A2%E7%94%9F%E8%B3%87%E6%96%99%E8%A1%A8%E6%9F%A5%E8%A9%A2-96424f9e-82fd-411e-aca4-e21ad0a94f1b 、https://www.digitalpolicy.gov.hk/en/our_work/digital_infrastructure/methodology/glossary/doc/IT_Glossary.pdf 、https://www.edb.gov.hk/attachment/tc/curriculum-development/kla/technology-edu/curriculum-doc/ICT_C&A%20Guide_c_final.pdf |
 | aggregate | aggregate → 聚合 | 否 | inferred | 由香港 SQL 教學的聚合查詢語境推定；待母語者確認資料庫術語偏好。https://hktutorlink.hk/teaching-resources/dse/ict/dse-ict-advanced-sql-joins-and-aggregations |
 | function | function → 函數 | 否 | attested | 教育局 ICT Glossary 及香港 SQL 教學使用「函數」。https://www.edb.gov.hk/attachment/tc/curriculum-development/kla/technology-edu/resources/computer-edu/ICT_glossary.pdf |
 | table function | table function → 資料表函數 | 否 | unverified | 未找到足夠的香港 ClickHouse 直接用例；採具體技術中文，待母語者確認。 |
 | scalar | scalar → 標量 | 否 | attested | 教育局詞彙表列 scalar type → 標量類形。台灣版 Microsoft 文件寫「純量」，本表不採用。https://www.edb.gov.hk/attachment/tc/curriculum-development/kla/technology-edu/resources/computer-edu/ICT_glossary.pdf |
-| raw SQL; SQL template; SQL fragment | raw SQL → 原始 SQL；SQL template → SQL 模板；SQL fragment → SQL 片段 | 否 | inferred | SQL 是固定名稱；raw、template、fragment 分別按普通技術中文處理。模板一詞採 OGCIO 寫法。https://www.ogcio.gov.hk/en/our_work/infrastructure/methodology/glossary/doc/IT_Glossary.pdf |
+| raw SQL; SQL template; SQL fragment | raw SQL → 原始 SQL；SQL template → SQL 模板；SQL fragment → SQL 片段 | 否 | inferred | SQL 是固定名稱；raw、template、fragment 分別按普通技術中文處理。模板一詞採 OGCIO 寫法。https://www.digitalpolicy.gov.hk/en/our_work/digital_infrastructure/methodology/glossary/doc/IT_Glossary.pdf |
 | parameter | parameter → 參數 | 否 | attested | 教育局 ICT Glossary 列 parameter → 參數。https://www.edb.gov.hk/attachment/tc/curriculum-development/kla/technology-edu/resources/computer-edu/ICT_glossary.pdf |
 | bound parameter | bound parameter → 繫結參數 | 否 | inferred | 由 Microsoft zh-TW 的繫結／binding 用法和 parameter → 參數組合。 |
 | placeholder; query parameter | placeholder → 佔位符；query parameter → 查詢參數 | 否 | inferred | 由 query、parameter 的已定詞形和普通技術中文組合。 |
@@ -132,36 +132,45 @@
 | helper; namespace; factory | helper → 輔助工具；namespace → 命名空間；factory → 工廠函數 | 否 | inferred | 由 Microsoft C#／TypeScript 文件的命名空間、工廠和輔助語境推定。 |
 | callback; iterator; variadic | callback → 回呼函數；iterator → 迭代器；variadic → 可變參數 | 否 | inferred | 由 MDN／Microsoft JavaScript API 的回呼、迭代器和參數寫法推定。 |
 | write; batch; bulk insert | write → 寫入；batch → 批次；bulk insert → 批次插入 | 否 | inferred | 由 OGCIO 的 write／batch 技術語境和普通資料庫中文組合推定。 |
-| stream / streaming | stream → 串流；streaming → 串流處理 | 否 | attested | OGCIO 列 stream → 串流。https://www.ogcio.gov.hk/en/our_work/infrastructure/methodology/glossary/doc/IT_Glossary.pdf |
+| stream / streaming | stream → 串流；streaming → 串流處理 | 否 | attested | OGCIO 列 stream → 串流。https://www.digitalpolicy.gov.hk/en/our_work/digital_infrastructure/methodology/glossary/doc/IT_Glossary.pdf |
 | row; result set | row → 資料列；result set → 結果集 | 否 | inferred | 由資料庫中文的列／結果集固定搭配推定；待香港開發者確認。 |
 | replacement (ReplacingMergeTree); versioning; deletion flag | replacement → 替換（ReplacingMergeTree）；versioning → 版本管理；deletion flag → 刪除標記 | 否 | unverified | 未找到足夠的香港 ClickHouse 直接用例；保留類別名稱，其他概念具體翻譯。 |
 | client | client → 客戶端 | 否 | attested | 教育局課程指引寫「客戶端界面」「客戶端和伺服器端程式」；香港資訊安全網頁面直接使用「客戶端」；OGCIO 另列 client → 客戶。https://www.edb.gov.hk/attachment/tc/curriculum-development/kla/technology-edu/curriculum-doc/ICT_C&A%20Guide_c_final.pdf 、https://www.infosec.gov.hk/tc/best-practices/business/securing-web-application |
-| connection; server; replica | connection → 連線；server → 伺服器；replica → 副本 | 否 | inferred | OGCIO 直接列 server → 伺服器；香港技術頁面普遍用連線；replica 採普通資料庫中文。https://www.ogcio.gov.hk/en/our_work/infrastructure/methodology/glossary/doc/IT_Glossary.pdf |
+| connection; server; replica | connection → 連線；server → 伺服器；replica → 副本 | 否 | inferred | OGCIO 直接列 server → 伺服器；香港技術頁面普遍用連線；replica 採普通資料庫中文。https://www.digitalpolicy.gov.hk/en/our_work/digital_infrastructure/methodology/glossary/doc/IT_Glossary.pdf |
 | request; response; transport; HTTP request | request → 請求；response → 回應；transport → 傳輸；HTTP request → HTTP 請求 | 否 | attested | DATA.GOV.HK《應用程式介面規範》寫「HTTP請求方法」「如果請求含有語法錯誤」；教育局課程指引寫「包括請求和回應的概念」；數字政策辦公室《社交媒體保安實務指引》寫「跨網站請求偽造」，《流動保安實務指引》寫「客戶端的請求」（兩份均僅摘要）。舊稿寫「要求」，但香港資訊安全網的「要求」是 require／requirement 的意思（僅摘要），查無香港一手來源用「要求」指 request 名詞。https://data.gov.hk/tc/help/api-spec 、https://www.edb.gov.hk/attachment/tc/curriculum-development/kla/technology-edu/curriculum-doc/ICT_C&A%20Guide_c_final.pdf 、https://www.govcert.gov.hk/doc/PG_for_Social_Media_Security-v1.1_TC.pdf 、https://www.govcert.gov.hk/doc/ispg-sm03-v2.0_tc.pdf |
 | return; returned value | returns → 返回；return type → 返回類型 | 否 | attested | DATA.GOV.HK《應用程式介面規範》以「返回」表示 API 回傳結果（「狀態碼 200 返回」「結果會返回」）。台灣版寫「傳回」，本表不採用。https://data.gov.hk/tc/help/api-spec |
-| timeout | timeout → 逾時 | 否 | attested | 數字政策辦公室（前 OGCIO）《英漢資訊科技辭彙》列 time-out → 逾時；Microsoft zh-TW SQL 文件亦用「逾時」。https://www.ogcio.gov.hk/en/our_work/infrastructure/methodology/glossary/doc/IT_Glossary.pdf |
-| settings; configuration / config; option | settings → 設定；configuration → 配置；config → 配置；option → 選項 | 否 | attested | OGCIO 詞彙表列 configuration → 配置、system configuration → 系統配置（只有 configuration management 寫「組態管理」）；《保護關鍵基礎設施電腦系統條例》實務守則寫「配置管理」「保安配置」；教育局課程指引寫「動態主機配置協定」「瀏覽器設定」。台灣版 Microsoft 文件寫「組態」，本表不採用。https://www.ogcio.gov.hk/en/our_work/infrastructure/methodology/glossary/doc/IT_Glossary.pdf 、https://www.occics.gov.hk/filemanager/tc/content_19/CoP_zh_v1.0.pdf 、https://www.edb.gov.hk/attachment/tc/curriculum-development/kla/technology-edu/curriculum-doc/ICT_C&A%20Guide_c_final.pdf |
+| timeout | timeout → 逾時 | 否 | attested | 數字政策辦公室（前 OGCIO）《英漢資訊科技辭彙》列 time-out → 逾時；Microsoft zh-TW SQL 文件亦用「逾時」。https://www.digitalpolicy.gov.hk/en/our_work/digital_infrastructure/methodology/glossary/doc/IT_Glossary.pdf |
+| settings; configuration / config; option | settings → 設定；configuration → 配置；config → 配置；option → 選項 | 否 | attested | OGCIO 詞彙表列 configuration → 配置、system configuration → 系統配置（只有 configuration management 寫「組態管理」）；《保護關鍵基礎設施電腦系統條例》實務守則寫「配置管理」「保安配置」；教育局課程指引寫「動態主機配置協定」「瀏覽器設定」；數字政策辦公室 GovCERT 的指引也寫「配置」。反例：香港資訊安全網《網上應用系統保安》頁面同時寫「組態」和「設置」，所以香港用法並不一致；本表不改詞，仍用「配置」。台灣版 Microsoft 文件寫「組態」。https://www.digitalpolicy.gov.hk/en/our_work/digital_infrastructure/methodology/glossary/doc/IT_Glossary.pdf 、https://www.occics.gov.hk/filemanager/tc/content_19/CoP_zh_v1.0.pdf 、https://www.edb.gov.hk/attachment/tc/curriculum-development/kla/technology-edu/curriculum-doc/ICT_C&A%20Guide_c_final.pdf 、https://www.infosec.gov.hk/tc/best-practices/business/securing-web-application |
 | session; temporary-table workflow | session → 工作階段；temporary-table workflow → 暫存資料表工作流程 | 否 | attested | 《保護關鍵基礎設施電腦系統條例》實務守則寫「工作階段管理」；「智方便」用戶使用條款寫「登入工作階段」（僅摘要，未能開啟全文）。數字政策辦公室指引與香港資訊安全網則寫「對話管理」，列為候選，見第 10 節。https://www.occics.gov.hk/filemanager/tc/content_19/CoP_zh_v1.0.pdf 、https://core.iamsmart.gov.hk/api/v1/uc/m/getProtocol/info?source=app&lang=zh-HK |
 | transaction; concurrency | transaction → 交易；concurrency → 並行 | 否 | unverified | 香港來源的 transaction 詞形不適合資料庫語境；採普通開發者寫法，待母語者確認。 |
-| lifecycle; cleanup | lifecycle → 生命週期；cleanup → 清理 | 否 | attested | OGCIO 詞彙表寫「系統生命周期」「系統發展周期」，教育局詞彙表寫「周期」；香港民辦教育機構的課程大綱（僅摘要）與 Microsoft zh-TW 另有「週期」寫法。兩種並存，本表保留「生命週期」，見第 10 節。https://www.ogcio.gov.hk/en/our_work/infrastructure/methodology/glossary/doc/IT_Glossary.pdf 、https://www.edb.gov.hk/attachment/tc/curriculum-development/kla/technology-edu/resources/computer-edu/ICT_glossary.pdf |
+| lifecycle; cleanup | lifecycle → 生命週期；cleanup → 清理 | 否 | attested | OGCIO 詞彙表寫「系統生命周期」「系統發展周期」，教育局詞彙表寫「周期」；香港民辦教育機構的課程大綱（僅摘要）與 Microsoft zh-TW 另有「週期」寫法。兩種並存，本表保留「生命週期」，見第 10 節。https://www.digitalpolicy.gov.hk/en/our_work/digital_infrastructure/methodology/glossary/doc/IT_Glossary.pdf 、https://www.edb.gov.hk/attachment/tc/curriculum-development/kla/technology-edu/resources/computer-edu/ICT_glossary.pdf |
 | runtime method; execute; fetch; abort / cancel | runtime method → 執行階段方法；execute → 執行；fetch → 擷取；abort → 中止；cancel → 取消 | 否 | inferred | runtime／cancel 等詞形見 Microsoft／MDN API 文件；其餘按普通技術中文組合。https://developer.mozilla.org/zh-TW/docs/Web/API/XMLHttpRequest |
 | observability; tracing | observability → 可觀測性；tracing → 追蹤 | 否 | attested | Microsoft zh-TW OpenTelemetry 文件使用「可觀測性」和「追蹤」。https://learn.microsoft.com/zh-tw/dotnet/core/diagnostics/observability-with-otel |
-| span | span → span | 是 | attested | Microsoft zh-TW OpenTelemetry 文件同時使用「跨度」和 API 術語 Span；本指南在 API 語境保留 span。https://learn.microsoft.com/zh-tw/azure/foundry/observability/concepts/trace-agent-concept |
-| logging; logger; metrics; instrumentation | logging → 記錄；logger → 記錄器；metrics → 指標；instrumentation → 插裝 | 否 | inferred | Microsoft zh-TW OpenTelemetry 文件使用記錄／指標；instrumentation 的「插裝」按 JavaScript 技術慣用語推定。https://learn.microsoft.com/zh-tw/dotnet/core/diagnostics/observability-with-otel |
-| plugin | plugin → 插件 | 否 | inferred | 未開啟任何香港一手來源核實「插件」一詞；按香港與內地慣用的普通技術中文推定，不採台灣版「外掛程式」。 |
-| hook | hook → hook | 是 | attested | React 中文官方文件保留 hook 作為 JavaScript／React 術語。https://zh-hans.react.dev/learn/state-a-components-memory |
+| span | span → span | 是 | attested | 香港：未找到來源。台灣：Microsoft zh-TW 文件同時使用「跨度」和 API 術語 Span；Google Cloud 追蹤說明用「範圍」「時距」；iThome 文章保留 Span。本指南在 API 語境保留 span。https://learn.microsoft.com/zh-tw/azure/foundry/observability/concepts/trace-agent-concept |
+| logging; logger; metrics | logging → 記錄；logger → 記錄器；metrics → 指標 | 否 | inferred | 台灣：Microsoft zh-TW OpenTelemetry 文件使用記錄／指標；記錄器由 logging → 記錄組合。https://learn.microsoft.com/zh-tw/dotnet/core/diagnostics/observability-with-otel |
+| instrumentation | instrumentation → 插裝 | 否 | unverified | 香港：未找到用例。候選寫法按地區：台灣——Microsoft 寫「檢測」，AWS、Google 寫「檢測」「插樁」，iThome 寫「儀器化」「埋點」；其他地區——zh.wikipedia 和 topic.alibabacloud.com 的測試詞彙表寫「插裝」。目前選擇維持「插裝」，見第 10 節。 |
+| exporter | exporter → 匯出器 | 否 | unverified | 台灣：Microsoft Learn zh-TW OpenTelemetry 文件使用「匯出器」。香港：未找到來源。https://learn.microsoft.com/zh-tw/dotnet/core/diagnostics/observability-with-otel |
+| Collector (OpenTelemetry Collector) | Collector → 收集器 | 否 | unverified | 台灣：只見社群文章寫「收集器」；Microsoft 和 Google 的文件保留英文 Collector。香港：未找到來源。 |
+| SDK; tracer provider; W3C propagator | SDK → SDK；tracer provider → tracer provider；W3C propagator → W3C propagator | 是 | unverified | 香港、台灣和其他地區都未找到中文詞形；SDK 是縮寫，tracer provider 和 propagator 是 OpenTelemetry API 名稱，保留英文。 |
+| active (span) | active → 作用中 | 否 | unverified | 台灣：只見台灣來源寫「作用中」。香港：未找到來源。 |
+| trace context | trace context → 追蹤脈絡 | 否 | unverified | 香港和其他地區都未找到穩定詞形。信心低；建議改為在英文專名中保留「W3C Trace Context」。reference.md 目前寫「W3C 追蹤脈絡」，這次未改動，見第 10 節。 |
+| plugin | plugin → 插件 | 否 | attested | 香港：教育局《ICT 詞彙表》（2023）列 plug-in → 插件；香港警務處網頁（「瀏覽器與插件」）和公務員事務局招聘申請常見問題（「用戶代理切換插件」）同樣寫「插件」。少數寫法：數字政策辦公室 GovCERT《社交媒體保安實務指引》（僅摘要）寫「外掛程式」，見第 10 節。https://www.edb.gov.hk/attachment/tc/curriculum-development/kla/technology-edu/resources/computer-edu/ICT_glossary.pdf 、https://www.police.gov.hk/offbeat120/cybersecurity/73_what-is-dark-web.html 、https://www.csb.gov.hk/tc_chi/recruit/application/files/common/FAQ_C.pdf 、https://www.govcert.gov.hk/doc/PG_for_Social_Media_Security-v1.1_TC.pdf |
+| hook | hook → hook | 是 | unverified | 香港：未找到來源。先前列為依據的 React 文件是簡體中文頁面，不是香港來源。台灣：Microsoft 頁面寫「掛鉤」，Anthropic 的 zh-TW Claude Code 文件則保留 hook。hook 是 JavaScript／React 術語，沿用英文，待香港母語者確認。https://zh-hans.react.dev/learn/state-a-components-memory |
+| entry point | entry point → 進入點；main entry → 主進入點 | 否 | attested | 香港：數字政策辦公室《英漢資訊科技辭彙》（2025 年 11 月版）列 entry point → 進入點。信心中低：只有這一份詞彙表，且是從 PDF 抽取文字得來，未見其他香港技術文件用例。原稿的「入口點」「主入口」已改掉。 https://www.digitalpolicy.gov.hk/en/our_work/digital_infrastructure/methodology/glossary/doc/IT_Glossary.pdf |
 | event | event → 事件 | 否 | attested | Microsoft／MDN API 文件普遍使用「事件」。https://developer.mozilla.org/zh-TW/docs/Web/API/XMLHttpRequest |
 | error; exception; throws / rejects; error model; validation error; stack; retry | error → 錯誤；exception → 例外狀況；throws → 擲回；rejects → 拒絕；error model → 錯誤模型；validation error → 驗證錯誤；stack → 堆疊；retry → 重試 | 否 | inferred | 香港政府頁面直接使用錯誤；EDB 列 stack → 堆疊；其他詞形由 Microsoft／Promise 文件組合推定。throws → 擲回沒有香港一手用例，候選「拋出」，見第 10 節。https://www.gov.hk/tc/residents/taxes/etax/faq/faq_about_etax_technical.htm |
 | statement; SQL statement | statement → 語句；SQL statement → SQL 語句 | 否 | attested | 教育局詞彙表與課程指引寫「賦值語句」「輸入語句」「SQL語句」。台灣版 Microsoft 文件寫「陳述式」，本表不採用。https://www.edb.gov.hk/attachment/tc/curriculum-development/kla/technology-edu/resources/computer-edu/ICT_glossary.pdf 、https://www.edb.gov.hk/attachment/tc/curriculum-development/kla/technology-edu/curriculum-doc/ICT_C&A%20Guide_c_final.pdf |
-| process (operating system); compatible | process → 進程；compatible → 兼容；compatibility → 兼容性 | 否 | attested | OGCIO 詞彙表列 process → 進程、compatibility → 兼容性。台灣版 Microsoft 文件寫「處理程序」「相容」，本表不採用。https://www.ogcio.gov.hk/en/our_work/infrastructure/methodology/glossary/doc/IT_Glossary.pdf |
-| character; character set | character → 字符；character set → 字符集 | 否 | attested | OGCIO 與教育局詞彙表列 character → 字符；官方名稱「香港增補字符集」（HKSCS）亦用「字符」。台灣版寫「字元」，本表不採用。https://www.ogcio.gov.hk/en/our_work/infrastructure/methodology/glossary/doc/IT_Glossary.pdf 、https://www.edb.gov.hk/attachment/tc/curriculum-development/kla/technology-edu/resources/computer-edu/ICT_glossary.pdf |
+| process (operating system); compatible | process → 進程；compatible → 兼容；compatibility → 兼容性 | 否 | attested | 香港：數字政策辦公室（前 OGCIO）詞彙表列 process → 進程、compatibility → 兼容性。台灣版 Microsoft 文件寫「處理程序」「相容」，本表不採用。https://www.digitalpolicy.gov.hk/en/our_work/digital_infrastructure/methodology/glossary/doc/IT_Glossary.pdf |
+| environment variable | environment variable → 環境變量 | 否 | unverified | 由教育局詞彙表的 variable → 變量（香港）推定。Microsoft zh-hk 支援頁的標題寫「環境變數」（香港地區頁面，但詞形與台灣相同）。沒有找到直接寫「環境變量」的香港來源。 |
+| edge | edge → 邊緣 | 否 | attested | 香港：數字政策辦公室詞彙表列 edge computing → 邊緣運算；本文寫「邊緣 worker」。https://www.digitalpolicy.gov.hk/en/our_work/digital_infrastructure/methodology/glossary/doc/IT_Glossary.pdf |
+| character; character set | character → 字符；character set → 字符集 | 否 | attested | OGCIO 與教育局詞彙表列 character → 字符；官方名稱「香港增補字符集」（HKSCS）亦用「字符」。台灣版寫「字元」，本表不採用。https://www.digitalpolicy.gov.hk/en/our_work/digital_infrastructure/methodology/glossary/doc/IT_Glossary.pdf 、https://www.edb.gov.hk/attachment/tc/curriculum-development/kla/technology-edu/resources/computer-edu/ICT_glossary.pdf |
 | security; SQL injection; untrusted input; identifier quoting; escaping | security → 保安；SQL injection → SQL 注入；untrusted input → 不受信任的輸入；identifier quoting → 識別碼加引號；escaping → 逸出 | 否 | inferred | OGCIO／香港資訊安全網使用保安和不受信任；SQL 注入、加引號、逸出按安全 API 的普通技術中文推定。https://www.infosec.gov.hk/tc/best-practices/business/securing-web-application |
 | credentials; password; allow-list; permission | credentials → 登入憑證；password → 密碼；allow-list → 允許清單；permission → 權限 | 否 | attested | 香港資訊安全網使用登入憑證、密碼、權限；允許清單採安全文件的包容性中文寫法。https://www.infosec.gov.hk/tc/knowledge-centre/phishing |
-| installation; install | installation → 安裝；install → 安裝 | 否 | attested | OGCIO 列 install → 安裝。https://www.ogcio.gov.hk/en/our_work/infrastructure/methodology/glossary/doc/IT_Glossary.pdf |
-| peer dependency | peer dependency → peer dependency | 是 | inferred | npm 專有詞（package.json 的 peerDependencies 欄位）；未找到香港慣用中文詞形，而「同儕相依套件」是生硬的直譯，所以保留英文。待母語者確認。 |
-| version; pin a version; release | version → 版本；pin a version → 鎖定版本；release → 發行 | 否 | inferred | OGCIO 直接列 version／release 的香港詞形；pin a version 按套件管理語境組合。https://www.ogcio.gov.hk/en/our_work/infrastructure/methodology/glossary/doc/IT_Glossary.pdf |
+| installation; install | installation → 安裝；install → 安裝 | 否 | attested | OGCIO 列 install → 安裝。https://www.digitalpolicy.gov.hk/en/our_work/digital_infrastructure/methodology/glossary/doc/IT_Glossary.pdf |
+| peer dependency | peer dependency → peer dependency | 是 | inferred | npm 專有詞（package.json 的 peerDependencies 欄位）；未找到香港慣用中文詞形，而「同儕相依套件」是生硬的直譯，所以保留英文。台灣：realnewbie.com 的文章寫「對等依賴」，但多數部落格保留英文 peer dependency；不改詞。待母語者確認。 |
+| version; pin a version; release | version → 版本；pin a version → 鎖定版本；release → 發行 | 否 | inferred | OGCIO 直接列 version／release 的香港詞形；pin a version 按套件管理語境組合。https://www.digitalpolicy.gov.hk/en/our_work/digital_infrastructure/methodology/glossary/doc/IT_Glossary.pdf |
 | breaking change; before 1.0 / pre-release | breaking change → 破壞性變更；before 1.0 → 1.0 前；pre-release → 發行前版本 | 否 | attested | Microsoft zh-TW 預覽 API 文件使用「破壞性更改」和「發行前版本」；本表將更改統一為香港常用的變更。https://learn.microsoft.com/zh-tw/dotnet/fundamentals/apicompat/preview-apis |
-| migration (schema migration); production; example; runnable | migration → 遷移（schema migration → 模式遷移）；production → 生產環境；example → 範例；runnable → 可執行 | 否 | attested | OGCIO 列 migration → 遷移；Microsoft zh-TW 使用生產環境、範例和可執行的同類寫法。https://www.ogcio.gov.hk/en/our_work/infrastructure/methodology/glossary/doc/IT_Glossary.pdf |
+| migration (schema migration); production; example; runnable | migration → 遷移（schema migration → 模式遷移）；production → 生產環境；example → 範例；runnable → 可執行 | 否 | attested | OGCIO 列 migration → 遷移；Microsoft zh-TW 使用生產環境、範例和可執行的同類寫法。https://www.digitalpolicy.gov.hk/en/our_work/digital_infrastructure/methodology/glossary/doc/IT_Glossary.pdf |
 | reference; documentation; page; section | reference → 參考資料；documentation → 說明文件；page → 頁面；section → 一節 | 否 | inferred | 由香港政府／Microsoft 文件的頁面、文件和參考資料寫法推定；section 在正文按「一節」處理。 |
 | caveat; note | caveat → 注意事項；note → 備註 | 否 | inferred | 由 Microsoft 文件的注意／備註欄位和香港書面技術文風推定。 |
 | behavior; semantics; contract; mode; public API | behavior → 行為；semantics → 語義；contract → 契約；mode → 模式；public API → 公開 API | 否 | inferred | Microsoft zh-TW 使用行為、模式和 API；契約／語義按程式設計語境推定。https://learn.microsoft.com/zh-tw/aspnet/core/fundamentals/environments?view=aspnetcore-10.0 |
@@ -175,29 +184,29 @@
 
 | 不要寫 | 香港正文優先寫成 | 證據 |
 | --- | --- | --- |
-| 資料庫 | 數據庫 | 香港 OGCIO、EDB 均用「數據庫」；Microsoft zh-TW 用「資料庫」。https://www.ogcio.gov.hk/en/our_work/infrastructure/methodology/glossary/doc/IT_Glossary.pdf 、https://www.edb.gov.hk/attachment/tc/curriculum-development/kla/technology-edu/resources/computer-edu/ICT_glossary.pdf 、https://learn.microsoft.com/zh-tw/azure/sap/workloads/businessobjects-deployment-guide-windows |
-| 介面 | 界面 | 香港 OGCIO／EDB 用「界面」；Microsoft zh-TW 用「介面」。https://www.ogcio.gov.hk/en/our_work/infrastructure/methodology/glossary/doc/IT_Glossary.pdf 、https://www.edb.gov.hk/attachment/tc/curriculum-development/kla/technology-edu/resources/computer-edu/ICT_glossary.pdf 、https://learn.microsoft.com/zh-tw/windows/win32/network-interfaces |
+| 資料庫 | 數據庫 | 香港 OGCIO、EDB 均用「數據庫」；Microsoft zh-TW 用「資料庫」。https://www.digitalpolicy.gov.hk/en/our_work/digital_infrastructure/methodology/glossary/doc/IT_Glossary.pdf 、https://www.edb.gov.hk/attachment/tc/curriculum-development/kla/technology-edu/resources/computer-edu/ICT_glossary.pdf 、https://learn.microsoft.com/zh-tw/azure/sap/workloads/businessobjects-deployment-guide-windows |
+| 介面 | 界面 | 香港 OGCIO／EDB 用「界面」；Microsoft zh-TW 用「介面」。https://www.digitalpolicy.gov.hk/en/our_work/digital_infrastructure/methodology/glossary/doc/IT_Glossary.pdf 、https://www.edb.gov.hk/attachment/tc/curriculum-development/kla/technology-edu/resources/computer-edu/ICT_glossary.pdf 、https://learn.microsoft.com/zh-tw/windows/win32/network-interfaces |
 | 變數 | 變量 | 香港 EDB 用「變量」；Microsoft zh-TW 用「變數」。https://www.edb.gov.hk/attachment/tc/curriculum-development/kla/technology-edu/resources/computer-edu/ICT_glossary.pdf 、https://learn.microsoft.com/zh-tw/csharp/language-reference/keywords/variables |
-| 演算法 | 算法 | 香港 OGCIO／EDB 用「算法」；Microsoft zh-TW 用「演算法」。https://www.ogcio.gov.hk/en/our_work/infrastructure/methodology/glossary/doc/IT_Glossary.pdf 、https://www.edb.gov.hk/attachment/tc/curriculum-development/kla/technology-edu/resources/computer-edu/ICT_glossary.pdf 、https://learn.microsoft.com/zh-tw/azure/architecture/ai-ml/ai-overview |
+| 演算法 | 算法 | 香港 OGCIO／EDB 用「算法」；Microsoft zh-TW 用「演算法」。https://www.digitalpolicy.gov.hk/en/our_work/digital_infrastructure/methodology/glossary/doc/IT_Glossary.pdf 、https://www.edb.gov.hk/attachment/tc/curriculum-development/kla/technology-edu/resources/computer-edu/ICT_glossary.pdf 、https://learn.microsoft.com/zh-tw/azure/architecture/ai-ml/ai-overview |
 | 布林、布林值 | 布爾、布爾值 | 香港 EDB 用「布爾」；Microsoft zh-TW 用「布林值」。https://www.edb.gov.hk/attachment/tc/curriculum-development/kla/technology-edu/resources/computer-edu/ICT_glossary.pdf 、https://learn.microsoft.com/zh-tw/dotnet/csharp/language-reference/builtin-types/bool |
 | 佇列 | 隊列 | 香港 EDB 用「隊列」；Microsoft zh-TW 用「佇列」。https://www.edb.gov.hk/attachment/tc/curriculum-development/kla/technology-edu/resources/computer-edu/ICT_glossary.pdf 、https://learn.microsoft.com/zh-tw/azure/storage/queues/storage-queues-introduction |
-| 效能 | 性能 | 香港 OGCIO 用「性能」；Microsoft zh-TW 用「效能」。https://www.ogcio.gov.hk/en/our_work/infrastructure/methodology/glossary/doc/IT_Glossary.pdf 、https://learn.microsoft.com/zh-tw/sql/relational-databases/performance/monitor-and-tune-for-performance |
-| 範本、樣板 | 模板 | 香港 OGCIO 用「模板」；Microsoft zh-TW 技術頁面使用「範本」。https://www.ogcio.gov.hk/en/our_work/infrastructure/methodology/glossary/doc/IT_Glossary.pdf 、https://learn.microsoft.com/zh-tw/dotnet/core/tools/templates |
-| 安全性 | 保安 | 香港 OGCIO／資訊安全網使用「保安」；Microsoft zh-TW 安全頁面使用「安全性」。https://www.ogcio.gov.hk/en/our_work/infrastructure/methodology/glossary/doc/IT_Glossary.pdf 、https://www.infosec.gov.hk/tc/best-practices/business/securing-web-application 、https://learn.microsoft.com/zh-tw/security/ |
-| 軟體 | 軟件 | 香港 OGCIO／資訊安全網使用「軟件」；Microsoft zh-TW 使用「軟體」。https://www.ogcio.gov.hk/en/our_work/infrastructure/methodology/glossary/doc/IT_Glossary.pdf 、https://www.infosec.gov.hk/tc/knowledge-centre/phishing 、https://learn.microsoft.com/zh-tw/windows/win32/appuistart/usability-in-software-design |
-| 硬體 | 硬件 | OGCIO 使用「硬件」；Microsoft zh-TW 使用「硬體」；只有一個直接香港詞彙表支持香港形式，因此規則只作 `WARN`。https://www.ogcio.gov.hk/en/our_work/infrastructure/methodology/glossary/doc/IT_Glossary.pdf 、https://learn.microsoft.com/zh-tw/windows/win32/appuistart/usability-in-software-design |
-| 網路 | 網絡 | 香港 OGCIO／資訊安全網使用「網絡」；Microsoft zh-TW 使用「網路」。https://www.ogcio.gov.hk/en/our_work/infrastructure/methodology/glossary/doc/IT_Glossary.pdf 、https://www.infosec.gov.hk/tc/knowledge-centre/phishing 、https://learn.microsoft.com/zh-tw/windows/win32/network-interfaces |
-| 用户、软件 | 用戶、軟件 | 香港 OGCIO 使用「用戶、軟件」；Microsoft zh-CN 使用簡體「用户、软件」。https://www.ogcio.gov.hk/en/our_work/infrastructure/methodology/glossary/doc/IT_Glossary.pdf 、https://learn.microsoft.com/zh-cn/windows/apps/develop/data-access/sqlite-data-access |
+| 效能 | 性能 | 香港 OGCIO 用「性能」；Microsoft zh-TW 用「效能」。https://www.digitalpolicy.gov.hk/en/our_work/digital_infrastructure/methodology/glossary/doc/IT_Glossary.pdf 、https://learn.microsoft.com/zh-tw/sql/relational-databases/performance/monitor-and-tune-for-performance |
+| 範本、樣板 | 模板 | 香港 OGCIO 用「模板」；Microsoft zh-TW 技術頁面使用「範本」。https://www.digitalpolicy.gov.hk/en/our_work/digital_infrastructure/methodology/glossary/doc/IT_Glossary.pdf 、https://learn.microsoft.com/zh-tw/dotnet/core/tools/templates |
+| 安全性 | 保安 | 香港 OGCIO／資訊安全網使用「保安」；Microsoft zh-TW 安全頁面使用「安全性」。https://www.digitalpolicy.gov.hk/en/our_work/digital_infrastructure/methodology/glossary/doc/IT_Glossary.pdf 、https://www.infosec.gov.hk/tc/best-practices/business/securing-web-application 、https://learn.microsoft.com/zh-tw/security/ |
+| 軟體 | 軟件 | 香港 OGCIO／資訊安全網使用「軟件」；Microsoft zh-TW 使用「軟體」。https://www.digitalpolicy.gov.hk/en/our_work/digital_infrastructure/methodology/glossary/doc/IT_Glossary.pdf 、https://www.infosec.gov.hk/tc/knowledge-centre/phishing 、https://learn.microsoft.com/zh-tw/windows/win32/appuistart/usability-in-software-design |
+| 硬體 | 硬件 | OGCIO 使用「硬件」；Microsoft zh-TW 使用「硬體」；只有一個直接香港詞彙表支持香港形式，因此規則只作 `WARN`。https://www.digitalpolicy.gov.hk/en/our_work/digital_infrastructure/methodology/glossary/doc/IT_Glossary.pdf 、https://learn.microsoft.com/zh-tw/windows/win32/appuistart/usability-in-software-design |
+| 網路 | 網絡 | 香港 OGCIO／資訊安全網使用「網絡」；Microsoft zh-TW 使用「網路」。https://www.digitalpolicy.gov.hk/en/our_work/digital_infrastructure/methodology/glossary/doc/IT_Glossary.pdf 、https://www.infosec.gov.hk/tc/knowledge-centre/phishing 、https://learn.microsoft.com/zh-tw/windows/win32/network-interfaces |
+| 用户、软件 | 用戶、軟件 | 香港 OGCIO 使用「用戶、軟件」；Microsoft zh-CN 使用簡體「用户、软件」。https://www.digitalpolicy.gov.hk/en/our_work/digital_infrastructure/methodology/glossary/doc/IT_Glossary.pdf 、https://learn.microsoft.com/zh-cn/windows/apps/develop/data-access/sqlite-data-access |
 | 函式 | 函數 | 香港 EDB／本地 SQL 教學使用「函數」；Microsoft zh-TW 使用「函式」；引用台灣文件時可能合法，因此只作 `WARN`。https://www.edb.gov.hk/attachment/tc/curriculum-development/kla/technology-edu/resources/computer-edu/ICT_glossary.pdf 、https://hktutorlink.hk/teaching-resources/dse/ict/dse-ict-advanced-sql-joins-and-aggregations 、https://learn.microsoft.com/zh-tw/cpp/c-language/functions-c |
 | 要求（作 request 名詞） | 請求 | 香港 DATA.GOV.HK、教育局、數字政策辦公室的文件都用「請求」；Microsoft zh-TW 用「要求」。台灣一側沒有逐項抓取核對，所以只作 `WARN`。https://data.gov.hk/tc/help/api-spec 、https://www.edb.gov.hk/attachment/tc/curriculum-development/kla/technology-edu/curriculum-doc/ICT_C&A%20Guide_c_final.pdf |
 | 傳回、回傳 | 返回 | DATA.GOV.HK 用「返回」；台灣一側未逐項核對，只作 `WARN`。https://data.gov.hk/tc/help/api-spec |
 | 純量 | 標量 | 教育局詞彙表列 scalar type → 標量類形；只作 `WARN`。https://www.edb.gov.hk/attachment/tc/curriculum-development/kla/technology-edu/resources/computer-edu/ICT_glossary.pdf |
 | 巢狀 | 嵌套 | 教育局課程指引用「嵌套循環」；只作 `WARN`。https://www.edb.gov.hk/attachment/tc/curriculum-development/kla/technology-edu/curriculum-doc/ICT_C&A%20Guide_c_final.pdf |
-| 組態 | 配置 | OGCIO 詞彙表與《保護關鍵基礎設施電腦系統條例》實務守則用「配置」；只有 configuration management 見「組態管理」，所以只作 `WARN`。https://www.ogcio.gov.hk/en/our_work/infrastructure/methodology/glossary/doc/IT_Glossary.pdf 、https://www.occics.gov.hk/filemanager/tc/content_19/CoP_zh_v1.0.pdf |
+| 組態 | 配置 | OGCIO 詞彙表與《保護關鍵基礎設施電腦系統條例》實務守則用「配置」；只有 configuration management 見「組態管理」，所以只作 `WARN`。https://www.digitalpolicy.gov.hk/en/our_work/digital_infrastructure/methodology/glossary/doc/IT_Glossary.pdf 、https://www.occics.gov.hk/filemanager/tc/content_19/CoP_zh_v1.0.pdf |
 | 陳述式 | 語句 | 教育局詞彙表與課程指引用「語句」；只作 `WARN`。https://www.edb.gov.hk/attachment/tc/curriculum-development/kla/technology-edu/resources/computer-edu/ICT_glossary.pdf |
-| 處理程序（指 process） | 進程 | OGCIO 詞彙表列 process → 進程；「處理程序」另有 procedure 的意思，不能全域禁用，只作 `WARN`。https://www.ogcio.gov.hk/en/our_work/infrastructure/methodology/glossary/doc/IT_Glossary.pdf |
-| 字元 | 字符 | OGCIO、教育局詞彙表與「香港增補字符集」官方名稱都用「字符」；只作 `WARN`。https://www.ogcio.gov.hk/en/our_work/infrastructure/methodology/glossary/doc/IT_Glossary.pdf |
-| 相容（compatible） | 兼容 | OGCIO 詞彙表列 compatibility → 兼容性；只作 `WARN`。https://www.ogcio.gov.hk/en/our_work/infrastructure/methodology/glossary/doc/IT_Glossary.pdf |
+| 處理程序（指 process） | 進程 | OGCIO 詞彙表列 process → 進程；「處理程序」另有 procedure 的意思，不能全域禁用，只作 `WARN`。https://www.digitalpolicy.gov.hk/en/our_work/digital_infrastructure/methodology/glossary/doc/IT_Glossary.pdf |
+| 字元 | 字符 | OGCIO、教育局詞彙表與「香港增補字符集」官方名稱都用「字符」；只作 `WARN`。https://www.digitalpolicy.gov.hk/en/our_work/digital_infrastructure/methodology/glossary/doc/IT_Glossary.pdf |
+| 相容（compatible） | 兼容 | OGCIO 詞彙表列 compatibility → 兼容性；只作 `WARN`。https://www.digitalpolicy.gov.hk/en/our_work/digital_infrastructure/methodology/glossary/doc/IT_Glossary.pdf |
 
 ### 8. 校準段落
 
@@ -211,21 +220,24 @@
 - 數據庫連線放在 `clickhouseClient(...)` 上。
 - 建構器查詢是預設路徑；遇到 ClickHouse 專用運算式時，可使用原始 SQL。
 - `runInSession()` 是 ClickHouse 的工作階段輔助工具，不是交易。
+- `plugins` 會觀察 ck-orm 送出的每個請求；追蹤是需要自行啟用的 `ck-orm/otel` 插件，不包含在主進入點內
 - `leftJoin()` 預設使用 SQL 風格的 NULL 語義。
 - 數值較大或風險較高的結果會以保守方式解碼，而不是靜默強制轉換。
 
-ck-orm 沒有必要的依賴項。`@opentelemetry/api` 是可選的 peer dependency，只供 `ck-orm/otel` 插件使用；使用該插件時，請連同 ck-orm 一併安裝。
+ck-orm 沒有必要的依賴項。OpenTelemetry 追蹤放在獨立的進入點 `ck-orm/otel`，`@opentelemetry/api` 是只供它使用的可選 peer dependency。主進入點 `ck-orm` 絕不會匯入 OpenTelemetry，所以不做追蹤的應用程式、瀏覽器打包檔案和邊緣 worker 不會安裝，也不會打包 OpenTelemetry 的任何內容。要追蹤查詢，請按 [OpenTelemetry 插件](#opentelemetry-plugin) 的設定步驟操作。
 
 ### 9. 參考來源與證據邊界
 
 - IANA language tags：https://www.iana.org/assignments/language-tags
-- OGCIO English-Chinese Glossary of IT Terms：https://www.ogcio.gov.hk/en/our_work/infrastructure/methodology/glossary/doc/IT_Glossary.pdf
+- 數字政策辦公室（前 OGCIO）English-Chinese Glossary of IT Terms（2025 年 11 月版；舊的 ogcio.gov.hk 網址會以 301 轉址到此）：https://www.digitalpolicy.gov.hk/en/our_work/digital_infrastructure/methodology/glossary/doc/IT_Glossary.pdf
 - 教育局 ICT Glossary：https://www.edb.gov.hk/attachment/tc/curriculum-development/kla/technology-edu/resources/computer-edu/ICT_glossary.pdf
 - 香港教育局資料庫 FAQ：https://cdrcloudsams.edb.gov.hk/%E5%B8%B8%E8%A6%8B%E5%95%8F%E9%A1%8C/
 - 教育局書面語與粵語課程框架：https://www.edb.gov.hk/attachment/sc/curriculum-development/major-level-of-edu/special-educational-needs/cl-curriculum-second-lang-alf/Four%20strands%20of%20the%20ALF/CL_Alf_Framework_Introduction_final_20180824.pdf
 - 香港大學出版社中文寫作指南：https://hkupress.hku.hk/image/catalog/publish-with-the-press/HKUP_Chinese_Style_Guide.pdf
 - 香港資訊安全網：https://www.infosec.gov.hk/tc/knowledge-centre/phishing
 - 香港資訊安全網網上應用系統保安：https://www.infosec.gov.hk/tc/best-practices/business/securing-web-application
+- 香港警務處「什麼是暗網」（瀏覽器與插件）：https://www.police.gov.hk/offbeat120/cybersecurity/73_what-is-dark-web.html
+- 公務員事務局招聘申請常見問題（用戶代理切換插件）：https://www.csb.gov.hk/tc_chi/recruit/application/files/common/FAQ_C.pdf
 - MDN zh-TW XMLHttpRequest：https://developer.mozilla.org/zh-TW/docs/Web/API/XMLHttpRequest
 - MDN zh-TW HTTP session：https://developer.mozilla.org/zh-TW/docs/Web/HTTP/Guides/Session
 - MDN zh-TW Promise.resolve：https://developer.mozilla.org/zh-TW/docs/Web/JavaScript/Reference/Global_Objects/Promise/resolve
@@ -234,7 +246,7 @@ ck-orm 沒有必要的依賴項。`@opentelemetry/api` 是可選的 peer depende
 - Microsoft zh-TW 設定與生產環境：https://learn.microsoft.com/zh-tw/aspnet/core/fundamentals/configuration/?view=aspnetcore-10.0
 - Microsoft zh-TW OpenTelemetry 可觀測性：https://learn.microsoft.com/zh-tw/dotnet/core/diagnostics/observability-with-otel
 - Microsoft zh-TW API 相容性與預覽版本：https://learn.microsoft.com/zh-tw/dotnet/fundamentals/apicompat/preview-apis
-- React 中文文件的 hook 用法：https://zh-hans.react.dev/learn/state-a-components-memory
+- React 簡體中文文件的 hook 用法（簡體中文頁面，不是香港來源）：https://zh-hans.react.dev/learn/state-a-components-memory
 - 教育局《資訊及通訊科技課程及評估指引（中四至中六）》（2021，中文）：https://www.edb.gov.hk/attachment/tc/curriculum-development/kla/technology-edu/curriculum-doc/ICT_C&A%20Guide_c_final.pdf
 - DATA.GOV.HK 應用程式介面規範（中文）：https://data.gov.hk/tc/help/api-spec
 - 保護關鍵基礎設施電腦系統安全專員辦事處《實務守則》：https://www.occics.gov.hk/filemanager/tc/content_19/CoP_zh_v1.0.pdf
@@ -262,7 +274,9 @@ Microsoft Language Portal 的 zh-HK 詞條仍無法直接檢索。Microsoft Lear
 - `call` 目前寫「呼叫」，DATA.GOV.HK 也寫「成功的呼叫」，OGCIO 與教育局詞彙表則寫「調用」，兩者並存，暫不統一。
 - `row` 目前寫「資料列」（台灣版 Microsoft 詞形），教育局用「記錄」指 record；候選「記錄」「行」。
 - 「對映」（map）、「列舉」（enum）、「回呼」（callback）、「聯集」（union）、「字面值」（literal）、「契約」（contract）、「萬用字元」（wildcard）、「識別碼」（identifier；教育局詞彙表寫「識別符」）：沒有香港一手用例，沿用台灣版常見詞形。
-- 「生命週期」與 OGCIO／教育局的「生命周期」並存；「允許清單」與 OGCIO 的「白名單」；「插裝」（instrumentation）；「建置」（UI 表用於 build）；UI 表的「AI 代理程式」。
+- 「生命週期」與 OGCIO／教育局的「生命周期」並存；「允許清單」與 OGCIO 的「白名單」；「建置」（UI 表用於 build）；UI 表的「AI 代理程式」。
+- `instrumentation` 目前寫「插裝」，香港查無用例；候選「檢測」「儀器化」「埋點」「插樁」（地區標註見第 6 節）。
+- `plugin` 目前寫「插件」（教育局詞彙表、警務處、公務員事務局均用）；數字政策辦公室 GovCERT 一份指引寫「外掛程式」，屬少數寫法，待確認是否需要統一。
 - 「資料」與「數據」：教育局課程指引同樣混用（資料表、數據庫、數據），全文暫按「資料表／資料列／資料」和「數據庫／數據類型」處理。
 - `transaction` 是否使用「交易」；`table engine`、`peer dependency`、`同儕相依套件`、`識別碼加引號` 等較少見的 ClickHouse／npm 詞語。
 - 發布前由香港母語開發者完整通讀，特別檢查第 8 節的兩段是否自然而沒有混入口語粵字、台灣詞形或普通英文概念詞。

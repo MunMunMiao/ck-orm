@@ -4,6 +4,11 @@
   "type": "module",
   "main": "src/index.ts",
   "types": "src/index.ts",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": "./src/index.ts",
+    "./otel": "./src/otel.ts"
+  },
   "description": "ClickHouse ORM for modern JS runtimes",
   "author": "MunMunMiao",
   "license": "MIT",

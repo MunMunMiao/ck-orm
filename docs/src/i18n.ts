@@ -234,6 +234,18 @@ const EN: Strings = {
         notes:
           "Run serially in a disposable database with CREATE, SELECT, INSERT and DROP permissions. Cleans up only its successfully created fixed-name tables and materialized view; an interrupted process or a lost CREATE response can leave objects. Exact quantile states retain all samples, so assess memory use for production workloads.",
       },
+      "query-plugins": {
+        title: "Query plugins",
+        summary:
+          "A plugin adds a header to every request and logs the statements ck-orm sends, in order, including the CREATE and DROP of a session temporary table.",
+        notes: "Uses session temporary tables.",
+      },
+      "otel-tracing": {
+        title: "OpenTelemetry tracing",
+        summary:
+          "otelTracing() from ck-orm/otel records one span per request. The example starts an OpenTelemetry SDK with an in-memory exporter, then prints the spans, nested under a span of its own.",
+        notes: "Uses session temporary tables.",
+      },
     },
     tabsLabel: "{title}: source and SQL",
   },

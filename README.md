@@ -35,7 +35,7 @@ pnpm add ck-orm
 yarn add ck-orm
 ```
 
-ck-orm has no required dependencies. `@opentelemetry/api` is an optional peer dependency used only by the `ck-orm/otel` plugin; install it alongside ck-orm when you use that plugin.
+ck-orm has no required dependencies. OpenTelemetry tracing is a separate entry point, `ck-orm/otel`, and `@opentelemetry/api` is an optional peer dependency used only by it. The main `ck-orm` entry never imports OpenTelemetry, so an application, browser bundle or edge worker that does not trace installs and bundles none of it. To trace queries, install the API and an SDK, then follow the [OpenTelemetry plugin setup](https://ck-orm.lyz.cloud) in the reference.
 
 ## Example
 

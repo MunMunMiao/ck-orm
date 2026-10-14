@@ -206,13 +206,24 @@ la forme française reste fournie.
 | session; temporary-table workflow; transaction | session; parcours avec table temporaire; transaction | no | attested — [MDN, session HTTP](https://developer.mozilla.org/fr/docs/Web/HTTP/Guides/Session) | La session ClickHouse n'est pas une transaction ; `un parcours` est masculin. |
 | concurrency; lifecycle; cleanup | concurrence; cycle de vie; nettoyage | no | inferred — [OpenTelemetry, traces](https://opentelemetry.io/fr/docs/concepts/signals/traces/) et le vocabulaire français des systèmes concurrents | `concurrence` désigne l'exécution simultanée, pas la compétition commerciale. |
 | runtime method; execute; fetch; abort / cancel | méthode d'exécution; exécuter; récupérer; abandonner / annuler | no | inferred — [MDN, Promise](https://developer.mozilla.org/fr/docs/Web/JavaScript/Reference/Global_Objects/Promise) et [MDN, messages HTTP](https://developer.mozilla.org/fr/docs/Web/HTTP/Guides/Messages) | `fetch` reste inchangé seulement comme nom de l'API JavaScript. |
-| observability; tracing | observabilité; traçage | no | attested — [OpenTelemetry, introduction](https://opentelemetry.io/fr/docs/concepts/observability-primer/) | `observabilité` et `traçage` sont les formes du domaine. |
-| span | span | yes | attested — [OpenTelemetry, traces](https://opentelemetry.io/fr/docs/concepts/signals/traces/) | Terme de l'écosystème OpenTelemetry laissé en anglais ; pluriel usuel `spans`. |
+| observability; tracing | observabilité; traçage | no | attested — [OpenTelemetry, introduction](https://opentelemetry.io/fr/docs/concepts/observability-primer/), [Microsoft, suivi distribué .NET](https://learn.microsoft.com/fr-fr/dotnet/core/diagnostics/distributed-tracing) | `observabilité` et `traçage` sont les formes du domaine ; l'introduction OpenTelemetry écrit aussi « traçage distribué » et « observer les requêtes ». Microsoft .NET emploie « suivi distribué » : ne l'adoptez pas. |
+| span | span | yes | attested — [OpenTelemetry, traces](https://opentelemetry.io/fr/docs/concepts/signals/traces/), [OpenTelemetry, introduction](https://opentelemetry.io/fr/docs/concepts/observability-primer/) | Terme de l'écosystème OpenTelemetry laissé en anglais ; pluriel usuel `spans`. Formes attestées : « span parent », « spans enfants » et « relation parent-enfant entre un span racine et ses spans enfants ». N'adoptez ni `étendue` (Microsoft, Azure Monitor) ni `segment` (Google, AWS X-Ray) : ces formes viennent de pages traduites automatiquement. |
 | logging | journalisation | no | attested — [Microsoft, journalisation .NET](https://learn.microsoft.com/fr-fr/dotnet/core/extensions/logging/overview) | `journalisation` est le nom du domaine. |
 | logger | logger | yes | attested — [Microsoft, notions ASP.NET Core](https://learn.microsoft.com/fr-fr/aspnet/core/fundamentals/?view=aspnetcore-3.1) | Terme de composant/API laissé en anglais dans la documentation française ; ne le francisez pas en `journaliseur` dans ce contexte. |
 | metrics; instrumentation | métriques; instrumentation | no | attested — [OpenTelemetry, introduction](https://opentelemetry.io/fr/docs/concepts/observability-primer/) | `métrique` est féminin ; `instrumentation` est féminin. |
-| plugin | plugin | yes | inferred — usage courant dans les écosystèmes d'outils JavaScript (Vite, ESLint, Rollup), non vérifié par une URL ouverte pendant cette tâche | Mot déjà intégré en français technique ; pluriel `plugins`. Évitez `greffon` et `module d'extension` ; l'API reste `plugins`. |
-| hook | hook | yes | attested — [React en français](https://fr.react.dev/learn) | Terme d'API/écosystème React laissé en anglais ; ne le traduisez pas par `crochet`. |
+| plugin | plugin | yes | attested — [Vue, plugins](https://fr.vuejs.org/guide/reusability/plugins.html) | Mot déjà intégré en français technique : la page Vue écrit « plugins » et « un plugin ». Pluriel `plugins`. Évitez `greffon` et `module d'extension` ; l'API reste `plugins`. |
+| hook | hook | yes | attested — [React en français](https://fr.react.dev/learn), [Vue, cycle de vie](https://fr.vuejs.org/guide/essentials/lifecycle.html) | Terme d'API/écosystème laissé en anglais : Vue écrit « hooks du cycle de vie ». Ne le traduisez pas par `crochet` : Microsoft (Azure Functions) mélange « hooks » et « crochets ». |
+| exporter | exportateur | no | attested — [OpenTelemetry, traces](https://opentelemetry.io/fr/docs/concepts/signals/traces/) | La page écrit « Exportateurs de Traces » ; Microsoft et Google emploient aussi `exportateur`. `exporteur` n'apparaît qu'une fois, sur une page Elastic : ne l'adoptez pas. Masculin : `un exportateur`. |
+| in-memory exporter | exportateur en mémoire | no | unverified | Composé de deux formes attestées (`exportateur`, `en mémoire`), non relevé tel quel dans une source. |
+| tracer provider; tracer | fournisseur de traceurs; traceur | no | attested — [OpenTelemetry, traces](https://opentelemetry.io/fr/docs/concepts/signals/traces/) | La page écrit « Fournisseur de traceurs » pour `TracerProvider` et « Un Traceur crée des spans ». Le complément `de traceurs` reste au pluriel ; `TracerProvider` reste littéral dans le code. |
+| propagator; context propagation | propagateur; propagation du contexte | no | attested — [OpenTelemetry, propagation du contexte](https://opentelemetry.io/fr/docs/concepts/context-propagation/) | Datadog emploie les mêmes formes. Masculin : `un propagateur`. |
+| context manager | gestionnaire de contexte | no | unverified — attesté seulement dans le [glossaire Python](https://docs.python.org/fr/3/glossary.html), pas dans la documentation OpenTelemetry | Forme française de base ; `context manager` ne reste en anglais que dans un identifiant. |
+| Collector; collector | Collector OpenTelemetry; collecteur | no | attested — [OpenTelemetry, Collector](https://opentelemetry.io/fr/docs/collector/) | « Collector OpenTelemetry » est le nom du produit et reste tel quel ; le nom commun générique est `collecteur` (Datadog, Google). |
+| set up (noun / verb) | mise en place / mettre en place | no | attested — [OpenTelemetry, traces](https://opentelemetry.io/fr/docs/concepts/signals/traces/), [OpenTelemetry, Collector](https://opentelemetry.io/fr/docs/collector/) | « mise en place du traçage » et « Mettre en place un Collector ». |
+| entry point | point d'entrée | no | attested — [Microsoft, point d'entrée C#](https://learn.microsoft.com/fr-fr/dotnet/csharp/fundamentals/program-structure/main-command-line) | `un point d'entrée` ; le nom de sous-chemin comme `ck-orm/otel` reste littéral. |
+| opt-in | à activer explicitement | no | attested — Datadog, page d'ingestion OTLP | N'utilisez pas `facultatif`, qui veut dire « optional » et non « à activer ». |
+| environment variable | variable d'environnement | no | attested — Microsoft et Google | Le nom de la variable reste littéral. |
+| SDK | SDK | yes | attested — [OpenTelemetry, traces](https://opentelemetry.io/fr/docs/concepts/signals/traces/) | Acronyme laissé tel quel, masculin : `un SDK`. |
 | event | événement | no | attested — [OpenTelemetry, traces](https://opentelemetry.io/fr/docs/concepts/signals/traces/) | Accent obligatoire sur `événement`. |
 | error; exception; throws / rejects; error model; validation error; stack; retry | erreur; exception; lève / rejette; modèle d'erreur; erreur de validation; pile d'appels; nouvelle tentative | no | attested — [TypeScript](https://www.typescriptlang.org/fr/docs/handbook/2/basic-types.html), [MDN, Promise](https://developer.mozilla.org/fr/docs/Web/JavaScript/Reference/Global_Objects/Promise) | Écrivez `lever` une erreur, jamais `jeter` une erreur ; `lève` et `rejette` s'accordent avec leur sujet. |
 | security; SQL injection; untrusted input; escaping | sécurité; injection SQL; entrée non approuvée; échappement | no | attested — [Microsoft, injection SQL](https://learn.microsoft.com/fr-fr/sql/relational-databases/security/sql-injection?view=sql-server-ver17), [MDN, sécurité](https://developer.mozilla.org/fr/docs/Learn_web_development/Extensions/Server-side/First_steps/Website_security) | `SQL` reste fixe ; `entrée non approuvée` est la forme de la source Microsoft. |
@@ -263,22 +274,23 @@ pas aux citations, aux données utilisateur ni au code.
 
 **Modèle mental**
 
-Gardez ces limites en tête quand vous utilisez `ck-orm` :
+Gardez ces limites en tête quand vous utilisez `ck-orm` :
 
 - `ckType.*` définit les types de colonnes du schéma
 - `ckTable(...)` définit les schémas de table
 - `ck.*` est l'espace de noms des fonctions utilitaires de requête
 - `fn.*` est l'espace de noms des fonctions utilitaires SQL
 - le schéma décrit les tables et les colonnes, pas le nom de la base de données
-- la connexion à la base de données est accessible via `clickhouseClient(...)`
-- les requêtes construites sont l'approche par défaut ; utilisez le SQL brut pour les expressions propres à ClickHouse
+- la connexion à la base de données passe par `clickhouseClient(...)`
+- les requêtes construites sont le choix par défaut ; le SQL brut reste disponible pour les expressions propres à ClickHouse
 - `runInSession()` est une fonction utilitaire de session ClickHouse, pas une transaction
-- `leftJoin()` utilise par défaut la sémantique SQL des valeurs nulles
+- `plugins` observent chaque requête envoyée par ck-orm ; le traçage est le plugin `ck-orm/otel`, à activer explicitement et séparé du point d'entrée principal
+- `leftJoin()` et `asofLeftJoin()` utilisent par défaut la sémantique SQL des valeurs nulles
 - les résultats numériques volumineux ou à risque sont décodés avec prudence, sans conversion silencieuse
 
 **Installation**
 
-`ck-orm` n'a aucune dépendance obligatoire. `@opentelemetry/api` est une dépendance entre pairs facultative, utilisée uniquement par le plugin `ck-orm/otel` ; installez-la avec `ck-orm` quand vous utilisez ce plugin.
+ck-orm n'a aucune dépendance obligatoire. Le traçage OpenTelemetry est un point d'entrée distinct, `ck-orm/otel`, et `@opentelemetry/api` est une dépendance entre pairs facultative que lui seul utilise. Le point d'entrée principal `ck-orm` n'importe jamais OpenTelemetry : une application, un bundle pour navigateur ou un worker edge qui ne trace pas n'installe ni n'embarque rien de tout cela. Pour tracer vos requêtes, suivez la mise en place décrite dans [Plugin OpenTelemetry](#opentelemetry-plugin).
 
 ### 9. Sources consulted
 
@@ -294,7 +306,9 @@ Gardez ces limites en tête quand vous utilisez `ck-orm` :
 - [React en français](https://fr.react.dev/learn), [Vue en français](https://fr.vuejs.org/guide/introduction.html) et [TypeScript](https://www.typescriptlang.org/fr/docs/handbook/2/everyday-types.html) — vocabulaire des composants, du rendu et du typage.
 - [Microsoft, concepteur de requêtes](https://learn.microsoft.com/fr-fr/power-bi/paginated-reports/report-builder/relational-query-designer-user-interface-report-builder) et [Yii](https://www.yiiframework.com/doc/guide/2.0/fr/db-query-builder) — requête, jointure et coexistence de plusieurs formes pour `query builder`.
 - [ClickHouse en français](https://clickhouse.com/fr/clickhouse) — tables, colonnes, jointures, serveur, insertions et réplicas.
-- [OpenTelemetry en français](https://opentelemetry.io/fr/docs/concepts/observability-primer/) et [traces](https://opentelemetry.io/fr/docs/concepts/signals/traces/) — observabilité, traces, spans, métriques et instrumentation.
+- [OpenTelemetry en français](https://opentelemetry.io/fr/docs/concepts/observability-primer/), [traces](https://opentelemetry.io/fr/docs/concepts/signals/traces/), [propagation du contexte](https://opentelemetry.io/fr/docs/concepts/context-propagation/) et [Collector](https://opentelemetry.io/fr/docs/collector/) — observabilité, traces, spans, exportateurs, fournisseur de traceurs, propagateurs, collecteur, mise en place, métriques et instrumentation.
+- [Vue, plugins](https://fr.vuejs.org/guide/reusability/plugins.html) et [cycle de vie](https://fr.vuejs.org/guide/essentials/lifecycle.html) — `plugin`, `hooks du cycle de vie`.
+- [Microsoft, point d'entrée C#](https://learn.microsoft.com/fr-fr/dotnet/csharp/fundamentals/program-structure/main-command-line), [Microsoft, suivi distribué .NET](https://learn.microsoft.com/fr-fr/dotnet/core/diagnostics/distributed-tracing) et [glossaire Python](https://docs.python.org/fr/3/glossary.html) — `point d'entrée`, forme `suivi distribué` non retenue, `gestionnaire de contexte`.
 - [Microsoft, injection SQL](https://learn.microsoft.com/fr-fr/sql/relational-databases/security/sql-injection?view=sql-server-ver17) et [MDN, sécurité](https://developer.mozilla.org/fr/docs/Learn_web_development/Extensions/Server-side/First_steps/Website_security) — entrée non approuvée, échappement et injection SQL.
 - [pnpm, dépendances entre pairs](https://pnpm.netlify.app/fr/blog/2021/12/29/yearly-update) — usage français de `dépendance entre pairs` avec la forme `peer dependency` entre parenthèses.
 - [Microsoft, flux de données en streaming](https://learn.microsoft.com/fr-fr/power-bi/transform-model/dataflows/dataflows-streaming) — `flux` et `diffusion en continu`.

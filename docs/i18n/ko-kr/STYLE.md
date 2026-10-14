@@ -84,7 +84,7 @@
 | CTE | CTE | yes | inferred | 공통 규칙 3절 — SQL 약어는 원문 표기를 유지한다. |
 | HTTP | HTTP | yes | attested | <https://developer.mozilla.org/ko/docs/Web/API/Request> — 프로토콜명은 원문 표기를 유지한다. |
 | UTC | UTC | yes | inferred | 공통 규칙 3절 — 시간대 약어는 원문 표기를 유지한다. |
-| OpenTelemetry | OpenTelemetry | yes | inferred | <https://opentelemetry.io/ko/docs/concepts/glossary/> 및 공통 규칙 3절 — 프로젝트가 정한 표기를 유지한다. |
+| OpenTelemetry | OpenTelemetry | yes | inferred | <https://opentelemetry.io/ko/docs/concepts/glossary/> 및 공통 규칙 3절 — OpenTelemetry 한국어 문서의 본문은 실제로 오픈텔레메트리(OpenTelemetry)로 쓴다. 영어 표기를 유지하는 것은 출처의 용례가 아니라 프로젝트 결정이다. |
 | Bun | Bun | yes | inferred | 공통 규칙 3절 — 런타임 제품명은 원문 표기를 유지한다. |
 | npm | npm | yes | inferred | 공통 규칙 3절 — 패키지 관리 도구명은 원문 표기를 유지한다. |
 | pnpm | pnpm | yes | inferred | 공통 규칙 3절 — 패키지 관리 도구명은 원문 표기를 유지한다. |
@@ -196,7 +196,7 @@
 | compile | 컴파일 | no | attested | <https://www.typescriptlang.org/ko/docs/handbook/2/everyday-types.html> — 컴파일 용례를 따른다. |
 | compiled SQL | 컴파일된 SQL | no | inferred | compile의 한국어 동사형과 SQL 표기를 조합했다. |
 | thenable | thenable | yes | attested | <https://developer.mozilla.org/ko/docs/Web/JavaScript/Reference/Global_Objects/Promise> — JavaScript 용어로 영어 표기를 유지한다. |
-| helper | 헬퍼 | no | attested | <https://ko.react.dev/learn/responding-to-events> — 한국어 React 문서의 헬퍼 용례에서 확인했다. |
+| helper | 헬퍼 | no | unverified | 출처를 확인하지 못함. 이전에 인용한 <https://ko.react.dev/learn/responding-to-events> 페이지에는 헬퍼가 나오지 않는다. 평이한 음역으로 정했으며 한국어 원어민 확인이 필요하다. |
 | namespace | 네임스페이스 | no | attested | <https://www.typescriptlang.org/ko/docs/handbook/modules.html> — 네임스페이스 용례를 따른다. |
 | factory | 팩토리 | no | inferred | 한국어 JavaScript 라이브러리 문서의 팩토리 용례에서 유추했다. |
 | callback | 콜백 | no | attested | <https://ko.vuejs.org/guide/essentials/lifecycle> — 콜백 용례를 따른다. |
@@ -241,14 +241,31 @@
 | abort | 중단 | no | attested | <https://developer.mozilla.org/ko/docs/Web/API/Request> — AbortSignal과 중단 용례를 따른다. |
 | cancel | 취소 | no | inferred | 한국어 API 문서의 취소 동작 용례에서 유추했다. |
 | observability | 옵저버빌리티 | no | attested | <https://opentelemetry.io/ko/docs/what-is-opentelemetry/> — 공식 한국어 OpenTelemetry 문서의 용례를 따른다. |
-| tracing | 트레이싱 | no | attested | <https://opentelemetry.io/ko/docs/concepts/glossary/> — 트레이싱 용례를 따른다. |
+| tracing | 트레이싱 | no | attested | <https://opentelemetry.io/ko/docs/concepts/glossary/> — OpenTelemetry 한국어 문서는 분산 트레이싱으로 쓴다. ClickHouse 한국어 문서(<https://clickhouse.com/docs/ko/operations/opentelemetry>)는 추적, 추적 컨텍스트를 쓰지만 이 문서는 트레이싱을 유지한다. |
 | span | 스팬 | no | attested | <https://opentelemetry.io/ko/docs/concepts/glossary/> — 스팬 용례를 따른다. |
 | logging | 로깅 | no | attested | <https://opentelemetry.io/ko/docs/> — 로깅 용례를 따른다. |
 | logger | 로거 | no | inferred | logging의 한국어 개발자 용례에서 유추했다. |
 | metrics | 메트릭 | no | attested | <https://opentelemetry.io/ko/docs/concepts/signals/> — 메트릭 용례를 따른다. |
 | instrumentation | 계측 | no | attested | <https://opentelemetry.io/ko/docs/concepts/glossary/> — 계측 용례를 따른다. |
-| hook | 훅 | no | attested | <https://ko.react.dev/learn/responding-to-events> — 이벤트 핸들러와 훅의 한국어 개발자 용례를 따른다. |
-| plugin | 플러그인 | no | inferred | 소프트웨어 확장 모듈을 가리키는 한국어 개발자 관용 표기이며, 출처 URL은 열어 확인하지 않았다. |
+| hook | 훅 | no | attested | <https://ko.vuejs.org/guide/essentials/lifecycle> (라이프사이클 훅), <https://ko.vite.dev/guide/ssr> (플러그인 훅) — 한국어 개발자 문서의 훅 용례를 따른다. Microsoft ko-kr은 후크를 쓰고, 한국어 React 문서는 Hook을 영어로 둔다. |
+| plugin | 플러그인 | no | attested | <https://ko.vuejs.org/>, <https://ko.vite.dev/>, <https://webpack.kr/>, Docusaurus 한국어 문서의 `플러그인 설정하기` — 모두 플러그인으로 쓴다. |
+| set up | 설정하기 | no | attested | <https://ko.react.dev/learn/setup> (설정하기), <https://ko.react.dev/learn/editor-setup> (에디터 설정하기) — 제목과 절차의 용례를 따른다. |
+| exporter | 익스포터 | no | attested | <https://opentelemetry.io/ko/docs/concepts/glossary/>, <https://opentelemetry.io/ko/docs/concepts/components/> — OpenTelemetry 한국어 문서의 용례를 따른다. Microsoft ko-kr은 `내보내기 도구`를 쓰지만 채택하지 않았다. |
+| in-memory exporter | 인메모리 익스포터 | no | unverified | 출처를 확인하지 못함. Microsoft ko-kr은 대체로 `메모리 내`를 쓴다. 익스포터는 위 행을 따르고 평이한 음역으로 정했으며 한국어 원어민 확인이 필요하다. |
+| tracer provider | 트레이서 프로바이더 | no | unverified | OpenTelemetry 한국어 용어집에는 `트레이서`가 있지만 `프로바이더`는 권위 있는 출처가 없다. Microsoft는 `공급자`를 쓴다. 코드 문맥에서는 `TracerProvider`를 그대로 둔다. 한국어 원어민 확인이 필요하다. |
+| context manager | 컨텍스트 매니저 | no | unverified | 출처를 확인하지 못함. 평이한 음역으로 정했으며 한국어 원어민 확인이 필요하다. |
+| propagator | 전파자 | no | attested | <https://opentelemetry.io/ko/docs/concepts/glossary/> (전파자), <https://opentelemetry.io/ko/docs/concepts/components/> (서비스 간 전파자, 기본 전파자) — OpenTelemetry 한국어 문서의 용례를 따른다. |
+| Collector | 컬렉터 | no | attested | <https://opentelemetry.io/ko/docs/concepts/glossary/>, <https://opentelemetry.io/ko/docs/concepts/components/> — OpenTelemetry 한국어 문서의 용례를 따른다. Google, New Relic, Elastic의 기계 번역 페이지는 `수집기`를 쓰지만 채택하지 않았다. |
+| entry point | 진입점 | no | attested | <https://ko.vite.dev/guide/build> (패키지 진입점), Microsoft C# Main 문서 — webpack.kr과 Vue 한국어 문서는 `엔트리(포인트)`를 쓴다. |
+| bundle | 번들 | no | attested | <https://ko.vuejs.org/>, <https://ko.vite.dev/>, <https://webpack.kr/> — 번들 용례를 따른다. |
+| edge worker | 엣지 워커 | no | unverified | 엣지와 에지 표기가 갈린다. Microsoft는 `에지`, AWS는 `엣지`를 쓰고 <https://ko.vite.dev/guide/env-and-mode>도 `엣지 함수`로 쓴다. 워커는 MDN과 Vite의 `웹 워커` 용례를 따랐으며 한국어 원어민 확인이 필요하다. |
+| span parenting | 부모-자식 관계 | no | attested | <https://opentelemetry.io/ko/docs/concepts/glossary/> 및 <https://opentelemetry.io/ko/docs/concepts/observability-primer/> — 부모 스팬, 하위 스팬, 부모-자식 관계 용례를 따른다. |
+| observe | 관찰 | no | attested | <https://opentelemetry.io/ko/docs/what-is-opentelemetry/> 및 <https://opentelemetry.io/ko/docs/concepts/observability-primer/> — 동사로는 `관찰`을 쓴다. `관측`은 형용사 `관측 가능하여`에만 나온다. observability는 위의 옵저버빌리티 행을 따른다. |
+| opt-in | 필요할 때 켜는 / 옵트인 | no | inferred | 한국어 React 문서가 `옵트인`을 쓴다. 문장에서는 풀어 쓴 `필요할 때 켜는`을 우선한다. |
+| import (verb) | import | yes | attested | <https://ko.vuejs.org/>, <https://ko.vite.dev/>, <https://webpack.kr/> — 동사 import는 영어로 둔다. |
+| short-lived process | 수명이 짧은 프로세스 | no | unverified | 출처를 확인하지 못함. 평이한 풀어쓰기로 정했으며 한국어 원어민 확인이 필요하다. |
+| environment variable | 환경 변수 | no | attested | <https://ko.vite.dev/guide/env-and-mode> — Vite의 환경 변수와 모드 용례를 따른다. |
+| SDK | SDK | yes | inferred | 공통 규칙 3절 — 기술 약어는 원문 표기를 유지한다. |
 | event | 이벤트 | no | attested | <https://ko.react.dev/learn/responding-to-events> — 이벤트 용례를 따른다. |
 | error | 오류 | no | attested | <https://developer.mozilla.org/ko/docs/Web/API/Request> — 오류 용례를 따른다. |
 | exception | 예외 | no | attested | <https://www.typescriptlang.org/ko/docs/handbook/2/everyday-types.html> — 런타임 오류와 예외 용례를 따른다. |
@@ -269,7 +286,7 @@
 | permission | 권한 | no | attested | <https://developer.mozilla.org/ko/docs/Web/Privacy> — 권한 용례를 따른다. |
 | installation | 설치 | no | attested | <https://clickhouse.com/ko/clickhouse> — 설치 용례를 따른다. |
 | install | 설치하다 | no | inferred | installation의 자연스러운 동사형으로 정했다. |
-| peer dependency | 피어 종속성 | no | unverified | 출처를 확인하지 못함. package-manager 용어를 한국어 개발자식으로 풀었으며 원어민 확인이 필요하다. |
+| peer dependency | peer dependency | yes | inferred | X 검색(grok-4.7, 2026-10-15; 게시물은 별도로 재검증하지 않음)에서 한국어 개발자는 `peer dependency` / `peerDependencies`를 영어로 쓴다(3명 이상). `피어 종속성`은 0건, `피어 의존성`은 P2P 문맥에서만 나왔고, `피어 디펜던시`는 3건이었다. 문서 쪽에서는 pnpm 한국어 문서만 `피어 의존성`을 쓴다(<https://pnpm.io/ko/how-peers-are-resolved>). 그래서 영어로 둔다. 일반 용어 dependency의 `종속성`/`의존성`은 X로 가려지지 않아 기존 `종속성`을 유지한다. |
 | version | 버전 | no | attested | <https://www.typescriptlang.org/ko/docs/handbook/2/everyday-types.html> — 버전 용례를 따른다. |
 | pin a version | 버전을 고정하다 | no | inferred | version과 pin의 한국어 동작 표현을 조합했다. |
 | release | 릴리스 | no | inferred | 한국어 소프트웨어 문서의 릴리스 용례에서 유추했다. |
@@ -348,10 +365,11 @@
 - `clickhouseClient(...)`에 데이터베이스 연결을 설정합니다.
 - 빌더 쿼리를 기본 경로로 사용하고, ClickHouse 전용 표현식이 필요하면 원시 SQL을 사용할 수 있습니다.
 - `runInSession()`은 ClickHouse 세션 헬퍼이며 트랜잭션이 아닙니다.
+- `plugins`는 ck-orm이 보내는 모든 요청을 관찰합니다. 트레이싱은 필요할 때 켜는 `ck-orm/otel` 플러그인이며 기본 진입점에는 포함되지 않습니다.
 - `leftJoin()`은 기본적으로 SQL 방식의 NULL 처리 규칙을 사용합니다.
 - 값이 크거나 손실 위험이 큰 숫자 결과는 암묵적으로 형변환하지 않고 보수적으로 디코딩합니다.
 
-ck-orm에는 필수 종속성이 없습니다. `@opentelemetry/api`는 `ck-orm/otel` 플러그인에서만 사용하는 선택적 피어 종속성이므로, 이 플러그인을 사용할 때 ck-orm과 함께 설치하세요.
+ck-orm에는 필수 종속성이 없습니다. OpenTelemetry 트레이싱은 `ck-orm/otel`이라는 별도 진입점으로 제공되며, `@opentelemetry/api`는 이 진입점에서만 사용하는 선택적 peer dependency입니다. 기본 `ck-orm` 진입점은 OpenTelemetry를 import하지 않으므로, 트레이싱을 쓰지 않는 애플리케이션, 브라우저 번들, 엣지 워커에는 OpenTelemetry가 설치되지도 번들에 포함되지도 않습니다. 쿼리를 트레이싱하려면 [OpenTelemetry 플러그인](#opentelemetry-plugin)의 설정 방법을 따르세요.
 
 ### 9. 참고한 자료
 
@@ -366,8 +384,12 @@ ck-orm에는 필수 종속성이 없습니다. `@opentelemetry/api`는 `ck-orm/o
 - <https://www.korean.go.kr/front/onlineQna/onlineQnaView.do?mn_id=27&pageIndex=1&qna_seq=333838> — 조사는 앞말에 붙이는 원칙.
 - <https://www.korean.go.kr/front/onlineQna/onlineQnaView.do?mn_id=27&pageIndex=1&qna_seq=336224> — 콜론 앞뒤 띄어쓰기와 시간·비율 예외.
 - <https://www.korean.go.kr/front/onlineQna/onlineQnaView.do?mn_id=216&pageIndex=1&qna_seq=317572> — `및`과 `또는`의 의미 차이.
-- <https://ko.react.dev/learn/responding-to-events> — 한국어 React 문서의 이벤트, 헬퍼, 합니다체 용례.
+- <https://ko.react.dev/learn/responding-to-events> — 한국어 React 문서의 이벤트, 합니다체 용례.
+- <https://ko.react.dev/learn/setup> — 설정하기, 에디터 설정하기 용례.
 - <https://ko.vuejs.org/guide/essentials/lifecycle> — 라이프사이클, 콜백, 렌더링, 마운트 용례.
+- <https://ko.vite.dev/guide/ssr> — 플러그인 훅 용례.
+- <https://ko.vite.dev/guide/build> — 패키지 진입점 용례.
+- <https://ko.vite.dev/guide/env-and-mode> — 환경 변수, 엣지 함수 용례.
 - <https://www.typescriptlang.org/ko/docs/handbook/2/everyday-types.html> — 타입 추론, 타입 단언, 타입 관련 용례.
 - <https://www.typescriptlang.org/ko/docs/handbook/type-inference.html> — 타입 추론과 매개변수 용례.
 - <https://www.typescriptlang.org/ko/docs/handbook/2/generics.html> — 제네릭과 타입 인수 용례.
@@ -379,6 +401,9 @@ ck-orm에는 필수 종속성이 없습니다. `@opentelemetry/api`는 `ck-orm/o
 - <https://opentelemetry.io/ko/docs/what-is-opentelemetry/> — 옵저버빌리티, 트레이싱, 메트릭, 계측 용례.
 - <https://opentelemetry.io/ko/docs/concepts/glossary/> — 스팬, 계측, 요청, 오류 관련 용례.
 - <https://opentelemetry.io/ko/docs/concepts/signals/> — 트레이스, 메트릭, 로그 용례.
+- <https://opentelemetry.io/ko/docs/concepts/components/> — 익스포터, 컬렉터, 전파자 용례.
+- <https://opentelemetry.io/ko/docs/concepts/observability-primer/> — 관찰, 부모 스팬, 하위 스팬, 부모-자식 관계 용례.
+- <https://clickhouse.com/docs/ko/operations/opentelemetry> — ClickHouse 한국어 문서의 추적, 추적 컨텍스트 용례.
 - <https://clickhouse.com/ko/clickhouse> — 스키마, 컬럼, 테이블, 쿼리, 필터, 집계 용례.
 - <https://fontlab.dev/vexy-fontlab-writing-styleguide/fl1992mk/localization/ko/> — 한국어 제품 현지화의 대명사, 조사, 단위, 흔한 오탈자·번역투에 대한 2차 자료.
 - <https://www.korean.go.kr/front/onlineQna/onlineQnaView.do?mn_id=216&qna_seq=306279> — 리모컨 관용 표기.
@@ -387,7 +412,7 @@ ck-orm에는 필수 종속성이 없습니다. `@opentelemetry/api`는 `ck-orm/o
 
 - `체이너블`은 한국어 JavaScript 문서에서 확인할 수 있는 직접 출처를 찾지 못해 음역으로 정했다. 한국어 원어민은 `체인형` 또는 다른 표현이 더 자연스러운지 확인해야 한다.
 - `프로젝션`과 `윈도 표현식`은 SQL 문맥의 한국어 팀별 용례가 갈릴 수 있다. `투영`, `윈도우 표현식` 같은 대안과 비교해 확인해야 한다.
-- `피어 종속성`은 package-manager 문서에서 한국어 표준화 정도가 낮다. 대상 독자가 `피어 의존성`을 더 자연스럽게 느끼는지 확인해야 한다.
+- peer dependency는 영어로 둔다(2026-10-15 결정): X의 한국어 개발자 게시물은 영어 `peer dependency`를 쓰고, `피어 종속성`은 어디에서도 확인되지 않았다. 일반 용어 dependency의 `종속성`/`의존성` 선택(pnpm 한국어는 `의존성`, Microsoft와 Docusaurus는 `종속성`)은 아직 열려 있으며, 6절 dependency 행과 함께 원어민이 정한다. 그때까지 `종속성`을 유지한다.
 - `운영 환경`은 `production`을 설명문에서 자연스럽게 풀어 쓴 선택이다. 팀이 `프로덕션`을 기본 용어로 쓰는지 확인해야 한다.
 - `API 범위`와 `구체화된 컬럼`은 각각 `surface`와 `materialized column`을 뜻풀이한 표현이다. 실제 한국 개발자 문서의 선호어를 원어민이 확인해야 한다.
 - 위 항목 외에도 제6절에서 `unverified`로 표시한 모든 행은 원어민 확인 전의 임시 표현이다.

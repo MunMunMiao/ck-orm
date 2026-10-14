@@ -114,6 +114,17 @@ export default {
         notes:
           "請在可丟棄的數據庫內順序執行，該數據庫要有 CREATE、SELECT、INSERT 和 DROP 權限。只清理已成功建立的固定名稱資料表和物化檢視；進程中斷或 CREATE 回應遺失可能留下物件。精確分位數狀態保留全部樣本，生產環境使用時需評估記憶體用量。",
       },
+      "query-plugins": {
+        title: "查詢插件",
+        summary: "插件為每個請求加入標頭，並按順序記錄 ck-orm 送出的語句，包括工作階段暫存資料表的 CREATE 和 DROP。",
+        notes: "使用工作階段暫存資料表。",
+      },
+      "otel-tracing": {
+        title: "OpenTelemetry 追蹤",
+        summary:
+          "ck-orm/otel 的 otelTracing() 為每個請求記錄一個 span。範例先啟動帶有記憶體內匯出器的 OpenTelemetry SDK，再印出這些 span，它們嵌套在範例自己開啟的 span 之下。",
+        notes: "使用工作階段暫存資料表。",
+      },
     },
     tabsLabel: "{title}：原始碼和 SQL",
   },

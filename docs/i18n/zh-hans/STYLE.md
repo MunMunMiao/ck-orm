@@ -207,14 +207,26 @@
 | abort | 中止 | 否 | attested（https://developer.mozilla.org/zh-CN/docs/Web/API/AbortController） | 取消控制器语境用“中止”。 |
 | cancel | 取消 | 否 | attested（https://developer.mozilla.org/zh-CN/docs/Web/API/AbortController） | 用户动作或请求语境都用“取消”。 |
 | observability | 可观测性 | 否 | attested（https://opentelemetry.io/zh/docs/concepts/observability-primer/） | OpenTelemetry 中文文档直接使用“可观测”。 |
-| tracing | 追踪 | 否 | attested（https://opentelemetry.io/zh/docs/concepts/observability-primer/） | 分布式 tracing 译为“追踪”。 |
-| span | span（跨度） | 是 | attested（https://opentelemetry.io/zh/docs/concepts/observability-primer/） | OpenTelemetry 中文文档同时给出 Span 与“跨度”；API 语境保留 `span` 这一术语。 |
+| tracing | 追踪 | 否 | attested（https://opentelemetry.io/zh/docs/concepts/glossary/ 的“分布式追踪”） | OpenTelemetry 中文文档把 trace 译为“链路”，把 tracing 译为“追踪”；本项目的正文只写“追踪”，如“OpenTelemetry 追踪”“追踪上下文”。 |
+| span | span | 是 | attested（https://opentelemetry.io/zh/docs/concepts/signals/traces/ 、https://opentelemetry.io/zh/docs/concepts/glossary/） | OpenTelemetry 中文文档的标题直接写 “Span”，不译；Microsoft Azure Monitor 的简体中文页面用“跨度”，本项目未采用。API 语境保留 `span` 这一术语。 |
 | logging | 日志记录 | 否 | attested（https://opentelemetry.io/zh/docs/languages/js/instrumentation/） | 动作写“记录日志”或“日志记录”，名词统一后者。 |
 | logger | 日志记录器 | 否 | inferred（由 OpenTelemetry 的“日志记录”与中文“记录器”组合） | 不把普通概念留成 `logger`。 |
 | metrics | 指标 | 否 | attested（https://opentelemetry.io/zh/docs/languages/js/instrumentation/） | 可观测性语境固定用“指标”。 |
-| instrumentation | 插桩 | 否 | attested（https://opentelemetry.io/zh/docs/languages/js/instrumentation/） | OpenTelemetry 中文文档标题直接使用“插桩”。 |
-| hook | Hook | 是 | attested（https://zh-hans.react.dev/learn） | React 中文文档使用 Hook；这是 JavaScript/React API 术语，不是普通英文名词。 |
-| plugin | 插件 | 否 | inferred（中文开发者文档通用译法，未打开具体页面核对） | 指 `plugins` 选项中的 `ClickHouseORMPlugin`；API 名保留英文，概念词用“插件”。 |
+| instrumentation | 插桩 | 否 | attested（https://opentelemetry.io/zh/docs/languages/js/instrumentation/ ；“插桩库”“已插桩库”见 https://opentelemetry.io/zh/docs/concepts/glossary/） | OpenTelemetry 中文文档标题直接使用“插桩”，复合词写“插桩库”“已插桩库”。“埋点”（阿里云、腾讯云）和“检测”（Microsoft）也有人用，本项目未采用。 |
+| hook | 钩子 | 否 | attested（https://cn.vitejs.dev/guide/api-plugin 、https://cn.rollupjs.org/plugin-development/ 、https://webpack.docschina.org/api/plugins/ 、https://cn.vuejs.org/api/composition-api-lifecycle） | 插件生命周期语境下，Vite、Rollup、webpack、Vue 的中文文档都写“钩子”。只有 React 中文文档保留 Hook，因为那是 React 专有的概念，不是普通名词。`onQueryStart` 这类名字在代码 span 里原样保留。 |
+| plugin | 插件 | 否 | attested（https://cn.vitejs.dev/guide/api-plugin 、https://cn.rollupjs.org/plugin-development/ 、https://webpack.docschina.org/api/plugins/ 、https://cn.vuejs.org/guide/reusability/plugins） | 指 `plugins` 选项中的 `ClickHouseORMPlugin`；API 名保留英文，概念词用“插件”。 |
+| request header / response header | 请求头 / 响应头 | 否 | inferred（X 搜索，grok-4.7，2026-10-15，帖子未另行重新验证；ClickHouse 中文文档 https://clickhouse.com/docs/zh/operations/opentelemetry 也写“请求头”） | 开发者短帖里写“请求头 / 响应头”（最新流里至少 5 个不同作者）；“请求标头”只见到 1 条，出自浏览器界面翻译。MDN zh-CN 和 OpenTelemetry 中文文档写“标头”，保留“请求头”以与全文 14 处一致，不采用“标头”。 |
+| exporter | 导出器 | 否 | attested（https://opentelemetry.io/zh/docs/concepts/glossary/ 的“导出器”） | Microsoft 的简体中文页面写“导出程序”，本项目未采用。 |
+| in-memory exporter | 内存导出器 | 否 | inferred（由“内存”与已证实的“导出器”组合；复合词本身没有来源） | 不写 `in-memory exporter`。 |
+| propagator | 传播器 | 否 | attested（https://opentelemetry.io/zh/docs/concepts/glossary/ 的“传播器”、https://opentelemetry.io/zh/docs/concepts/components/ 的“跨服务传播器”、https://opentelemetry.io/zh/docs/concepts/context-propagation/） | “W3C propagator”写“W3C 传播器”，“全局 propagator”写“全局传播器”。 |
+| context manager | 上下文管理器 | 否 | attested（https://opentelemetry.io/zh/docs/languages/js/context/ 的“上下文管理器”小节） | 不写 `context manager`。 |
+| tracer provider | tracer provider | 是 | inferred（OpenTelemetry 中文 traces 页面 https://opentelemetry.io/zh/docs/concepts/signals/traces/ 有“Tracer 提供者”，但 JS 页面用法不一致；它也是 API 标识符 `TracerProvider`） | 保留英文，不译为“提供者”。 |
+| Collector | Collector | 是 | attested（https://opentelemetry.io/zh/docs/concepts/glossary/ 说明 Collector 首字母大写，不翻译） | 作为产品名保留。 |
+| SDK | SDK | 是 | inferred（缩写词；调研确认 OpenTelemetry 中文文档保留 SDK 不译） | 按共享规则的缩写词政策保留。 |
+| entry point | 入口 | 否 | attested（“入口点”：https://cn.vitejs.dev/guide/build ；“包入口点”：https://nodejs.cn/api/packages.html，社区翻译） | 正文用简写“入口”：`ck-orm/otel` 是单独的入口，`ck-orm` 是主入口。 |
+| bundle | 打包产物 | 否 | attested（https://cn.vuejs.org/guide/best-practices/performance 写“JavaScript 打包产物”） | 名词写“打包产物”；动词写“打包”。 |
+| set up (heading) | 设置 | 否 | attested（OpenTelemetry 中文 JS 页面使用“设置”，如 Collector 设置：https://opentelemetry.io/zh/docs/languages/js/） | 指“设置步骤”的小节标题和“请按……设置”；不写“搭建”“配置”。 |
+| opt-in | 按需启用 | 否 | unverified（Microsoft 简体中文用“主动选择加入”，属于界面字符串语域，未采用；待母语开发者确认） | 描述默认关闭、需要时才打开的功能。 |
 | event | 事件 | 否 | attested（https://developer.mozilla.org/zh-CN/docs/Learn_web_development/Core/Scripting/Events） | 不写英文 `event`。 |
 | error | 错误 | 否 | attested（https://developer.mozilla.org/zh-CN/docs/Web/HTTP/Reference/Status） | 返回值、异常和页面提示都按上下文用“错误”。 |
 | exception | 异常 | 否 | attested（https://opentelemetry.io/zh/docs/languages/js/instrumentation/） | JavaScript 错误对象语境使用“异常”。 |
@@ -304,20 +316,21 @@
 
 ### 8. 校准段落
 
-使用 `ck-orm` 时，请牢记以下边界：
+用 `ck-orm` 时，先记住这些边界：
 
 - `ckType.*` 定义模式中的列类型。
 - `ckTable(...)` 定义表的模式。
-- `ck.*` 是查询辅助函数命名空间。
-- `fn.*` 是 SQL 函数辅助函数命名空间。
-- 模式描述表和列，而不是数据库名。
+- `ck.*` 是查询辅助函数的命名空间。
+- `fn.*` 是 SQL 函数辅助函数的命名空间。
+- 模式描述的是表和列，不是数据库名。
 - 数据库连接挂在 `clickhouseClient(...)` 上。
-- 构建器查询是默认路径；需要 ClickHouse 专用表达式时，可以使用原始 SQL。
+- 默认走查询构建器；需要 ClickHouse 专用表达式时，再用原始 SQL。
 - `runInSession()` 是 ClickHouse 的会话辅助函数，不是事务。
-- `leftJoin()` 默认使用 SQL 风格的 NULL 语义。
+- `plugins` 观察 ck-orm 发出的每个请求；追踪是按需启用的 `ck-orm/otel` 插件，不在主入口里。
+- `leftJoin()` 和 `asofLeftJoin()` 默认使用 SQL 风格的 NULL 语义。
 - 大数或高风险数值结果要谨慎解码，不要静默强制转换。
 
-ck-orm 没有必需依赖。`@opentelemetry/api` 是可选的对等依赖项，仅供 `ck-orm/otel` 插件使用；使用该插件时，请和 ck-orm 一起安装。
+ck-orm 没有必需依赖。OpenTelemetry 追踪是单独的入口 `ck-orm/otel`，`@opentelemetry/api` 是可选的对等依赖项，只有这个入口会用到它。`ck-orm` 主入口从不导入 OpenTelemetry，所以不做追踪的应用、浏览器端的打包产物和边缘 worker 既不用安装它，也不会把它打包进去。要追踪查询，请按[OpenTelemetry 插件](#opentelemetry-plugin)里的步骤设置。
 
 ### 9. 参考来源与证据边界
 
@@ -341,6 +354,19 @@ ck-orm 没有必需依赖。`@opentelemetry/api` 是可选的对等依赖项，�
 - Microsoft 简体 peer dependency 页面：https://learn.microsoft.com/zh-cn/microsoftteams/platform/apps-in-teams-meetings/teams-live-share-media-capabilities
 - OpenTelemetry 中文插桩概念：https://opentelemetry.io/zh/docs/concepts/instrumentation/
 - OpenTelemetry 中文可观测性入门：https://opentelemetry.io/zh/docs/concepts/observability-primer/
+- OpenTelemetry 中文术语表：https://opentelemetry.io/zh/docs/concepts/glossary/
+- OpenTelemetry 中文组件：https://opentelemetry.io/zh/docs/concepts/components/
+- OpenTelemetry 中文上下文传播：https://opentelemetry.io/zh/docs/concepts/context-propagation/
+- OpenTelemetry 中文追踪信号：https://opentelemetry.io/zh/docs/concepts/signals/traces/
+- OpenTelemetry 中文 JS 上下文：https://opentelemetry.io/zh/docs/languages/js/context/
+- Vite 插件 API：https://cn.vitejs.dev/guide/api-plugin
+- Vite 构建：https://cn.vitejs.dev/guide/build
+- Rollup 插件开发：https://cn.rollupjs.org/plugin-development/
+- webpack 插件 API：https://webpack.docschina.org/api/plugins/
+- Vue 组合式 API 生命周期钩子：https://cn.vuejs.org/api/composition-api-lifecycle
+- Vue 插件：https://cn.vuejs.org/guide/reusability/plugins
+- Vue 性能优化：https://cn.vuejs.org/guide/best-practices/performance
+- Node.js 中文包文档（社区翻译）：https://nodejs.cn/api/packages.html
 - Google 开发者风格指南：https://developers.google.cn/style/tone
 - 中文文案排版指南：https://github.com/aaranxu/chinese-copywriting-guidelines
 - W3C 中文排版需求：https://www.w3.org/TR/clreq/
@@ -350,7 +376,7 @@ ck-orm 没有必需依赖。`@opentelemetry/api` 是可选的对等依赖项，�
 ### 10. 待确认项
 
 - `schema`／“模式”、`表引擎`、`谓词`、`投影`、`表函数`、`allow-list`／“允许列表”和 `surface`／“接口面”仍需要熟悉 ClickHouse 的母语开发者确认。
-- `join`／“连接”、`thenable`、`span` 和 `Hook` 在不同团队里可能按 SQL、JavaScript 或 OpenTelemetry 的 API 习惯保留英文；需要确认本项目是否接受表中当前选择。
+- `join`／“连接”、`thenable` 和 `span` 在不同团队里可能按 SQL、JavaScript 或 OpenTelemetry 的 API 习惯保留英文；需要确认本项目是否接受表中当前选择。
 - “日志记录器”“可链式调用的”“谨慎解码”等短语是按中文技术写作推定的自然写法，需要母语者通读确认；它们不是“unverified 所以保留英文”。
 - 区域差异表只证明页面中观察到的两侧词形，不证明任一词形在所有上下文都唯一正确。
 

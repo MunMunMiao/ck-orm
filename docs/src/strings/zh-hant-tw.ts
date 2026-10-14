@@ -105,13 +105,25 @@ export default {
         title: "用量計量",
         summary: "用插入觸發的實體化檢視，依租戶、使用者和 UTC 分鐘彙總多個插入批次的用量。",
         notes:
-          "請在可丟棄的資料庫內循序執行，並要有 CREATE、SELECT、INSERT 和 DROP 權限。使用固定名稱的持久資料表及實體化檢視，僅清理已成功建立的物件。處理程序中斷或 CREATE 回應遺失後，可能需要手動檢查殘留物件。",
+          "請在可丟棄的資料庫內循序執行，並要有 CREATE、SELECT、INSERT 和 DROP 權限。使用固定名稱的持久資料表及實體化檢視，僅清理已成功建立的物件。程序中斷或 CREATE 回應遺失後，可能需要手動檢查殘留物件。",
       },
       "request-latency": {
         title: "請求延遲百分位數",
         summary: "用插入觸發的實體化檢視，依租戶、操作和 UTC 分鐘彙總成功請求數、加權平均延遲及精確 p95/p99。",
         notes:
-          "請在可丟棄的資料庫內循序執行，並要有 CREATE、SELECT、INSERT 和 DROP 權限。僅清理已成功建立的固定名稱資料表和實體化檢視；處理程序中斷或 CREATE 回應遺失可能留下物件。精確分位數狀態保留全部樣本，正式環境使用時需評估記憶體用量。",
+          "請在可丟棄的資料庫內循序執行，並要有 CREATE、SELECT、INSERT 和 DROP 權限。僅清理已成功建立的固定名稱資料表和實體化檢視；程序中斷或 CREATE 回應遺失可能留下物件。精確分位數狀態保留全部樣本，正式環境使用時需評估記憶體用量。",
+      },
+      "query-plugins": {
+        title: "查詢外掛程式",
+        summary:
+          "外掛程式替每個請求加上標頭，並依序記錄 ck-orm 送出的陳述式，包括工作階段暫存資料表的 CREATE 和 DROP。",
+        notes: "使用工作階段暫存資料表。",
+      },
+      "otel-tracing": {
+        title: "OpenTelemetry 追蹤",
+        summary:
+          "ck-orm/otel 的 otelTracing() 會為每個請求記錄一個 span。範例用記憶體內的匯出器啟動 OpenTelemetry SDK，再印出這些 span；它們的父 span 是範例自己開啟的 span。",
+        notes: "使用工作階段暫存資料表。",
       },
     },
     tabsLabel: "{title}：原始碼和 SQL",

@@ -116,6 +116,18 @@ export default {
         notes:
           "CREATE, SELECT, INSERT, DROP 권한이 있는 폐기 가능한 데이터베이스에서 순차적으로 실행하세요. 성공적으로 생성한 고정된 이름의 테이블과 구체화된 뷰만 정리합니다. 프로세스가 중단되거나 CREATE 응답이 유실되면 객체가 남을 수 있습니다. 정확한 분위수의 집계 상태는 모든 샘플을 보관하므로 운영 환경 워크로드의 메모리 사용량을 평가하세요.",
       },
+      "query-plugins": {
+        title: "쿼리 플러그인",
+        summary:
+          "플러그인 하나가 모든 요청에 헤더를 추가하고, ck-orm이 보내는 SQL 문을 순서대로 로그에 남깁니다. 세션 임시 테이블의 CREATE와 DROP도 포함됩니다.",
+        notes: "세션 임시 테이블을 사용합니다.",
+      },
+      "otel-tracing": {
+        title: "OpenTelemetry 트레이싱",
+        summary:
+          "ck-orm/otel의 otelTracing()은 요청마다 스팬을 하나씩 기록합니다. 이 예제는 인메모리 익스포터로 OpenTelemetry SDK를 시작한 뒤, 예제가 직접 연 스팬 아래에 중첩된 스팬을 출력합니다.",
+        notes: "세션 임시 테이블을 사용합니다.",
+      },
     },
     tabsLabel: "{title}: 소스와 SQL",
   },

@@ -32,7 +32,7 @@ pnpm add ck-orm
 yarn add ck-orm
 ```
 
-ck-orm has no required dependencies. `@opentelemetry/api` is an optional peer dependency used only by the `ck-orm/otel` plugin; install it alongside ck-orm when you use that plugin.
+ck-orm has no required dependencies. OpenTelemetry tracing is a separate entry point, `ck-orm/otel`, and `@opentelemetry/api` is an optional peer dependency used only by it. The main `ck-orm` entry never imports OpenTelemetry, so an application, browser bundle or edge worker that does not trace installs and bundles none of it. To trace queries, follow the [OpenTelemetry plugin](#opentelemetry-plugin) setup.
 
 ## Quick start
 
@@ -113,6 +113,21 @@ Builder queries are thenable, so `await query` executes the query directly.
 
 `fn.sum` over a `Decimal` column auto-casts to `Decimal(P, S)` and returns `string` to keep precision intact — see [Decimal precision in expressions](#decimal-precision-in-expressions).
 
+### 4. Observe queries
+
+`plugins` hook into every request ck-orm sends to ClickHouse. `otelTracing()` from `ck-orm/otel` turns each request into an OpenTelemetry span once an SDK is running; the setup is in [OpenTelemetry plugin](#opentelemetry-plugin), and [Writing plugins](#writing-plugins) covers your own hooks.
+
+```ts
+import { clickhouseClient } from "ck-orm";
+import { otelTracing } from "ck-orm/otel";
+
+export const db = clickhouseClient({
+  host: "http://127.0.0.1:8123",
+  database: "telemetry_lab",
+  plugins: [otelTracing()],
+});
+```
+
 ## Examples
 
 The [examples page](https://ck-orm.lyz.cloud/examples/) shows runnable queries with the exact SQL each one sends to ClickHouse. Each one is a project in [`examples/`](../examples) with its own test. Runnable ClickHouse coverage lives in [`e2e/`](../e2e), including production-shaped scenario schemas in [`e2e/scenarios.ts`](../e2e/scenarios.ts).
@@ -129,6 +144,7 @@ Use `ck-orm` with these boundaries in mind:
 - the database connection lives on `clickhouseClient(...)`
 - builder queries are the default path, with raw SQL available for ClickHouse-specific expressions
 - `runInSession()` is a ClickHouse session helper, not a transaction
+- `plugins` observe every request ck-orm sends; tracing is the opt-in `ck-orm/otel` plugin, kept out of the main entry
 - `leftJoin()` and `asofLeftJoin()` use SQL-style null semantics by default
 - large or high-risk numeric results are decoded conservatively rather than silently coerced
 
@@ -2600,7 +2616,48 @@ const db = clickhouseClient({
 
 ### OpenTelemetry plugin
 
-Install `@opentelemetry/api`, then add the plugin:
+`otelTracing()` from `ck-orm/otel` records one client span for every request ck-orm sends to ClickHouse. It lives in its own entry point: the main `ck-orm` entry never imports OpenTelemetry, so applications, browser bundles and edge workers that do not trace pay nothing for it. `@opentelemetry/api` is an optional peer dependency that only `ck-orm/otel` imports.
+
+#### Set up
+
+ck-orm creates spans through the OpenTelemetry API, and the API alone records nothing: until an SDK registers a tracer provider, every span is discarded. ck-orm does not start an SDK or choose an exporter, so your application does both, once, at startup.
+
+Install the API, an SDK and an exporter. This is the Node.js SDK with the OTLP/HTTP exporter; any SDK that registers a tracer provider works, including the browser one.
+
+```bash [bun]
+bun add @opentelemetry/api @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-http
+```
+
+```bash [npm]
+npm install @opentelemetry/api @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-http
+```
+
+```bash [pnpm]
+pnpm add @opentelemetry/api @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-http
+```
+
+```bash [yarn]
+yarn add @opentelemetry/api @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-http
+```
+
+Start the SDK before the first query, for example in a module your entry point imports first:
+
+```ts
+// instrumentation.ts
+import { NodeSDK } from "@opentelemetry/sdk-node";
+import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
+
+export const sdk = new NodeSDK({
+  serviceName: "billing-worker",
+  traceExporter: new OTLPTraceExporter(),
+});
+
+sdk.start();
+```
+
+The exporter sends to `http://localhost:4318/v1/traces` unless you set the standard `OTEL_EXPORTER_OTLP_ENDPOINT` variable or pass `url`. The SDK also registers the context manager and the W3C propagator that span parenting and `propagateTraceContext` rely on. A short-lived process must `await sdk.shutdown()` before it exits, or its last spans are lost.
+
+Then add the plugin to the client:
 
 ```ts
 import { clickhouseClient } from "ck-orm";
@@ -2616,6 +2673,12 @@ const db = clickhouseClient({
   ],
 });
 ```
+
+To see spans without a collector, the [OpenTelemetry tracing example](https://ck-orm.lyz.cloud/examples/#otel-tracing) uses an in-memory exporter and prints what the plugin recorded.
+
+#### Spans
+
+Spans are `CLIENT` spans named `clickhouse QUERY` for queries that return rows and `clickhouse <OPERATION>` for everything else, such as `clickhouse INSERT` or `clickhouse CREATE`. A span becomes a child of whichever span is active when the query starts, such as the one your framework's OpenTelemetry instrumentation opens for each HTTP request.
 
 The plugin uses `trace.getTracer("ck-orm")` unless you pass `tracer`. It derives the database name, server address, server port, and request timeout from the `clickhouseClient(...)` configuration. Pass service-level labels through `attributes`; keys starting with `db.` are ignored so application code cannot overwrite built-in database attributes.
 
@@ -2681,6 +2744,8 @@ const requestSource: ClickHouseORMPlugin = {
   },
 };
 ```
+
+The [query plugins example](https://ck-orm.lyz.cloud/examples/#query-plugins) runs a plugin that returns a header from `onQueryStart` and logs each statement from `onQuerySuccess` and `onQueryError`, in the order they ran.
 
 Plugins follow these rules:
 

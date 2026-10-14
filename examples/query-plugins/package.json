@@ -1,0 +1,12 @@
+{
+  "name": "ck-orm-example-query-plugins",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun main.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "ck-orm": "file:../.."
+  }
+}

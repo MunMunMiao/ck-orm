@@ -1,5 +1,5 @@
 ## インストール
-<!-- src:03d420fc -->
+<!-- src:e86aaf8a -->
 
 ```bash [bun]
 bun add ck-orm
@@ -17,10 +17,10 @@ pnpm add ck-orm
 yarn add ck-orm
 ```
 
-ck-ormに必須の依存関係はありません。`@opentelemetry/api`は省略可能なピア依存関係で、`ck-orm/otel`プラグインでのみ使います。そのプラグインを使うときは、ck-ormと一緒にインストールしてください。
+ck-ormに必須の依存関係はありません。OpenTelemetryトレーシングは`ck-orm/otel`という別のエントリーポイントで提供され、`@opentelemetry/api`は、そのエントリーポイントでのみ使う省略可能なピア依存関係です。メインの`ck-orm`エントリーポイントはOpenTelemetryをインポートしません。そのため、トレーシングを使わないアプリケーション、ブラウザー向けバンドル、エッジワーカーには、OpenTelemetryがインストールもバンドルもされません。クエリをトレースするには、[OpenTelemetryプラグイン](#opentelemetry-plugin)のセットアップに従ってください。
 
 ## クイックスタート
-<!-- src:d7ba4246 -->
+<!-- src:847057c0 -->
 
 以下の例では、流れを追いやすくするため、1つのテーブルだけを使います。
 
@@ -99,13 +99,28 @@ const rows = await query;
 
 `Decimal`カラムに対する`fn.sum`は`Decimal(P, S)`へ自動的にキャストし、精度を保つために`string`を返します。[式でのDecimal精度](#decimal-precision-in-expressions)を参照してください。
 
+### 4. クエリを観測する
+
+`plugins`は、ck-ormがClickHouseに送るすべてのリクエストにフックできます。`ck-orm/otel`の`otelTracing()`は、SDKが起動していれば、各リクエストをOpenTelemetryのスパンとして記録します。セットアップは[OpenTelemetryプラグイン](#opentelemetry-plugin)、独自のフックの書き方は[プラグインを書く](#writing-plugins)を参照してください。
+
+```ts
+import { clickhouseClient } from "ck-orm";
+import { otelTracing } from "ck-orm/otel";
+
+export const db = clickhouseClient({
+  host: "http://127.0.0.1:8123",
+  database: "telemetry_lab",
+  plugins: [otelTracing()],
+});
+```
+
 ## 例
 <!-- src:c8f5c20b -->
 
 [使用例ページ](https://ck-orm.lyz.cloud/examples/)では、実行可能なクエリと、それぞれがClickHouseへ送信する正確なSQLを確認できます。各例は[`examples/`](../examples)内に個別のプロジェクトとして置かれ、それぞれにテストがあります。実際にClickHouseで実行するテストは[`e2e/`](../e2e)にあります。[`e2e/scenarios.ts`](../e2e/scenarios.ts)には、本番環境と同じ構成のシナリオスキーマも含まれます。
 
 ## メンタルモデル
-<!-- src:a26a2ce8 -->
+<!-- src:a6fa96d2 -->
 
 `ck-orm`は、次の点を押さえて使います。
 
@@ -117,6 +132,7 @@ const rows = await query;
 - データベース接続は`clickhouseClient(...)`で扱います。
 - ビルダーのクエリが基本の使い方で、ClickHouse固有の式には生SQLも使えます。
 - `runInSession()`はClickHouseのセッションヘルパーであり、トランザクションではありません。
+- `plugins`は、ck-ormが送るすべてのリクエストを観測します。トレーシングは任意で追加する`ck-orm/otel`プラグインで、メインのエントリーポイントには含まれません。
 - `leftJoin()`と`asofLeftJoin()`はデフォルトでSQLと同じNULLの扱いを使います。
 - 桁数が大きい、または精度を失うおそれのある数値結果は、暗黙に変換せず、精度を保ってデコードします。
 
@@ -2476,7 +2492,7 @@ await db.replicasStatus();
 ```
 
 ## オブザーバビリティ
-<!-- src:37125a8e -->
+<!-- src:11c06560 -->
 
 `ck-orm`は、オブザーバビリティのレイヤーを2つ備えています。
 
@@ -2515,7 +2531,48 @@ const db = clickhouseClient({
 
 ### OpenTelemetryプラグイン
 
-`@opentelemetry/api`をインストールしてから、プラグインを追加します。
+`ck-orm/otel`の`otelTracing()`は、ck-ormがClickHouseに送るリクエストごとに、クライアントスパンを1つ記録します。`ck-orm/otel`は独立したエントリーポイントで、メインの`ck-orm`エントリーポイントはOpenTelemetryをインポートしません。トレーシングを使わないアプリケーション、ブラウザー向けバンドル、エッジワーカーには、余計なコストがかかりません。`@opentelemetry/api`は省略可能なピア依存関係で、インポートするのは`ck-orm/otel`だけです。
+
+#### セットアップ
+
+ck-ormはOpenTelemetry APIを通してスパンを作りますが、APIだけでは何も記録されません。SDKがトレーサープロバイダーを登録するまで、スパンはすべて破棄されます。ck-ormはSDKの起動もエクスポーターの選択もしないので、どちらもアプリケーション側で、起動時に1回だけ設定します。
+
+API、SDK、エクスポーターをインストールしてください。以下はNode.js SDKとOTLP/HTTPエクスポーターの組み合わせですが、トレーサープロバイダーを登録するSDKなら、ブラウザー向けも含めてどれでも使えます。
+
+```bash [bun]
+bun add @opentelemetry/api @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-http
+```
+
+```bash [npm]
+npm install @opentelemetry/api @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-http
+```
+
+```bash [pnpm]
+pnpm add @opentelemetry/api @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-http
+```
+
+```bash [yarn]
+yarn add @opentelemetry/api @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-http
+```
+
+最初のクエリより前にSDKを起動してください。たとえば、エントリーポイントが最初にインポートするモジュールで起動します。
+
+```ts
+// instrumentation.ts
+import { NodeSDK } from "@opentelemetry/sdk-node";
+import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
+
+export const sdk = new NodeSDK({
+  serviceName: "billing-worker",
+  traceExporter: new OTLPTraceExporter(),
+});
+
+sdk.start();
+```
+
+エクスポーターは、標準の`OTEL_EXPORTER_OTLP_ENDPOINT`環境変数か`url`を指定しない限り、`http://localhost:4318/v1/traces`へ送信します。SDKは、コンテキストマネージャーとW3Cプロパゲーターも登録します。スパンの親子関係と`propagateTraceContext`は、この2つに依存しています。短時間で終わるプロセスでは、終了前に`await sdk.shutdown()`を実行してください。実行しないと、最後のスパンが失われます。
+
+次に、クライアントにプラグインを追加します。
 
 ```ts
 import { clickhouseClient } from "ck-orm";
@@ -2531,6 +2588,12 @@ const db = clickhouseClient({
   ],
 });
 ```
+
+コレクターを用意せずにスパンを確認するには、[OpenTelemetryトレーシングの例](https://ck-orm.lyz.cloud/examples/#otel-tracing)を参照してください。この例はメモリ内エクスポーターを使い、プラグインが記録した内容を出力します。
+
+#### スパン
+
+スパンの種類は`CLIENT`です。名前は、行を返すクエリなら`clickhouse QUERY`、それ以外なら`clickhouse <OPERATION>`（`clickhouse INSERT`や`clickhouse CREATE`など）です。クエリの開始時にアクティブなスパンがあれば、そのスパンの子になります。たとえば、フレームワークのOpenTelemetry計装がHTTPリクエストごとに開くスパンです。
 
 `tracer`を渡さない場合、プラグインは`trace.getTracer("ck-orm")`を使います。データベース名、サーバーアドレス、サーバーポート、リクエストのタイムアウトは、`clickhouseClient(...)`の設定から取得します。サービス単位のラベルは`attributes`で渡します。`db.`で始まるキーは無視するため、アプリケーションコードでは組み込みのデータベース属性を上書きできません。
 
@@ -2551,7 +2614,7 @@ ClickHouseはこれらのスパンを`system.opentelemetry_span_log`に書き込
 
 `http_headers`に独自の`traceparent`を渡すと、プラグインのものより優先されます。対応する`tracestate`も一緒に渡してください。渡さないと、プラグインの`tracestate`もあわせて送られます。
 
-ブラウザーでは、ClickHouseがこのヘッダーを許可していない限り、`traceparent`のせいでリクエストがCORSプリフライトに失敗します。しかも送られるのはサンプリングされたリクエストだけなので、失敗はランダムに起きているように見えます。デフォルトの`http_options_response`はこのヘッダーを許可しません。ブラウザーで伝播を有効にするのは、`config.d`ファイルで許可を追加してからにしてください。
+ブラウザーでは、ClickHouseがこのヘッダーを許可していない限り、`traceparent`のせいでリクエストがCORSプリフライトに失敗します。しかも送られるのはサンプリングされたリクエストだけなので、失敗はランダムに起きているように見えます。デフォルトの`http_options_response`はこのヘッダーを許可しません。ブラウザーで伝搬を有効にするのは、`config.d`ファイルで許可を追加してからにしてください。
 
 ```xml
 <clickhouse>
@@ -2596,6 +2659,8 @@ const requestSource: ClickHouseORMPlugin = {
   },
 };
 ```
+
+[クエリプラグインの例](https://ck-orm.lyz.cloud/examples/#query-plugins)では、`onQueryStart`からヘッダーを返し、`onQuerySuccess`と`onQueryError`で各ステートメントを実行順にログへ出力するプラグインを動かします。
 
 プラグインには次のルールがあります。
 
@@ -2722,7 +2787,7 @@ const toPublicQueryError = (error: unknown) => {
 
 `otelTracing()`は、`includeStatement`のデフォルトが`true`であるため、空白を詰めたSQLテキストを`db.statement`と`db.query.text`としてスパンに付与します。
 
-バインドされた値はClickHouseの名前付きパラメーターとして別に保存され、SQLテキストには含まれません。ただし、テーブル名、カラム名、クエリの形はトレーシングの出力に残ります。トレースバックエンドを共有する場合やホスト外に置いている場合は、`includeStatement`を無効にするか、コレクターで`db.statement`と`db.query.text`をフィルターしてください。
+バインドされた値はClickHouseの名前付きパラメーターとして別に保存され、SQLテキストには含まれません。ただし、テーブル名、カラム名、クエリの形はトレーシングの出力に残ります。トレーシングバックエンドを共有する場合やホスト外に置いている場合は、`includeStatement`を無効にするか、コレクターで`db.statement`と`db.query.text`をフィルターしてください。
 
 ClickHouseのサーバースパンも、ステートメントを`db.statement`として`system.opentelemetry_span_log`に記録します。このテーブルは、エクスポートしない限りClickHouseサーバー上にとどまります。
 

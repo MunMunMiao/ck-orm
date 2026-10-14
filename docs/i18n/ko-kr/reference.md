@@ -1,5 +1,5 @@
 ## 설치
-<!-- src:03d420fc -->
+<!-- src:e86aaf8a -->
 
 ```bash [bun]
 bun add ck-orm
@@ -17,10 +17,10 @@ pnpm add ck-orm
 yarn add ck-orm
 ```
 
-ck-orm에는 필수 종속성이 없습니다. `@opentelemetry/api`는 `ck-orm/otel` 플러그인에서만 사용하는 선택적 피어 종속성이므로, 이 플러그인을 사용할 때 ck-orm과 함께 설치하세요.
+ck-orm에는 필수 종속성이 없습니다. OpenTelemetry 트레이싱은 `ck-orm/otel`이라는 별도 진입점으로 제공되며, `@opentelemetry/api`는 이 진입점에서만 사용하는 선택적 peer dependency입니다. 기본 `ck-orm` 진입점은 OpenTelemetry를 import하지 않으므로, 트레이싱을 쓰지 않는 애플리케이션, 브라우저 번들, 엣지 워커에는 OpenTelemetry가 설치되지도 번들에 포함되지도 않습니다. 쿼리를 트레이싱하려면 [OpenTelemetry 플러그인](#opentelemetry-plugin)의 설정 방법을 따르세요.
 
 ## 빠른 시작
-<!-- src:d7ba4246 -->
+<!-- src:847057c0 -->
 
 아래 예제는 흐름을 따라가기 쉽도록 테이블 하나만 사용합니다.
 
@@ -99,13 +99,28 @@ const rows = await query;
 
 `fn.sum`은 `Decimal` 컬럼을 `Decimal(P, S)`로 자동으로 형변환하고, 정밀도를 유지하기 위해 `string`을 반환합니다. 자세한 내용은 [표현식의 Decimal 정밀도](#decimal-precision-in-expressions)를 참고하세요.
 
+### 4. 쿼리 관찰
+
+`plugins`로 ck-orm이 ClickHouse에 보내는 모든 요청에 훅을 걸 수 있습니다. `ck-orm/otel`의 `otelTracing()`은 SDK가 실행 중이면 요청마다 OpenTelemetry 스팬을 만듭니다. 설정 방법은 [OpenTelemetry 플러그인](#opentelemetry-plugin)에, 직접 훅을 작성하는 방법은 [플러그인 작성](#writing-plugins)에 있습니다.
+
+```ts
+import { clickhouseClient } from "ck-orm";
+import { otelTracing } from "ck-orm/otel";
+
+export const db = clickhouseClient({
+  host: "http://127.0.0.1:8123",
+  database: "telemetry_lab",
+  plugins: [otelTracing()],
+});
+```
+
 ## 예제
 <!-- src:c8f5c20b -->
 
 [예제 페이지](https://ck-orm.lyz.cloud/examples/)는 실행 가능한 쿼리와 각 쿼리가 ClickHouse에 보내는 SQL을 그대로 보여 줍니다. 각 예제는 [`examples/`](../examples)에 있는 프로젝트이며, 각각 자체 테스트를 포함합니다. 실제 ClickHouse를 대상으로 하는 테스트는 [`e2e/`](../e2e)에 있고, 운영 환경과 비슷한 시나리오 스키마는 [`e2e/scenarios.ts`](../e2e/scenarios.ts)에 있습니다.
 
 ## 핵심 개념
-<!-- src:a26a2ce8 -->
+<!-- src:a6fa96d2 -->
 
 다음 경계를 염두에 두고 `ck-orm`을 사용하세요:
 
@@ -117,6 +132,7 @@ const rows = await query;
 - 데이터베이스 연결은 `clickhouseClient(...)`에서 설정합니다.
 - 기본적으로 빌더 쿼리를 사용하고, ClickHouse 전용 표현식이 필요할 때는 원시 SQL도 사용할 수 있습니다.
 - `runInSession()`은 ClickHouse 세션 헬퍼이며 트랜잭션이 아닙니다.
+- `plugins`는 ck-orm이 보내는 모든 요청을 관찰합니다. 트레이싱은 필요할 때 켜는 `ck-orm/otel` 플러그인이며 기본 진입점에는 포함되지 않습니다.
 - `leftJoin()`과 `asofLeftJoin()`은 기본적으로 SQL 스타일의 NULL 처리 규칙을 사용합니다.
 - 값이 크거나 손실 위험이 큰 숫자 결과는 암묵적으로 형변환하지 않고 보수적으로 디코딩합니다.
 
@@ -2554,7 +2570,7 @@ await db.replicasStatus();
 ```
 
 ## 옵저버빌리티
-<!-- src:37125a8e -->
+<!-- src:11c06560 -->
 
 `ck-orm`은 옵저버빌리티 계층 두 가지를 제공합니다.
 
@@ -2593,7 +2609,48 @@ const db = clickhouseClient({
 
 ### OpenTelemetry 플러그인
 
-`@opentelemetry/api`를 설치한 다음 플러그인을 추가하세요.
+`ck-orm/otel`의 `otelTracing()`은 ck-orm이 ClickHouse로 보내는 모든 요청마다 클라이언트 스팬을 하나씩 기록합니다. 별도 진입점에 있으므로 기본 `ck-orm` 진입점은 OpenTelemetry를 import하지 않습니다. 트레이싱을 쓰지 않는 애플리케이션, 브라우저 번들, 엣지 워커에는 이 기능이 아무 부담도 주지 않습니다. `@opentelemetry/api`는 선택적 peer dependency이며 `ck-orm/otel`만 import합니다.
+
+#### 설정하기
+
+ck-orm은 OpenTelemetry API로 스팬을 만들지만, API만으로는 아무것도 기록되지 않습니다. SDK가 트레이서 프로바이더를 등록하기 전까지는 모든 스팬이 버려집니다. ck-orm은 SDK를 시작하거나 익스포터를 고르지 않으므로, 애플리케이션이 시작할 때 이 두 가지를 한 번 직접 처리해야 합니다.
+
+API, SDK, 익스포터를 설치하세요. 아래는 Node.js SDK와 OTLP/HTTP 익스포터 조합입니다. 트레이서 프로바이더를 등록하는 SDK라면 브라우저용을 포함해 어떤 것이든 쓸 수 있습니다.
+
+```bash [bun]
+bun add @opentelemetry/api @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-http
+```
+
+```bash [npm]
+npm install @opentelemetry/api @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-http
+```
+
+```bash [pnpm]
+pnpm add @opentelemetry/api @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-http
+```
+
+```bash [yarn]
+yarn add @opentelemetry/api @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-http
+```
+
+첫 쿼리를 실행하기 전에 SDK를 시작하세요. 예를 들어 진입점이 가장 먼저 import하는 모듈에서 시작하면 됩니다.
+
+```ts
+// instrumentation.ts
+import { NodeSDK } from "@opentelemetry/sdk-node";
+import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
+
+export const sdk = new NodeSDK({
+  serviceName: "billing-worker",
+  traceExporter: new OTLPTraceExporter(),
+});
+
+sdk.start();
+```
+
+표준 환경 변수 `OTEL_EXPORTER_OTLP_ENDPOINT`를 설정하거나 `url`을 넘기지 않으면 익스포터는 `http://localhost:4318/v1/traces`로 보냅니다. SDK는 스팬의 부모-자식 관계와 `propagateTraceContext`가 의존하는 컨텍스트 매니저, W3C 전파자도 함께 등록합니다. 수명이 짧은 프로세스는 종료하기 전에 반드시 `await sdk.shutdown()`을 실행해야 합니다. 그러지 않으면 마지막 스팬이 유실됩니다.
+
+그런 다음 클라이언트에 플러그인을 추가하세요.
 
 ```ts
 import { clickhouseClient } from "ck-orm";
@@ -2610,13 +2667,19 @@ const db = clickhouseClient({
 });
 ```
 
+컬렉터 없이 스팬을 확인하고 싶다면 [OpenTelemetry 트레이싱 예제](https://ck-orm.lyz.cloud/examples/#otel-tracing)를 보세요. 인메모리 익스포터를 사용해 플러그인이 기록한 내용을 출력합니다.
+
+#### 스팬
+
+스팬의 종류는 `CLIENT`이고, 이름은 행을 반환하는 쿼리면 `clickhouse QUERY`, 그 밖의 요청이면 `clickhouse <OPERATION>`입니다(예: `clickhouse INSERT`, `clickhouse CREATE`). 스팬은 쿼리가 시작될 때 활성 상태인 스팬의 자식이 됩니다. 프레임워크의 OpenTelemetry 계측이 HTTP 요청마다 여는 스팬이 한 예입니다.
+
 `tracer`를 넘기지 않으면 플러그인은 `trace.getTracer("ck-orm")`를 사용합니다. 데이터베이스 이름, 서버 주소, 서버 포트, 요청 시간 초과는 `clickhouseClient(...)` 구성에서 가져옵니다. 서비스 수준 레이블은 `attributes`로 넘기세요. `db.`로 시작하는 키는 무시하므로 애플리케이션 코드가 내장 데이터베이스 속성을 덮어쓸 수 없습니다.
 
 `includeStatement: false`는 공유 트레이싱 백엔드에 더 안전한 설정입니다. 기본값은 `true`입니다. 테이블 이름, 컬럼 이름 또는 쿼리 형태가 서비스 경계 밖으로 나가면 안 될 때 끄세요. 바인딩된 값은 공백을 정리한 SQL 문에 포함되지 않지만 SQL 형태는 여전히 운영상 민감할 수 있습니다.
 
 #### 서버 측 스팬
 
-`propagateTraceContext: true`를 설정하면 스팬의 W3C 트레이스 컨텍스트(`traceparent`, `tracestate`)를 각 요청과 함께 보냅니다. 그러면 ClickHouse가 쿼리에 대한 자체 스팬(`HTTPHandler`, `query`, 파이프라인 단계 등)을 ck-orm 스팬의 자식으로 기록합니다. 플러그인은 이 두 헤더만 전달하며, 전역 propagator가 만드는 `baggage`나 벤더 헤더는 전달하지 않습니다. 또한 샘플링된 스팬에만 헤더를 붙입니다. ClickHouse는 샘플링 여부와 관계없이 받은 모든 트레이스 컨텍스트에 대해 서버 스팬을 기록하기 때문입니다. 플러그인은 전역으로 등록된 propagator를 통해 주입하며, OpenTelemetry SDK는 이를 기본적으로 W3C 트레이스 컨텍스트로 설정합니다. propagator가 등록되어 있지 않으면 아무것도 전송되지 않습니다.
+`propagateTraceContext: true`를 설정하면 스팬의 W3C 트레이스 컨텍스트(`traceparent`, `tracestate`)를 각 요청과 함께 보냅니다. 그러면 ClickHouse가 쿼리에 대한 자체 스팬(`HTTPHandler`, `query`, 파이프라인 단계 등)을 ck-orm 스팬의 자식으로 기록합니다. 플러그인은 이 두 헤더만 전달하며, 전역 전파자가 만드는 `baggage`나 벤더 헤더는 전달하지 않습니다. 또한 샘플링된 스팬에만 헤더를 붙입니다. ClickHouse는 샘플링 여부와 관계없이 받은 모든 트레이스 컨텍스트에 대해 서버 스팬을 기록하기 때문입니다. 플러그인은 전역으로 등록된 전파자를 통해 주입하며, OpenTelemetry SDK는 이를 기본적으로 W3C 트레이스 컨텍스트로 설정합니다. 전파자가 등록되어 있지 않으면 아무것도 전송되지 않습니다.
 
 ```ts
 const db = clickhouseClient({
@@ -2674,6 +2737,8 @@ const requestSource: ClickHouseORMPlugin = {
   },
 };
 ```
+
+[쿼리 플러그인 예제](https://ck-orm.lyz.cloud/examples/#query-plugins)는 `onQueryStart`에서 헤더를 반환하고 `onQuerySuccess`와 `onQueryError`에서 각 SQL 문을 실행된 순서대로 로그에 남기는 플러그인을 실행합니다.
 
 플러그인에는 다음 규칙이 적용됩니다.
 

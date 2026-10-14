@@ -118,6 +118,18 @@ export default {
         notes:
           "Ejecuta este ejemplo de forma secuencial en una base de datos desechable con permisos CREATE, SELECT, INSERT y DROP. Solo elimina las tablas con nombres fijos y la vista materializada que ha creado correctamente; si el proceso se interrumpe o se pierde la respuesta de CREATE, pueden quedar objetos. Los estados de cuantiles exactos conservan todas las muestras, por lo que debes evaluar el uso de memoria para las cargas de trabajo de producción.",
       },
+      "query-plugins": {
+        title: "Plugins de consulta",
+        summary:
+          "Un plugin añade una cabecera a cada solicitud y registra, en orden, las sentencias que envía ck-orm, incluidos el CREATE y el DROP de una tabla temporal de sesión.",
+        notes: "Usa tablas temporales de sesión.",
+      },
+      "otel-tracing": {
+        title: "Trazado con OpenTelemetry",
+        summary:
+          "otelTracing() de ck-orm/otel registra un span por cada solicitud. El ejemplo inicia un SDK de OpenTelemetry con un exportador en memoria y después imprime los spans, anidados bajo un span que crea el propio ejemplo.",
+        notes: "Usa tablas temporales de sesión.",
+      },
     },
     tabsLabel: "{title}: código y SQL",
   },

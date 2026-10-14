@@ -138,7 +138,8 @@ JavaScript, ClickHouse и SQL. Текст должен звучать как о�
   названиях пакетов и цитатах сохраняйте исходное написание. Это более
   последовательное решение проекта; при этом в обычной печати `ё` часто
   употребляют выборочно, а обязательной она становится там, где без неё можно
-  неправильно прочитать слово. См. <https://gramota.ru/biblioteka/spravochniki/pravila-russkoy-orfografii-i-punktuatsii/upotreblenie-bukvy-e-v-tekstakh-raznogo-naznacheniya>.
+  неправильно прочитать слово. Исключение: «экспортер» (компонент OpenTelemetry) пишется без `ё`, как в русской
+  документации ClickHouse и в постах разработчиков. См. <https://gramota.ru/biblioteka/spravochniki/pravila-russkoy-orfografii-i-punktuatsii/upotreblenie-bukvy-e-v-tekstakh-raznogo-naznacheniya>.
 
 ### 5. Numbers, units and dates
 
@@ -315,15 +316,30 @@ JavaScript, ClickHouse и SQL. Текст должен звучать как о�
 | abort | прервать | no | attested | <https://developer.mozilla.org/ru/docs/Web/API/XMLHttpRequest> |
 | cancel | отменить | no | attested | <https://developer.mozilla.org/ru/docs/Web/API/Window/setTimeout> |
 | retry | повторная попытка | no | inferred | Русская форма в технических руководствах; для глагола используйте «повторить». |
-| observability | наблюдаемость | no | inferred | Устоявшаяся русская форма в материалах по OpenTelemetry; проверить у владельца продукта. |
-| tracing | трассировка | no | attested | <https://learn.microsoft.com/ru-ru/azure/azure-monitor/app/distributed-tracing> |
-| span | спан | no | attested | Употребление российскими разработчиками в материалах по трассировке: <https://habr.com/ru/post/574322/>; мужской род: «спана», «спаном». |
+| observability | наблюдаемость | no | attested | Microsoft ru-ru, «Наблюдаемость .NET с помощью OpenTelemetry»: <https://learn.microsoft.com/ru-ru/dotnet/core/diagnostics/observability-with-otel>. Русская документация ClickHouse пишет «обсервабилити»; эта форма не принята. |
+| tracing | трассировка | no | attested | <https://learn.microsoft.com/ru-ru/azure/azure-monitor/app/distributed-tracing>; та же форма в русской документации ClickHouse: <https://clickhouse.com/docs/ru/operations/opentelemetry> |
+| span | спан | no | attested | Основные источники: <https://clickhouse.com/docs/ru/operations/opentelemetry>, <https://clickhouse.com/docs/ru/operations/system-tables/opentelemetry_span_log>, <https://yandex.cloud/ru/docs/monium/traces/concepts>; употребление российскими разработчиками: <https://habr.com/ru/post/574322/>; мужской род: «спана», «спаном». Страницы Microsoft с машинным переводом смешивают «интервал» и «диапазон»; эти формы не приняты. |
 | logging | логирование | no | attested | <https://learn.microsoft.com/ru-ru/azure/azure-monitor/app/api-custom-events-metrics> |
 | logger | логгер | no | inferred | Из русского developer-употребления «логгер» и документации по logging; проверить предпочтительный стиль. |
 | metrics | метрики | no | attested | <https://learn.microsoft.com/ru-ru/azure/azure-monitor/app/api-custom-events-metrics> |
-| instrumentation | инструментирование | no | inferred | Из русской терминологии OpenTelemetry и профилирования; не оставляйте `instrumentation` в прозе. |
-| hook | хук | no | attested | Официальные русские React/Vue-документы используют «хук»: <https://ru.react.dev/learn>, <https://ru.vuejs.org/guide/introduction.html>; мужской род: «хука», «хуком». |
-| plugin | плагин | no | inferred | Устоявшийся русский термин для расширений (в документации webpack, Vite, VS Code); URL не открывался, проверить у носителя. |
+| instrumentation | инструментирование | no | inferred | Из русской терминологии OpenTelemetry и профилирования: Microsoft и русская документация ClickHouse пишут «инструментирование»; Yandex Cloud пишет «Инструментация» — этот вариант не принят. Не оставляйте `instrumentation` в прозе. |
+| hook | хук | no | attested | Официальные русские React/Vue-документы используют «хук»: <https://ru.react.dev/learn>, <https://ru.vuejs.org/guide/introduction.html>; мужской род: «хука», «хуком». Microsoft ru-ru также пишет «стартового хука». |
+| plugin | плагин | no | attested | Русская документация Vue: <https://ru.vuejs.org/guide/reusability/plugins>. |
+| exporter | экспортер | no | attested | Русская документация ClickHouse, страница об интеграции OpenTelemetry (12 употреблений): <https://clickhouse.com/docs/ru/observability/integrating-opentelemetry>; Microsoft пишет «Экспортеры». Источники пишут без `ё`, и это принято как исключение из правила раздела 4: в поиске по X (grok-4.7, 2026-10-15) в недавних постах разработчиков встречается «экспортер» или английское exporter, «экспортёр» — только заголовок Habr 2019 года. |
+| Collector | коллектор | no | attested | Русская документация ClickHouse: <https://clickhouse.com/docs/ru/observability/integrating-opentelemetry>. Название продукта «OpenTelemetry Collector» остаётся английским. |
+| SDK | SDK | yes | attested | Акроним остаётся английским и не склоняется: «запустите SDK», «в SDK». |
+| tracer provider | провайдер трассировщика | no | unverified | Источника нет. Русский машинный перевод Microsoft даёт «поставщика трассировки». Имя API-класса `TracerProvider` остаётся в кодовом фрагменте. |
+| context manager | менеджер контекста | no | unverified | Только документация Python, где «менеджер контекста» относится к оператору `with`. |
+| propagator | propagator | yes | inferred | Остаётся латиницей, без обратных кавычек. Ни один русский источник форму «пропагатор» не использует; в поиске по X (grok-4.7, 2026-10-15; посты отдельно не перепроверялись) «пропагатор» встречается только в значении «пропагандист», а русскоязычные разработчики оставляют OpenTelemetry, OTEL и Prometheus на английском. Машинный перевод Microsoft даёт «распространители», ClickHouse пишет «Передача контекста трассировки». |
+| SpanKind | `SpanKind` | yes | attested | Имя API; русская документация ClickHouse оставляет его английским: «SpanKind спана», <https://clickhouse.com/docs/ru/operations/system-tables/opentelemetry_span_log>. Слово «тип» не используйте: оно путается с типом данных. |
+| sampling | семплирование | no | attested | Yandex Cloud пишет «Семплирование», русская документация ClickHouse — «Сэмплирование», Microsoft — «Выборка». Только для семплирования трассировок и спанов: «выборка» в значениях SQL и статистики остаётся. |
+| entry point | точка входа | no | attested | Страница Microsoft о методе `Main` в C#. |
+| bundle | бандл | no | attested | Как существительное: русская документация Vue, страница о производительности («бандлов»): <https://ru.vuejs.org/guide/best-practices/performance>. Сочетание «браузерный бандл» не подтверждено источником. |
+| worker | воркер | no | attested | MDN: <https://developer.mozilla.org/ru/docs/Web/API/Web_Workers_API>. Сочетание «edge-воркер» с префиксом не подтверждено источником. |
+| environment variable | переменная окружения | no | attested | Документация Yandex Cloud. |
+| preflight | предварительный запрос (preflight) | no | attested | MDN, раздел о CORS («Предварительные запросы»): <https://developer.mozilla.org/ru/docs/Web/HTTP/Guides/CORS>. При первом употреблении добавляйте «(preflight)». |
+| statement | оператор | no | inferred | Источники расходятся: Microsoft пишет «Инструкция SQL», документация Python — «инструкции», русская документация ClickHouse — «Операторы SQL». Выбран «оператор», чтобы не пересекаться с «командой» (command) и «запросом» (query). |
+| set up (heading) | Настройка | no | unverified | Слабый источник: только заголовок на странице Microsoft с машинным переводом. |
 | event | событие | no | attested | <https://developer.mozilla.org/ru/docs/Web/API/EventTarget/addEventListener> |
 | error | ошибка | no | attested | <https://developer.mozilla.org/ru/docs/Web/JavaScript/Reference/Errors/Invalid_for-in_initializer> |
 | exception | исключение | no | attested | <https://developer.mozilla.org/ru/docs/Web/JavaScript/Reference/Errors/Invalid_for-in_initializer> |
@@ -393,7 +409,7 @@ JavaScript, ClickHouse и SQL. Текст должен звучать как о�
 | compose | составить | no | inferred | Для предикатов и выражений используйте «составить» или «объединить» по контексту. |
 | accepts | принимает | no | attested | <https://developer.mozilla.org/ru/docs/Web/API/EventTarget/addEventListener> |
 | returns | возвращает | no | attested | <https://developer.mozilla.org/ru/docs/Web/API/XMLHttpRequest> |
-| fixed product names and API names | без изменений | yes | attested | ClickHouse, ck-orm, TypeScript, JavaScript, SQL, JSON, Decimal, DDL, `NULL`, `CTE`, `HTTP`, `UTC`, OpenTelemetry, Bun, npm, pnpm, Yarn, Node.js, Drizzle, GitHub, `llms.txt`, `MIT`, API names, identifiers и SQL keywords фиксированы правилами проекта: <https://clickhouse.com/>, <https://www.typescriptlang.org/>. Склоняйте их только снаружи кодового фрагмента. |
+| fixed product names and API names | без изменений | yes | attested | ClickHouse, ck-orm, TypeScript, JavaScript, SQL, JSON, Decimal, DDL, `NULL`, `CTE`, `HTTP`, `UTC`, OpenTelemetry, OpenTelemetry Collector, OTLP, W3C, Bun, npm, pnpm, Yarn, Node.js, Drizzle, GitHub, `llms.txt`, `MIT`, API names, identifiers и SQL keywords фиксированы правилами проекта: <https://clickhouse.com/>, <https://www.typescriptlang.org/>. Склоняйте их только снаружи кодового фрагмента. |
 
 ### 7. Wording guard
 
@@ -441,12 +457,11 @@ JavaScript, ClickHouse и SQL. Текст должен звучать как о�
 - Подключение к базе данных задаётся в `clickhouseClient(...)`.
 - По умолчанию используйте запросы, собранные билдером; для выражений, специфичных для ClickHouse, доступен сырой SQL.
 - `runInSession()` — вспомогательная функция для сессий ClickHouse, а не транзакция.
+- `plugins` наблюдают за каждым запросом, который отправляет ck-orm; трассировка включается по желанию через плагин `ck-orm/otel`, который не входит в основную точку входа
 - `leftJoin()` по умолчанию использует семантику NULL в стиле SQL.
 - Крупные или потенциально опасные числовые результаты декодируются осторожно, а не неявно приводятся к другому типу.
 
-У `ck-orm` нет обязательных зависимостей. `@opentelemetry/api` — необязательная
-peer-зависимость, которая нужна только плагину `ck-orm/otel`; устанавливайте её
-вместе с ck-orm, если используете этот плагин.
+У ck-orm нет обязательных зависимостей. Трассировка OpenTelemetry вынесена в отдельную точку входа `ck-orm/otel`, а `@opentelemetry/api` — необязательная peer-зависимость, которую использует только она. Основная точка входа `ck-orm` никогда не импортирует OpenTelemetry, поэтому, если трассировка не нужна, приложение, браузерный бандл или edge-воркер не устанавливают и не включают в сборку ничего из OpenTelemetry. Чтобы трассировать запросы, выполните настройку из раздела [Плагин OpenTelemetry](#opentelemetry-plugin).
 
 ### 9. Sources consulted
 
@@ -483,6 +498,21 @@ peer-зависимость, которая нужна только плагин
 - <https://learn.microsoft.com/ru-ru/sql/relational-databases/security/permissions-database-engine?view=sql-server-ver17>
   — формы «столбец», «разрешение» и SQL-термины безопасности.
 - <https://pnpm.io/ru/how-peers-are-resolved> — форма «peer-зависимость».
+- <https://clickhouse.com/docs/ru/operations/opentelemetry>,
+  <https://clickhouse.com/docs/ru/operations/system-tables/opentelemetry_span_log>
+  и <https://clickhouse.com/docs/ru/observability/integrating-opentelemetry> —
+  «трассировка», «спан», «коллектор», «экспортер», `SpanKind`, «сэмплирование».
+- <https://yandex.cloud/ru/docs/monium/traces/concepts> — «спан»; документация
+  Yandex Cloud также даёт «Семплирование», «переменная окружения» и
+  «Инструментация».
+- <https://learn.microsoft.com/ru-ru/dotnet/core/diagnostics/observability-with-otel>
+  — «наблюдаемость» (страницы Microsoft с машинным переводом считаются слабой
+  опорой).
+- <https://ru.vuejs.org/guide/reusability/plugins> и
+  <https://ru.vuejs.org/guide/best-practices/performance> — «плагин», «бандл».
+- <https://developer.mozilla.org/ru/docs/Web/HTTP/Guides/CORS> и
+  <https://developer.mozilla.org/ru/docs/Web/API/Web_Workers_API> —
+  «предварительный запрос», «воркер».
 - <https://habr.com/ru/companies/rshb/articles/779150/> и
   <https://habr.com/ru/post/574322/> и
   <https://habr.com/ru/companies/jugru/articles/441140/> — живое употребление
@@ -502,9 +532,12 @@ peer-зависимость, которая нужна только плагин
 - Уточните у носителя, естественнее ли для этой аудитории «заключение
   идентификаторов в кавычки» и «внешняя часть API», чем более короткие
   профессиональные формы.
-- Подтвердите баланс «сессия» / «сеанс», «peer-зависимость» / «одноранговая
-  зависимость», а также падежи заимствований «билдер», «спан», «хук» и
-  «плейсхолдер».
+- Подтвердите баланс «сессия» / «сеанс», а также падежи заимствований
+  «билдер», «спан», «хук» и «плейсхолдер».
+- Носитель должен выбрать между «провайдер трассировщика» и оставленным в коде
+  `TracerProvider`: источника для русской формы нет.
+- Носитель должен выбрать между «оператор» и «SQL-запрос» (и «инструкция»)
+  для statement: источники расходятся, а «команда» и «запрос» уже заняты.
 - Проверьте единообразное написание `ё` и ширину русской строки `docs.headline`.
 
 

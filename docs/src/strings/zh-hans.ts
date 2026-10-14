@@ -113,6 +113,17 @@ export default {
         notes:
           "请在可丢弃的数据库内串行运行，需要 CREATE、SELECT、INSERT 和 DROP 权限。仅清理已成功创建的固定名称表和物化视图；进程中断或 CREATE 响应丢失可能留下对象。精确分位数状态保留全部样本，因此需要为生产环境中的工作负载评估内存占用。",
       },
+      "query-plugins": {
+        title: "查询插件",
+        summary: "插件给每个请求添加一个请求头，并按顺序记录 ck-orm 发出的语句，包括会话临时表的 CREATE 和 DROP。",
+        notes: "使用会话临时表。",
+      },
+      "otel-tracing": {
+        title: "OpenTelemetry 追踪",
+        summary:
+          "ck-orm/otel 提供的 otelTracing() 为每个请求记录一个 span。示例先用内存导出器启动 OpenTelemetry SDK，再打印这些 span，它们挂在示例自己创建的 span 之下。",
+        notes: "使用会话临时表。",
+      },
     },
     tabsLabel: "{title}：源代码和 SQL",
   },

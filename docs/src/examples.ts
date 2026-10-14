@@ -7,6 +7,8 @@ import * as decimalSum from "../../examples/decimal-sum/main";
 import * as dynamicSignals from "../../examples/dynamic-signals/main";
 import * as leftJoin from "../../examples/left-join/main";
 import * as literalSearch from "../../examples/literal-search/main";
+import * as otelTracing from "../../examples/otel-tracing/main";
+import * as queryPlugins from "../../examples/query-plugins/main";
 import * as requestLatency from "../../examples/request-latency/main";
 import * as supportTickets from "../../examples/support-tickets/main";
 import * as traceList from "../../examples/trace-list/main";
@@ -166,4 +168,6 @@ export const examples = [
   await example("cdc-rollup", cdcRollup.run),
   await example("usage-metering", usageMetering.run),
   await example("request-latency", requestLatency.run),
+  await example("query-plugins", queryPlugins.run),
+  await example("otel-tracing", otelTracing.run),
 ];
