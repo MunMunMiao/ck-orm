@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
   type AnyColumn,
   type array,
+  dateTime64,
   decimal,
   type int16,
   int32,
@@ -9,6 +10,7 @@ import {
   json,
   type nullable,
   string,
+  uint32,
   type uint64,
 } from "./columns";
 import { fn } from "./functions";
@@ -22,6 +24,7 @@ import {
   eq,
   exists,
   expr,
+  gte,
   inArray,
 } from "./query";
 import type { Selection } from "./query-shared";
@@ -781,5 +784,158 @@ describe("ck-orm query compile", function describeClickHouseORMQueryCompile() {
     // SQL compiles cleanly because `source.kind === "subquery"` survives.
     const compiled = publicDb.select({ id: sub.columns.userId }).from(sub)[compileQuerySymbol]();
     expect(compiled.statement).toMatch(/from \(select .* from `users`\) as `s`/);
+  });
+});
+
+describe("ck-orm asof join", function describeAsofJoin() {
+  const trades = ckTable("trades", {
+    tradeId: uint32("trade_id"),
+    symbol: string(),
+    tradeTime: dateTime64("trade_time", { precision: 3, timezone: "UTC" }),
+  });
+  const quotes = ckTable("quotes", {
+    symbol: string(),
+    quoteTime: dateTime64("quote_time", { precision: 3, timezone: "UTC" }),
+    price: decimal({ precision: 20, scale: 5 }),
+  });
+  const on = and(eq(trades.symbol, quotes.symbol), gte(trades.tradeTime, quotes.quoteTime));
+  const leftSql =
+    "select `trades`.`trade_id` as `tradeId`, `trades`.`symbol` as `symbol`, `quotes`.`price` as `price` from `trades` left asof join `quotes` on (`trades`.`symbol` = `quotes`.`symbol` and `trades`.`trade_time` >= `quotes`.`quote_time`) order by `trades`.`trade_id` ASC";
+  const innerSql =
+    "select `trades`.`trade_id` as `tradeId` from `trades` asof join `quotes` on (`trades`.`symbol` = `quotes`.`symbol` and `trades`.`trade_time` >= `quotes`.`quote_time`)";
+
+  const leftQuery = () =>
+    createQueryClient()
+      .select({ tradeId: trades.tradeId, symbol: trades.symbol, price: quotes.price })
+      .from(trades)
+      .asofLeftJoin(quotes, on)
+      .orderBy(trades.tradeId);
+
+  const innerQuery = () => createQueryClient().select({ tradeId: trades.tradeId }).from(trades).asofJoin(quotes, on);
+
+  it("renders predicate-form ASOF JOIN and LEFT ASOF JOIN", function testAsofJoinSql() {
+    const left = leftQuery()[compileQuerySymbol]();
+    const inner = innerQuery()[compileQuerySymbol]();
+
+    expect(left.statement).toBe(leftSql);
+    expect(left.forcedSettings).toEqual({ join_use_nulls: 1 });
+    expect(inner.statement).toBe(innerSql);
+    expect(inner.forcedSettings).toBeUndefined();
+  });
+
+  it("renders callback-form ASOF joins the same way", function testAsofJoinCallbackSql() {
+    const db = createQueryClient();
+    const left = db
+      .select({ tradeId: trades.tradeId, symbol: trades.symbol, price: quotes.price })
+      .from(trades)
+      .asofLeftJoin(quotes, (joined) => and(eq(trades.symbol, joined.symbol), gte(trades.tradeTime, joined.quoteTime)))
+      .orderBy(trades.tradeId)
+      [compileQuerySymbol]();
+    const inner = db
+      .select({ tradeId: trades.tradeId })
+      .from(trades)
+      .asofJoin(quotes, (joined) => and(eq(trades.symbol, joined.symbol), gte(trades.tradeTime, joined.quoteTime)))
+      [compileQuerySymbol]();
+
+    expect(left.statement).toBe(leftSql);
+    expect(inner.statement).toBe(innerSql);
+  });
+
+  it("renders mixed joins in call order", function testAsofJoinCallOrder() {
+    const db = createQueryClient();
+    const dims = ckTable("dims", { symbol: string(), label: string() });
+    const dimsLeft = ckAlias(dims, "dims_left");
+    const quotesLeft = ckAlias(quotes, "quotes_left");
+    const statement = db
+      .select({ tradeId: trades.tradeId })
+      .from(trades)
+      .innerJoin(dims, eq(trades.symbol, dims.symbol))
+      .asofJoin(quotes, on)
+      .leftJoin(dimsLeft, eq(trades.symbol, dimsLeft.symbol))
+      .asofLeftJoin(quotesLeft, and(eq(trades.symbol, quotesLeft.symbol), gte(trades.tradeTime, quotesLeft.quoteTime)))
+      [compileQuerySymbol]().statement;
+    const innerAt = statement.indexOf("inner join `dims`");
+    const asofAt = statement.indexOf("asof join `quotes` on");
+    const leftAt = statement.indexOf("left join `dims` as `dims_left`");
+    const leftAsofAt = statement.indexOf("left asof join `quotes` as `quotes_left`");
+
+    expect(innerAt).toBeGreaterThanOrEqual(0);
+    expect(asofAt).toBeGreaterThan(innerAt);
+    expect(leftAt).toBeGreaterThan(asofAt);
+    expect(leftAsofAt).toBeGreaterThan(leftAt);
+  });
+
+  it("does not force join_use_nulls when the client disables it", function testAsofLeftJoinRespectsJoinUseNullsZero() {
+    const onZero = and(eq(trades.symbol, quotes.symbol), gte(trades.tradeTime, quotes.quoteTime));
+    const configured = clickhouseClient({
+      databaseUrl: "http://127.0.0.1:8123",
+      clickhouse_settings: { join_use_nulls: 0 },
+    });
+    const narrowed = clickhouseClient({ databaseUrl: "http://127.0.0.1:8123" }).withSettings({
+      join_use_nulls: 0,
+    });
+
+    expect(
+      configured.select({ tradeId: trades.tradeId }).from(trades).asofLeftJoin(quotes, onZero)[compileQuerySymbol]()
+        .forcedSettings,
+    ).toBeUndefined();
+    expect(
+      narrowed.select({ tradeId: trades.tradeId }).from(trades).asofLeftJoin(quotes, onZero)[compileQuerySymbol]()
+        .forcedSettings,
+    ).toBeUndefined();
+  });
+
+  it("bubbles join_use_nulls through .as() and exists()", function testAsofForcedSettingsBubble() {
+    const db = createQueryClient();
+    const joined = db.select({ tradeId: trades.tradeId, price: quotes.price }).from(trades).asofLeftJoin(quotes, on);
+    const named = joined.as("s");
+    const fromSubquery = db.select({ tradeId: named.tradeId }).from(named)[compileQuerySymbol]();
+    const existsQuery = db.select({ tradeId: trades.tradeId }).from(trades).where(exists(joined))[compileQuerySymbol]();
+
+    expect(fromSubquery.forcedSettings).toEqual({ join_use_nulls: 1 });
+    expect(existsQuery.forcedSettings).toEqual({ join_use_nulls: 1 });
+  });
+
+  it("keeps asofJoin and asofLeftJoin when a selection key uses those names", function testAsofJoinMethodPriority() {
+    const db = createQueryClient();
+    const sub = db
+      .select({
+        asofJoin: trades.tradeId,
+        asofLeftJoin: trades.symbol,
+      } as Record<string, unknown>)
+      .from(trades);
+
+    expect(typeof sub.asofJoin).toBe("function");
+    expect(typeof sub.asofLeftJoin).toBe("function");
+    expect(sub.asofJoin(quotes, on)[compileQuerySymbol]().statement).toContain("asof join `quotes`");
+    expect(sub.asofLeftJoin(quotes, on)[compileQuerySymbol]().statement).toContain("left asof join `quotes`");
+  });
+
+  it("starts a line for asof join and left asof join", function testAsofJoinPretty() {
+    expect(leftQuery().toSQL({ pretty: true }).sql).toBe(
+      [
+        "select",
+        "  `trades`.`trade_id` as `tradeId`,",
+        "  `trades`.`symbol` as `symbol`,",
+        "  `quotes`.`price` as `price`",
+        "from `trades`",
+        "left asof join `quotes` on (",
+        "  `trades`.`symbol` = `quotes`.`symbol`",
+        "  and `trades`.`trade_time` >= `quotes`.`quote_time`",
+        ")",
+        "order by `trades`.`trade_id` ASC",
+      ].join("\n"),
+    );
+    expect(innerQuery().toSQL({ pretty: true }).sql).toBe(
+      [
+        "select",
+        "  `trades`.`trade_id` as `tradeId`",
+        "from `trades`",
+        "asof join `quotes` on (",
+        "  `trades`.`symbol` = `quotes`.`symbol`",
+        "  and `trades`.`trade_time` >= `quotes`.`quote_time`",
+        ")",
+      ].join("\n"),
+    );
   });
 });

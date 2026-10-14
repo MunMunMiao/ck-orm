@@ -1,10 +1,7 @@
-import { sql } from "../src/sql";
 import { ckSql } from "./ck-orm";
 import {
   auditEvents,
   auditLogTyped,
-  buildCreateTableStatement,
-  buildDropTableStatement,
   chainedColumns,
   createAdminDb,
   createE2EDb,
@@ -68,8 +65,8 @@ const createTables = async () => {
   const db = createE2EDb();
 
   for (const table of [...scenarioTables, ...schemaTables, ...typeOverrideTables, ...scenarioCaseTables]) {
-    await db.command(sql(buildDropTableStatement(table.originalName)));
-    await db.command(sql(buildCreateTableStatement(table)));
+    await db.dropTable(table, { ifExists: true });
+    await db.createTable(table);
   }
 };
 
@@ -249,8 +246,8 @@ const insertSchemaPrimitives = async () => {
 
 const insertSchemaQbit = async () => {
   const db = createE2EDb();
-  await db.command(sql(buildDropTableStatement(schemaQbit.originalName)));
-  await db.command(sql(buildCreateTableStatement(schemaQbit)));
+  await db.dropTable(schemaQbit, { ifExists: true });
+  await db.createTable(schemaQbit);
   await db.command(ckSql`
     INSERT INTO schema_qbit
     SELECT

@@ -31,6 +31,7 @@ import { formatQueryParamValue } from "./runtime/config";
 import type { ClickHouseSettings, ClickHouseSettingValue } from "./runtime/settings";
 import type { AllInsertableKeys, AnyTable, InsertDataOf, RequiredInsertKeys, Table } from "./schema";
 import { renderTableIdentifier } from "./schema";
+import { renderSettings, validateCreateTableTarget } from "./schema-ddl";
 import {
   compileSql,
   inferPrimitiveType,
@@ -64,6 +65,9 @@ const SQL_FINAL = sql.raw(" final");
 const SQL_FINAL_PAREN_AS = sql.raw(" final) as ");
 const SQL_INNER_JOIN = sql.raw("inner join ");
 const SQL_LEFT_JOIN = sql.raw("left join ");
+const SQL_ASOF_JOIN = sql.raw("asof join ");
+// ClickHouse parses this the same as `asof left join`; the docs SQL formatter splits that form across two lines.
+const SQL_LEFT_ASOF_JOIN = sql.raw("left asof join ");
 const SQL_COUNT = sql.raw("count()");
 const SQL_WITH = sql.raw("with ");
 const SQL_EXISTS_OPEN = sql.raw("exists (");
@@ -102,7 +106,7 @@ type AnySource = QuerySource | AnySelectBuilder;
 // `SelectBuilder<Record<string, unknown>>`. This alias keeps the API
 // accepting any shape while sidestepping the structural variance check.
 // biome-ignore lint/suspicious/noExplicitAny: see the comment above — this is the single source of truth for the deliberate variance escape.
-type AnySelectBuilderLike = AnySelectBuilder<any>;
+export type AnySelectBuilderLike = AnySelectBuilder<any>;
 type ForcedSettings = Readonly<ClickHouseSettings>;
 type MutableForcedSettings = Record<string, ClickHouseSettingValue>;
 
@@ -272,6 +276,7 @@ interface SelectionItem extends SelectionMeta {
 
 interface JoinClause {
   readonly type: "inner" | "left";
+  readonly asof?: true;
   readonly source: AnySource;
   readonly on: SqlPredicate;
 }
@@ -1441,6 +1446,8 @@ const FORBIDDEN_AUTO_COLUMN_KEYS = {
   from: true,
   innerJoin: true,
   leftJoin: true,
+  asofJoin: true,
+  asofLeftJoin: true,
   where: true,
   groupBy: true,
   having: true,
@@ -1561,6 +1568,68 @@ export interface SelectBuilder<
     TJoinUseNulls
   >;
   leftJoin<TSource extends KnownQuerySource | AnySelectBuilderLike>(
+    source: TSource,
+    on: (joined: TSource) => Predicate,
+  ): SelectBuilderWithRefs<
+    InferJoinResult<
+      TSelection,
+      TResult,
+      TRootSource,
+      TSource extends KnownQuerySource
+        ? AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>
+        : AddAnonymousJoinedSource<TJoinedSources, TJoinUseNulls extends 1 ? true : false>
+    >,
+    TSelection,
+    TRootSource,
+    TSource extends KnownQuerySource
+      ? AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>
+      : AddAnonymousJoinedSource<TJoinedSources, TJoinUseNulls extends 1 ? true : false>,
+    TJoinUseNulls
+  >;
+  asofJoin<TSource extends KnownQuerySource | AnySelectBuilderLike>(
+    source: TSource,
+    on: Predicate,
+  ): SelectBuilderWithRefs<
+    TSource extends KnownQuerySource
+      ? InferJoinResult<TSelection, TResult, TRootSource, AddJoinedSource<TJoinedSources, TSource, false>>
+      : TResult,
+    TSelection,
+    TRootSource,
+    TSource extends KnownQuerySource ? AddJoinedSource<TJoinedSources, TSource, false> : TJoinedSources,
+    TJoinUseNulls
+  >;
+  asofJoin<TSource extends KnownQuerySource | AnySelectBuilderLike>(
+    source: TSource,
+    on: (joined: TSource) => Predicate,
+  ): SelectBuilderWithRefs<
+    TSource extends KnownQuerySource
+      ? InferJoinResult<TSelection, TResult, TRootSource, AddJoinedSource<TJoinedSources, TSource, false>>
+      : TResult,
+    TSelection,
+    TRootSource,
+    TSource extends KnownQuerySource ? AddJoinedSource<TJoinedSources, TSource, false> : TJoinedSources,
+    TJoinUseNulls
+  >;
+  asofLeftJoin<TSource extends KnownQuerySource | AnySelectBuilderLike>(
+    source: TSource,
+    on: Predicate,
+  ): SelectBuilderWithRefs<
+    InferJoinResult<
+      TSelection,
+      TResult,
+      TRootSource,
+      TSource extends KnownQuerySource
+        ? AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>
+        : AddAnonymousJoinedSource<TJoinedSources, TJoinUseNulls extends 1 ? true : false>
+    >,
+    TSelection,
+    TRootSource,
+    TSource extends KnownQuerySource
+      ? AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>
+      : AddAnonymousJoinedSource<TJoinedSources, TJoinUseNulls extends 1 ? true : false>,
+    TJoinUseNulls
+  >;
+  asofLeftJoin<TSource extends KnownQuerySource | AnySelectBuilderLike>(
     source: TSource,
     on: (joined: TSource) => Predicate,
   ): SelectBuilderWithRefs<
@@ -1750,6 +1819,21 @@ export const createSelectBuilder = <
     return memoSelectionItems;
   };
 
+  const appendJoin = <TSource>(
+    type: "inner" | "left",
+    source: TSource,
+    on: Predicate | ((joined: TSource) => Predicate),
+    asof?: true,
+  ): JoinClause[] => {
+    const predicate = typeof on === "function" ? on(source) : on;
+    const joinedSource = source as AnySource;
+    const sqlOn = predicate as SqlPredicate;
+    const clause: JoinClause = asof
+      ? { type, asof, source: joinedSource, on: sqlOn }
+      : { type, source: joinedSource, on: sqlOn };
+    return [...state.joins, clause];
+  };
+
   const builder = {
     // Runtime brand for `isSelectBuilder`. Symbol keys are invisible to
     // `Object.keys` / `JSON.stringify` / `for..in` by ES spec, so no
@@ -1829,7 +1913,6 @@ export const createSelectBuilder = <
       TSource extends KnownQuerySource ? AddJoinedSource<TJoinedSources, TSource, false> : TJoinedSources,
       TJoinUseNulls
     > {
-      const predicate = typeof on === "function" ? on(source) : on;
       return clone<
         TSource extends KnownQuerySource
           ? InferJoinResult<TSelection, TResult, TRootSource, AddJoinedSource<TJoinedSources, TSource, false>>
@@ -1837,7 +1920,7 @@ export const createSelectBuilder = <
         TRootSource,
         TSource extends KnownQuerySource ? AddJoinedSource<TJoinedSources, TSource, false> : TJoinedSources
       >({
-        joins: [...state.joins, { type: "inner", source, on: predicate as SqlPredicate }],
+        joins: appendJoin("inner", source, on),
       });
     },
 
@@ -1860,7 +1943,6 @@ export const createSelectBuilder = <
         : TJoinedSources,
       TJoinUseNulls
     > {
-      const predicate = typeof on === "function" ? on(source) : on;
       return clone<
         TSource extends KnownQuerySource
           ? InferJoinResult<
@@ -1875,7 +1957,67 @@ export const createSelectBuilder = <
           ? AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>
           : TJoinedSources
       >({
-        joins: [...state.joins, { type: "left", source, on: predicate as SqlPredicate }],
+        joins: appendJoin("left", source, on),
+      });
+    },
+
+    asofJoin<TSource extends KnownQuerySource | AnySelectBuilderLike>(
+      source: TSource,
+      on: Predicate | ((joined: TSource) => Predicate),
+    ): SelectBuilderWithRefs<
+      TSource extends KnownQuerySource
+        ? InferJoinResult<TSelection, TResult, TRootSource, AddJoinedSource<TJoinedSources, TSource, false>>
+        : TResult,
+      TSelection,
+      TRootSource,
+      TSource extends KnownQuerySource ? AddJoinedSource<TJoinedSources, TSource, false> : TJoinedSources,
+      TJoinUseNulls
+    > {
+      return clone<
+        TSource extends KnownQuerySource
+          ? InferJoinResult<TSelection, TResult, TRootSource, AddJoinedSource<TJoinedSources, TSource, false>>
+          : TResult,
+        TRootSource,
+        TSource extends KnownQuerySource ? AddJoinedSource<TJoinedSources, TSource, false> : TJoinedSources
+      >({
+        joins: appendJoin("inner", source, on, true),
+      });
+    },
+
+    asofLeftJoin<TSource extends KnownQuerySource | AnySelectBuilderLike>(
+      source: TSource,
+      on: Predicate | ((joined: TSource) => Predicate),
+    ): SelectBuilderWithRefs<
+      TSource extends KnownQuerySource
+        ? InferJoinResult<
+            TSelection,
+            TResult,
+            TRootSource,
+            AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>
+          >
+        : TResult,
+      TSelection,
+      TRootSource,
+      TSource extends KnownQuerySource
+        ? AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>
+        : TJoinedSources,
+      TJoinUseNulls
+    > {
+      return clone<
+        TSource extends KnownQuerySource
+          ? InferJoinResult<
+              TSelection,
+              TResult,
+              TRootSource,
+              AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>
+            >
+          : TResult,
+        TRootSource,
+        TSource extends KnownQuerySource
+          ? AddJoinedSource<TJoinedSources, TSource, TJoinUseNulls extends 1 ? true : false>
+          : TJoinedSources
+      >({
+        joins: appendJoin("left", source, on, true),
       });
     },
 
@@ -1981,7 +2123,13 @@ export const createSelectBuilder = <
 
         if (state.joins.length > 0) {
           for (const join of state.joins) {
-            const joinKeyword = join.type === "inner" ? SQL_INNER_JOIN : SQL_LEFT_JOIN;
+            const joinKeyword = join.asof
+              ? join.type === "inner"
+                ? SQL_ASOF_JOIN
+                : SQL_LEFT_ASOF_JOIN
+              : join.type === "inner"
+                ? SQL_INNER_JOIN
+                : SQL_LEFT_JOIN;
             queryParts.push(
               sql`${joinKeyword}${renderSource(join.source, ctx, anonymousCteSources)}${SQL_ON}${join.on.compile(ctx)}`,
             );
@@ -2164,6 +2312,12 @@ export type FromSelectShapeConstraint<TTable extends AnyTable, TResultShape> = [
       readonly missing: Exclude<RequiredInsertKeys<TTable["columns"]>, keyof TResultShape>;
     };
 
+export type CreateMaterializedViewOptions<TTo extends AnyTable, TQuery> = {
+  readonly to: TTo;
+  readonly as: TQuery & FromSelectShapeConstraint<TTo, SelectBuilderRow<TQuery>>;
+  readonly mode?: "create" | "if_not_exists";
+};
+
 // Base builder returned by `client.insert(table)` — both `.values()` and
 // `.fromSelect()` are valid initial calls. Each transitions to a narrowed
 // builder type that no longer offers the other side of the union, mirroring
@@ -2255,20 +2409,21 @@ const compileInsertValues = <TTable extends AnyTable>(
   );
 };
 
-// INSERT-from-SELECT path: zero data on the wire — the SELECT runs entirely
-// on the server. Column list is aligned by SELECT-projection key (the JS
-// object key the user wrote in `select({...})`), not by SQL alias and not by
-// position. ClickHouse aligns INSERT (cols) ↔ SELECT projection by position;
-// we keep both sides in projection-key order so the visible semantics match
-// "by name".
-const compileInsertFromSelect = <TTable extends AnyTable>(
-  table: TTable,
+// Shared by insert().fromSelect() and createMaterializedView(). `errorPrefix`
+// is the only difference in the client-validation messages.
+const planInsertProjection = (
+  table: AnyTable,
   query: AnySelectBuilder,
-): CompiledQuery<never> => {
+  errorPrefix: string,
+): {
+  readonly insertIdentifiers: SQLFragment[];
+  readonly outerSelectParts: SQLFragment[];
+  readonly hasNestedFanOut: boolean;
+} => {
   const selectionItems = query.buildSelectionItems();
   if (selectionItems.length === 0) {
     throw createClientValidationError(
-      "insert().fromSelect() requires the select query to project at least one column. Pass an explicit selection to select({...}).",
+      `${errorPrefix} requires the select query to project at least one column. Pass an explicit selection to select({...}).`,
     );
   }
 
@@ -2335,7 +2490,7 @@ const compileInsertFromSelect = <TTable extends AnyTable>(
 
     if (generatedKeySet.has(projectionKey)) {
       throw createClientValidationError(
-        `insert().fromSelect() cannot target generated column "${projectionKey}" (MATERIALIZED/ALIAS columns are computed by ClickHouse)`,
+        `${errorPrefix} cannot target generated column "${projectionKey}" (MATERIALIZED/ALIAS columns are computed by ClickHouse)`,
       );
     }
 
@@ -2353,7 +2508,7 @@ const compileInsertFromSelect = <TTable extends AnyTable>(
       };
       if (expressionLike.nestedShape == null) {
         throw createClientValidationError(
-          `insert().fromSelect() projection for nested column "${projectionKey}" must be a direct nested column reference (e.g. \`source.${projectionKey}\`). Computed expressions cannot fill nested columns because they expand to multiple parallel array fields; use .values(...) or .insertJsonEachRow(...) for row-wise insertion of computed nested data.`,
+          `${errorPrefix} projection for nested column "${projectionKey}" must be a direct nested column reference (e.g. \`source.${projectionKey}\`). Computed expressions cannot fill nested columns because they expand to multiple parallel array fields; use .values(...) or .insertJsonEachRow(...) for row-wise insertion of computed nested data.`,
         );
       }
       const sourceFieldKeys = new Set(Object.keys(expressionLike.nestedShape));
@@ -2361,7 +2516,7 @@ const compileInsertFromSelect = <TTable extends AnyTable>(
         if (!sourceFieldKeys.has(targetFieldKey)) {
           const sourceKeys = [...sourceFieldKeys].join(", ");
           throw createClientValidationError(
-            `insert().fromSelect() nested column "${projectionKey}" shape mismatch: target requires field "${targetFieldKey}", source nested shape provides {${sourceKeys}}`,
+            `${errorPrefix} nested column "${projectionKey}" shape mismatch: target requires field "${targetFieldKey}", source nested shape provides {${sourceKeys}}`,
           );
         }
       }
@@ -2375,7 +2530,7 @@ const compileInsertFromSelect = <TTable extends AnyTable>(
 
     if (!knownColumnKeys.has(projectionKey)) {
       throw createClientValidationError(
-        `insert().fromSelect() projects unknown column "${projectionKey}" — not a column of "${table.originalName}"`,
+        `${errorPrefix} projects unknown column "${projectionKey}" — not a column of "${table.originalName}"`,
       );
     }
     // At this point `projectionKey` is in `knownColumnKeys`, is *not* in
@@ -2412,7 +2567,7 @@ const compileInsertFromSelect = <TTable extends AnyTable>(
   }
   if (requiredKeysMissing.length > 0) {
     throw createClientValidationError(
-      `insert().fromSelect() select is missing required columns: ${requiredKeysMissing.join(", ")}`,
+      `${errorPrefix} select is missing required columns: ${requiredKeysMissing.join(", ")}`,
     );
   }
 
@@ -2441,6 +2596,28 @@ const compileInsertFromSelect = <TTable extends AnyTable>(
     }
   }
 
+  return {
+    insertIdentifiers,
+    outerSelectParts,
+    hasNestedFanOut,
+  };
+};
+
+// INSERT-from-SELECT path: zero data on the wire — the SELECT runs entirely
+// on the server. Column list is aligned by SELECT-projection key (the JS
+// object key the user wrote in `select({...})`), not by SQL alias and not by
+// position. ClickHouse aligns INSERT (cols) ↔ SELECT projection by position;
+// we keep both sides in projection-key order so the visible semantics match
+// "by name".
+const compileInsertFromSelect = <TTable extends AnyTable>(
+  table: TTable,
+  query: AnySelectBuilder,
+): CompiledQuery<never> => {
+  const { insertIdentifiers, outerSelectParts, hasNestedFanOut } = planInsertProjection(
+    table,
+    query,
+    "insert().fromSelect()",
+  );
   const ctx: BuildContext = {
     params: {},
     paramTypes: {},
@@ -2450,7 +2627,7 @@ const compileInsertFromSelect = <TTable extends AnyTable>(
   // forcedSettings (e.g. join_use_nulls = 1 from a leftJoin) bubble up
   // through `collectForcedSettings`. Mirrors `SelectBuilder` at line ~1708.
   const { result: nestedCompiled, forcedSettings } = withCompileState(ctx, () => compileNestedQuery(query, ctx));
-
+  const innerAlias = sql.identifier("__ck_inner");
   const insertHeader = sql`insert into ${renderTableIdentifier(table)} (${joinSqlParts(insertIdentifiers, ", ")})`;
   const statement = hasNestedFanOut
     ? sql`${insertHeader} select ${joinSqlParts(outerSelectParts, ", ")} from (${sql.raw(nestedCompiled.statement)}) as ${innerAlias}`
@@ -2467,6 +2644,50 @@ const compileInsertFromSelect = <TTable extends AnyTable>(
     {
       rootSourceName: table.originalName,
       tableName: table.originalName,
+    },
+  );
+};
+
+export const compileCreateMaterializedView = (
+  name: string,
+  to: AnyTable,
+  query: AnySelectBuilderLike,
+  mode: "create" | "if_not_exists" = "create",
+): CompiledQuery<never> => {
+  validateCreateTableTarget(to);
+  const { insertIdentifiers, outerSelectParts } = planInsertProjection(
+    to,
+    query as AnySelectBuilder,
+    "createMaterializedView()",
+  );
+  const ctx: BuildContext = {
+    params: {},
+    paramTypes: {},
+    nextParamIndex: 0,
+  };
+  const { result: nestedCompiled, forcedSettings } = withCompileState(ctx, () =>
+    compileNestedQuery(query as AnySelectBuilder, ctx),
+  );
+  const innerAlias = sql.identifier("__ck_inner");
+  const outerPairs = outerSelectParts.map((part, index) => sql`${part} as ${insertIdentifiers[index]}`);
+  const existenceClause = mode === "if_not_exists" ? "IF NOT EXISTS " : "";
+  const settingsClause = forcedSettings ? renderSettings(forcedSettings) : undefined;
+  const statement = sql`CREATE MATERIALIZED VIEW ${sql.raw(existenceClause)}${sql.identifier(name)} TO ${sql.identifier(
+    to.originalName,
+  )} AS select ${joinSqlParts(outerPairs, ", ")} from (${sql.raw(nestedCompiled.statement)}) as ${innerAlias}${sql.raw(
+    settingsClause ? ` ${settingsClause}` : "",
+  )}`;
+  const compiled = compileSql(statement, ctx);
+  return createCompiledQuery(
+    compiled.query,
+    [],
+    "command",
+    { ...compiled.params },
+    { ...compiled.paramTypes },
+    undefined,
+    {
+      rootSourceName: name,
+      tableName: name,
     },
   );
 };
@@ -2589,7 +2810,7 @@ export type Cte<TResult extends Record<string, unknown> = Record<string, unknown
   readonly columns: ReferenceColumns<TResult, TName>;
 } & Omit<ReferenceColumns<TResult, TName>, ForbiddenCteColumnKeys>;
 
-type SelectBuilderRow<TQuery> = TQuery extends {
+export type SelectBuilderRow<TQuery> = TQuery extends {
   execute(options?: ClickHouseBaseQueryOptions): Promise<Array<infer TResult>>;
 }
   ? TResult extends Record<string, unknown>

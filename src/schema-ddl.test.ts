@@ -183,7 +183,33 @@ describe("ck-orm schema ddl", function describeSchemaDdl() {
     );
   });
 
-  it("keeps DROP TABLE helpers aligned with the shared renderer", function testBuildDropTableStatement() {
-    expect(buildDropTableStatement("events")).toBe("DROP TABLE IF EXISTS `events`");
+  it("renders the three createTable modes", function testBuildCreateTableModes() {
+    const events = ckTable("events", { id: int32() });
+    const columns = "(\n  `id` Int32\n)\nENGINE = MergeTree\nORDER BY tuple()";
+
+    expect(buildCreateTableStatement(events)).toBe(`CREATE TABLE \`events\`\n${columns}`);
+    expect(buildCreateTableStatement(events, "create")).toBe(`CREATE TABLE \`events\`\n${columns}`);
+    expect(buildCreateTableStatement(events, "if_not_exists")).toBe(
+      `CREATE TABLE IF NOT EXISTS \`events\`\n${columns}`,
+    );
+    expect(buildCreateTableStatement(events, "or_replace")).toBe(`CREATE OR REPLACE TABLE \`events\`\n${columns}`);
+  });
+
+  it("renders DROP TABLE from a name or a table object", function testBuildDropTableStatement() {
+    const events = ckTable("events", { id: int32() });
+
+    expect(buildDropTableStatement("events")).toBe("DROP TABLE `events`");
+    expect(buildDropTableStatement("events", {})).toBe("DROP TABLE `events`");
+    expect(buildDropTableStatement("events", { ifExists: true })).toBe("DROP TABLE IF EXISTS `events`");
+    expect(buildDropTableStatement("events", { sync: true })).toBe("DROP TABLE `events` SYNC");
+    expect(buildDropTableStatement("events", { ifExists: true, sync: true })).toBe(
+      "DROP TABLE IF EXISTS `events` SYNC",
+    );
+    expect(buildDropTableStatement(events)).toBe("DROP TABLE `events`");
+    expect(buildDropTableStatement(events, { ifExists: true, sync: true })).toBe("DROP TABLE IF EXISTS `events` SYNC");
+    expect(() => buildDropTableStatement(ckAlias(events, "e"))).toThrow(
+      "Schema DDL requires a base table, not an aliased table",
+    );
+    expect(() => buildDropTableStatement("bad-name")).toThrow("Invalid SQL identifier: bad-name");
   });
 });

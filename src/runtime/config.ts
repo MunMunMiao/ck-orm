@@ -13,7 +13,7 @@ import type {
   ClickHouseORMTracingOptions,
 } from "../observability";
 import { base64EncodeUtf8, canSetUserAgentHeader } from "../platform";
-import type { CompiledQuery, QueryClient } from "../query";
+import type { AnySelectBuilderLike, CompiledQuery, CreateMaterializedViewOptions, QueryClient } from "../query";
 import type { AnyTable } from "../schema";
 import { compileSql, type QueryParamTypes, type SQLFragment } from "../sql";
 import type { JsonHandling } from "./json-stream";
@@ -79,6 +79,15 @@ export type CreateTemporaryTableOptions = {
   readonly mode?: "create" | "if_not_exists" | "or_replace";
 };
 
+export type CreateTableOptions = {
+  readonly mode?: "create" | "if_not_exists" | "or_replace";
+};
+
+export type DropTableOptions = {
+  readonly ifExists?: boolean;
+  readonly sync?: boolean;
+};
+
 export type SessionRunInSessionOptions = Omit<ClickHouseBaseQueryOptions, "session_id"> & {
   session_id?: string;
   /**
@@ -120,6 +129,12 @@ export interface Session<TJoinUseNulls extends 0 | 1 = 1>
   ): Promise<void>;
   registerTempTable(name: string): void;
   createTemporaryTable(table: AnyTable, options?: CreateTemporaryTableOptions): Promise<void>;
+  createTable(table: AnyTable, options?: CreateTableOptions): Promise<void>;
+  createMaterializedView<TTo extends AnyTable, TQuery extends AnySelectBuilderLike>(
+    name: string,
+    options: CreateMaterializedViewOptions<TTo, TQuery>,
+  ): Promise<void>;
+  dropTable(table: AnyTable | string, options?: DropTableOptions): Promise<void>;
   createTemporaryTableRaw(name: string, definition: string): Promise<void>;
   runInSession<TResult>(
     callback: (session: Session<TJoinUseNulls>) => Promise<TResult>,

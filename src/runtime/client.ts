@@ -13,11 +13,11 @@ import {
   resolveSqlOperation,
 } from "../observability";
 import { createUuid } from "../platform";
-import type { CompiledQuery, QueryClient } from "../query";
-import { createQueryClient, createSessionId, decodeRow } from "../query";
+import type { AnySelectBuilderLike, CompiledQuery, CreateMaterializedViewOptions, QueryClient } from "../query";
+import { compileCreateMaterializedView, createQueryClient, createSessionId, decodeRow } from "../query";
 import type { QueryParams } from "../query-shared";
 import type { AnyTable } from "../schema";
-import { buildCreateTemporaryTableStatement } from "../schema-ddl";
+import { buildCreateTableStatement, buildCreateTemporaryTableStatement, buildDropTableStatement } from "../schema-ddl";
 import { quoteIdentifier, sql } from "../sql";
 import {
   assertValidUserQueryParams,
@@ -26,7 +26,9 @@ import {
   type ClickHouseEndpointOptions,
   type ClickHouseQueryOptions,
   type ClickHouseStreamOptions,
+  type CreateTableOptions,
   type CreateTemporaryTableOptions,
+  type DropTableOptions,
   encodeJsonEachRowInstants,
   mergeClickHouseSettings,
   mergeQueryParams,
@@ -769,6 +771,27 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
       }
       const statement = buildCreateTemporaryTableStatement(table, options?.mode);
       registerValidatedTempTable(table.originalName);
+      await client.command(sql(statement));
+    },
+
+    async createTable(table: AnyTable, options?: CreateTableOptions) {
+      const statement = buildCreateTableStatement(table, options?.mode);
+      await client.command(sql(statement));
+    },
+
+    async createMaterializedView<TTo extends AnyTable, TQuery extends AnySelectBuilderLike>(
+      name: string,
+      options: CreateMaterializedViewOptions<TTo, TQuery>,
+    ) {
+      const compiled = compileCreateMaterializedView(name, options.to, options.as, options.mode);
+      await executeCompiled({
+        ...compiled,
+        mode: "command",
+      });
+    },
+
+    async dropTable(table: AnyTable | string, options?: DropTableOptions) {
+      const statement = buildDropTableStatement(table, options);
       await client.command(sql(statement));
     },
 

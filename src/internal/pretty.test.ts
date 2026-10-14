@@ -122,6 +122,29 @@ describe("prettyStatement", () => {
     expect(strip(prettyStatement(statement))).toBe(strip(statement));
   });
 
+  it("starts a line for asof join and left asof join, and leaves other joins unchanged", () => {
+    expect(
+      prettyStatement(
+        "select a from t inner join u on t.id = u.id left join v on t.id = v.id left asof join w on t.id = w.id asof join x on t.id = x.id",
+      ),
+    ).toBe(
+      [
+        "select",
+        "  a",
+        "from t",
+        "inner join u on t.id = u.id",
+        "left join v on t.id = v.id",
+        "left asof join w on t.id = w.id",
+        "asof join x on t.id = x.id",
+      ].join("\n"),
+    );
+  });
+
+  it("does not treat left(x, 1) or a partial left asof as a clause", () => {
+    expect(prettyStatement("select left(x, 1) as v from t")).toBe(["select", "  left(x, 1) as v", "from t"].join("\n"));
+    expect(prettyStatement("select left asof x from t")).toBe(["select", "  left asof x", "from t"].join("\n"));
+  });
+
   it("returns the statement unchanged when line breaks could change its meaning or it is unbalanced", () => {
     for (const statement of [
       "select 1 -- comment\nfrom t",

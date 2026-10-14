@@ -1,6 +1,6 @@
 import { expect, it } from "bun:test";
 import { type BuiltQuery, type CompiledQuery, ck, ckSql, ckTable, ckType, fn } from "./ck-orm";
-import { createE2EDb, createTempTableName, pets, users, webEvents } from "./shared";
+import { createE2EDb, createTempTableName, pets, quoteSnapshots, tradeFills, users, webEvents } from "./shared";
 import { describeE2E } from "./test-helpers";
 
 type Db = ReturnType<typeof createE2EDb>;
@@ -57,6 +57,18 @@ describeE2E("ck-orm e2e toSQL", function describeToSQL() {
         .from(users)
         .where(ck.inArray(users.id, db.select({ id: pets.owner_id }).from(pets)))
         .orderBy(users.id),
+      "an asof left join": db
+        .select({ tradeId: tradeFills.trade_id, bid: quoteSnapshots.bid })
+        .from(tradeFills)
+        .asofLeftJoin(
+          quoteSnapshots,
+          ck.and(
+            ck.eq(tradeFills.symbol, quoteSnapshots.symbol),
+            ck.gte(tradeFills.filled_at, quoteSnapshots.quote_time),
+          ),
+        )
+        .where(ck.lte(tradeFills.trade_id, 3))
+        .orderBy(tradeFills.trade_id),
     };
 
     for (const [label, query] of Object.entries(queries)) {

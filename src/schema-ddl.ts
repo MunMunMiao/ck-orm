@@ -115,7 +115,9 @@ const renderSettingsValue = (value: string | number | boolean | SQLFragment<unkn
   return compileDdlFragment(value, "table SETTINGS value");
 };
 
-const renderSettings = (settings: TableOptions["settings"]) => {
+export const renderSettings = (
+  settings: Readonly<Record<string, string | number | boolean | SQLFragment<unknown>>> | undefined,
+) => {
   if (!settings || Object.keys(settings).length === 0) {
     return undefined;
   }
@@ -180,7 +182,7 @@ const requiresOrderBy = (engineName: string | undefined) => {
   return mergeTreeEngineNames.has(engineName);
 };
 
-const validateCreateTableTarget = (table: AnyTable) => {
+export const validateCreateTableTarget = (table: AnyTable) => {
   if (table.alias) {
     throw createClientValidationError("Schema DDL requires a base table, not an aliased table");
   }
@@ -259,12 +261,14 @@ const renderColumns = (table: AnyTable) => {
     .join(",\n");
 };
 
-export const buildCreateTableStatement = (table: AnyTable) => {
+export const buildCreateTableStatement = (table: AnyTable, mode: CreateTemporaryTableMode = "create") => {
   validateCreateTableTarget(table);
   const { text: engineText, engineName } = resolveEngineClause(table.options.engine, table.options, false);
+  const modePrefix = mode === "or_replace" ? "OR REPLACE " : "";
+  const existenceClause = mode === "if_not_exists" ? "IF NOT EXISTS " : "";
 
   return `
-CREATE TABLE ${quoteIdentifier({ table: table.originalName })}
+CREATE ${modePrefix}TABLE ${existenceClause}${quoteIdentifier({ table: table.originalName })}
 (
 ${renderColumns(table)}
 )
@@ -288,6 +292,18 @@ ${renderCreateTableClauses(table, engineText, engineName, true)}
   `.trim();
 };
 
-export const buildDropTableStatement = (tableName: string) => {
-  return `DROP TABLE IF EXISTS ${quoteIdentifier({ table: tableName })}`;
+export const buildDropTableStatement = (
+  table: AnyTable | string,
+  options: {
+    readonly ifExists?: boolean;
+    readonly sync?: boolean;
+  } = {},
+) => {
+  if (typeof table !== "string") {
+    validateCreateTableTarget(table);
+  }
+  const tableName = typeof table === "string" ? table : table.originalName;
+  const existenceClause = options.ifExists ? "IF EXISTS " : "";
+  const syncClause = options.sync ? " SYNC" : "";
+  return `DROP TABLE ${existenceClause}${quoteIdentifier({ table: tableName })}${syncClause}`;
 };

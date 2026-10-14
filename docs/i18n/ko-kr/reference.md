@@ -105,7 +105,7 @@ const rows = await query;
 [예제 페이지](https://ck-orm.lyz.cloud/examples/)는 실행 가능한 쿼리와 각 쿼리가 ClickHouse에 보내는 SQL을 그대로 보여 줍니다. 각 예제는 [`examples/`](../examples)에 있는 프로젝트이며, 각각 자체 테스트를 포함합니다. 실제 ClickHouse를 대상으로 하는 테스트는 [`e2e/`](../e2e)에 있고, 운영 환경과 비슷한 시나리오 스키마는 [`e2e/scenarios.ts`](../e2e/scenarios.ts)에 있습니다.
 
 ## 핵심 개념
-<!-- src:f7815577 -->
+<!-- src:a26a2ce8 -->
 
 다음 경계를 염두에 두고 `ck-orm`을 사용하세요:
 
@@ -117,13 +117,13 @@ const rows = await query;
 - 데이터베이스 연결은 `clickhouseClient(...)`에서 설정합니다.
 - 기본적으로 빌더 쿼리를 사용하고, ClickHouse 전용 표현식이 필요할 때는 원시 SQL도 사용할 수 있습니다.
 - `runInSession()`은 ClickHouse 세션 헬퍼이며 트랜잭션이 아닙니다.
-- `leftJoin()`은 기본적으로 SQL 스타일의 NULL 처리 규칙을 사용합니다.
+- `leftJoin()`과 `asofLeftJoin()`은 기본적으로 SQL 스타일의 NULL 처리 규칙을 사용합니다.
 - 값이 크거나 손실 위험이 큰 숫자 결과는 암묵적으로 형변환하지 않고 보수적으로 디코딩합니다.
 
-`ck-orm`은 타입 기반으로 ClickHouse를 다루는 데 초점을 둡니다. 테이블 정의, 쿼리 조합, 쓰기 헬퍼, 세션 헬퍼, 옵저버빌리티를 다룹니다. 운영 DDL과 스키마 마이그레이션은 애플리케이션의 마이그레이션 도구에서 계속 처리합니다.
+`ck-orm`은 타입 기반으로 ClickHouse를 다루는 데 초점을 둡니다. 테이블 정의, 쿼리 조합, 쓰기 헬퍼, 세션 헬퍼, 옵저버빌리티를 다룹니다. `createTable()`, `createMaterializedView()`, `dropTable()`은 각각 DDL 문 하나를 실행합니다. 스키마 마이그레이션(스키마 비교, `ALTER`, 버전 관리)은 애플리케이션의 마이그레이션 도구에 그대로 둡니다.
 
 ## 스키마 DSL
-<!-- src:6809e7a9 -->
+<!-- src:5149bff0 -->
 
 ### `ckTable()`
 
@@ -199,9 +199,9 @@ const probeTelemetry = ckTable(
 스키마 메타데이터는 `ck-orm`에서 두 가지 역할을 합니다.
 
 - 타입 정보를 바탕으로 쿼리를 만들고, 삽입을 검증하고, 결과를 디코딩합니다.
-- 세션 임시 테이블용 구조화된 DDL을 생성할 수 있습니다.
+- `createTable()`과 `createTemporaryTable()`의 `CREATE TABLE` 문을 렌더링합니다.
 
-이 메타데이터는 운영 환경의 ClickHouse 테이블을 자동으로 마이그레이션하거나 동기화하지 않습니다. 운영 환경의 DDL은 마이그레이션 도구에서 관리하고, `ckTable(...)`을 애플리케이션이 읽고 쓰는 스키마와 일치시키세요.
+이 메타데이터는 기존 ClickHouse 테이블을 마이그레이션하거나 동기화하지 않습니다. `createTable()`은 테이블을 만들기만 합니다([테이블과 구체화된 뷰](#tables-and-materialized-views) 참고). 스키마 마이그레이션은 마이그레이션 도구에 두고, `ckTable(...)`을 애플리케이션이 읽고 쓰는 스키마와 일치시키세요.
 
 예제는 다음과 같습니다.
 
@@ -901,7 +901,7 @@ ck-orm은 모든 요청에 전송 계약에 필요한 최소 설정 집합을 �
 - 자격 증명을 지정하지 않으면 사용자 이름은 `default`이고 비밀번호는 빈 문자열입니다.
 
 ## 쿼리 빌더
-<!-- src:5152d6ff -->
+<!-- src:fc28245d -->
 
 아래 코드 조각에서는 `db`, `probeTelemetry`와 코드에 나오는 헬퍼를 `ck-orm`에서 가져왔다고 가정합니다.
 
@@ -949,6 +949,48 @@ const rows = await db
     ck.eq(telemetry.probeId, matchedTelemetry.probeId),
   );
 ```
+
+### `asofJoin()`, `asofLeftJoin()`
+
+`asofJoin()`과 `asofLeftJoin()`은 ClickHouse의 `ASOF JOIN`과 `LEFT ASOF JOIN`을 렌더링합니다. 왼쪽의 각 행에 대해 일치하는 행을 모두 조인하는 대신, 값이 가장 가까운 오른쪽 행 하나만 조인합니다. 조건은 `ck.and(...)`로 하나 이상의 동등 조건과, 왼쪽 컬럼과 오른쪽 컬럼 사이의 `ck.gt`, `ck.gte`, `ck.lt`, `ck.lte` 중 정확히 하나를 묶습니다.
+
+```ts
+import { ck, ckTable, ckType } from "ck-orm";
+
+const trades = ckTable("trades", {
+  tradeId: ckType.uint32("trade_id"),
+  symbol: ckType.string(),
+  tradeTime: ckType.dateTime64("trade_time", { precision: 3, timezone: "UTC" }),
+});
+
+const quotes = ckTable("quotes", {
+  symbol: ckType.string(),
+  quoteTime: ckType.dateTime64("quote_time", { precision: 3, timezone: "UTC" }),
+  price: ckType.decimal({ precision: 20, scale: 5 }),
+});
+
+// Each trade gets the latest quote of its symbol at or before the trade time.
+const rows = await db
+  .select({
+    tradeId: trades.tradeId,
+    price: quotes.price,
+  })
+  .from(trades)
+  .asofLeftJoin(
+    quotes,
+    ck.and(
+      ck.eq(trades.symbol, quotes.symbol),
+      ck.gte(trades.tradeTime, quotes.quoteTime),
+    ),
+  );
+// rows: { tradeId: number; price: string | null }[]
+```
+
+- `ck.gte(left, right)`는 왼쪽 값 이전 또는 그 시점의 가장 최근 오른쪽 행을 고르고, `ck.gt`는 왼쪽 값보다 엄격히 이전인 가장 최근 행을 고릅니다. `ck.lte`와 `ck.lt`는 왼쪽 값 이후 또는 그 시점, 또는 엄격히 이후인 가장 이른 오른쪽 행을 고릅니다.
+- `asofLeftJoin()`은 [`leftJoin()`의 NULL 처리 규칙](#join-null-semantics)을 따릅니다. `join_use_nulls = 1`을 보내고 오른쪽을 NULL 허용으로 타입을 정하므로, 일치하는 행이 없는 왼쪽 행은 `null`이 됩니다. `asofJoin()`은 `innerJoin()`처럼 그런 행을 버립니다.
+- 가장 가까운 값을 찾는 컬럼은 정수, 부동소수점, `Date`, `DateTime`, `Decimal` 중 하나여야 하고, 비교의 양쪽은 모두 컬럼을 가리켜야 합니다. 값과의 비교는 여기에 포함되지 않습니다. `ck.eq(quotes.symbol, "BTCUSD")` 같은 추가 동등 필터는 허용됩니다.
+- ck-orm은 이 조건을 검사하지 않습니다. 부등 비교가 없거나, 부등 비교가 두 개이거나, `ck.or(...)`가 있으면 ClickHouse는 데이터를 읽기 전에 거부합니다. 오류는 `ClickHouseORMError`이며 `kind`는 `"request_failed"`, `clickhouseName`은 `"INVALID_JOIN_ON_EXPRESSION"`입니다. 동등 조건이 없는 경우와 가장 가까운 값의 컬럼이 다른 타입인 경우도 거부됩니다. 동등 조건이 없을 때의 오류 이름은 ClickHouse 버전마다 다릅니다.
+- ASOF 조인은 기본 `join_algorithm`과 `hash`, `parallel_hash`, `full_sorting_merge`로 실행됩니다. `partial_merge`, `grace_hash`, `direct`는 `NOT_IMPLEMENTED`로 실패합니다.
 
 ### `where()`와 조건 헬퍼
 
@@ -1326,7 +1368,7 @@ await db
 
 #### Selection 키 충돌
 
-SelectBuilder 메서드 이름인 `from`, `where`, `select`, `as`, `innerJoin`, `leftJoin`, `groupBy`, `having`, `orderBy`, `limit`, `offset`, `final`, `limitBy`, `execute`, `iterator`, `then`, `catch`, `finally`, `buildSelectionItems`와 충돌하는 Selection 키는 별칭 없는 빌더에서 메서드 타입을 유지합니다. `sub.from`은 `from`이 선택 목록에 있어도 항상 빌더 메서드를 반환하며 컬럼 참조는 반환하지 않습니다. 이런 키는 이름을 바꾸거나(`from` → `fromAddress`), 서브쿼리를 `.as("name")`으로 감싸서 컬럼 접근이 전용 `Subquery` 객체를 거치게 하세요.
+SelectBuilder 메서드 이름인 `from`, `where`, `select`, `as`, `innerJoin`, `leftJoin`, `asofJoin`, `asofLeftJoin`, `groupBy`, `having`, `orderBy`, `limit`, `offset`, `final`, `limitBy`, `execute`, `iterator`, `then`, `catch`, `finally`, `buildSelectionItems`와 충돌하는 Selection 키는 별칭 없는 빌더에서 메서드 타입을 유지합니다. `sub.from`은 `from`이 선택 목록에 있어도 항상 빌더 메서드를 반환하며 컬럼 참조는 반환하지 않습니다. 이런 키는 이름을 바꾸거나(`from` → `fromAddress`), 서브쿼리를 `.as("name")`으로 감싸서 컬럼 접근이 전용 `Subquery` 객체를 거치게 하세요.
 
 CTE에는 `$with()`와 `with()`를 사용하세요.
 
@@ -1395,9 +1437,9 @@ const wireTotal = await db.count(activeProbes).toMixed(); // number | string
 `.toSafe()`는 `toString(count())`을 생성하며 정확한 값을 읽을 때 사용합니다. `.toSafe()` 결과를 SQL 표현식으로 사용하면 `String` 처리 규칙을 따릅니다. SQL에서 숫자로 비교할 때는 기본 모드, `.toUnsafe()` 또는 `.toMixed()`를 사용하세요. `.toMixed()`는 `toUInt64(count())`를 생성하고 드라이버/전송 형태를 유지합니다. ck-orm의 기본 무손실 64비트 JSON 설정에서는 실제 ClickHouse 응답이 보통 `string`으로 도착합니다.
 
 ## 조인 NULL 처리 규칙
-<!-- src:5554058b -->
+<!-- src:59e7a4e2 -->
 
-`leftJoin()`은 기본적으로 `join_use_nulls = 1`을 자동으로 적용해 SQL 스타일의 NULL 처리 규칙을 따릅니다.
+`leftJoin()`과 `asofLeftJoin()`은 기본적으로 `join_use_nulls = 1`을 자동으로 적용해 SQL 스타일의 NULL 처리 규칙을 따릅니다.
 
 이렇게 됩니다:
 
@@ -2166,6 +2208,101 @@ const query = db
   })
   .from(numbers);
 ```
+
+## 테이블과 구체화된 뷰
+<!-- src:03694c38 -->
+
+`createTable()`, `createMaterializedView()`, `dropTable()`은 각각 스키마 객체로 만든 DDL 문을 하나씩 보냅니다. 스키마를 비교하거나 `ALTER`를 실행하거나 버전을 기록하지 않습니다. 기존 테이블의 마이그레이션은 마이그레이션 도구에 두세요. 클라이언트와 세션에서 모두 사용할 수 있습니다. 이들이 만드는 테이블과 뷰는 지속되며, `runInSession()`은 삭제하지 않습니다.
+
+### `createTable()`
+
+`createTable(table, options?)`은 `ckTable(...)` 정의에서 렌더링한 `CREATE TABLE` 문을 보냅니다. DDL 메타데이터가 있는 컬럼 다음에 `ENGINE`, `PARTITION BY`, `PRIMARY KEY`, `ORDER BY`, `SAMPLE BY`, `TTL`, `SETTINGS`, `COMMENT`가 옵니다.
+
+```ts
+import { ckTable, ckType } from "ck-orm";
+
+const usageEvents = ckTable(
+  "usage_events",
+  {
+    tenantId: ckType.string("tenant_id"),
+    occurredAt: ckType.dateTime64("occurred_at", { precision: 3, timezone: "UTC" }),
+    units: ckType.uint64(),
+  },
+  (table) => ({
+    engine: "MergeTree",
+    orderBy: [table.tenantId, table.occurredAt],
+  }),
+);
+
+await db.createTable(usageEvents);
+```
+
+- 기본적으로 같은 이름의 테이블이 있으면 문이 실패하며, 오류 이름은 `TABLE_ALREADY_EXISTS`입니다.
+- `mode: "if_not_exists"`는 `CREATE TABLE IF NOT EXISTS`를 렌더링하고, 컬럼이 달라도 기존 테이블을 그대로 둡니다.
+- `mode: "or_replace"`는 `CREATE OR REPLACE TABLE`을 렌더링하며, 기존 테이블을 바꾸고 그 데이터를 버립니다.
+- `engine`이 없는 테이블은 `MergeTree`가 되고 `ORDER BY tuple()`이 붙습니다.
+- `ckAlias(...)`로 만든 별칭 테이블은 거부됩니다.
+
+### `createMaterializedView()`
+
+`createMaterializedView(name, { to, as, mode? })`는 삽입이 일어날 때 기존 테이블 `to`에 쓰는 구체화된 뷰를 만듭니다. `as`는 `insert(to).fromSelect(...)`와 같은 규칙의 select 빌더입니다. `to`의 필수 컬럼을 모두 프로젝션해야 하며, 알 수 없는 키나 타입 불일치는 TypeScript 오류입니다.
+
+```ts
+import { ckTable, ckType, fn } from "ck-orm";
+
+const usageMinutes = ckTable(
+  "usage_minutes",
+  {
+    tenantId: ckType.string("tenant_id"),
+    minute: ckType.dateTime64({ precision: 3, timezone: "UTC" }),
+    unitsState: ckType.aggregateFunction("units_state", {
+      name: "sum",
+      args: [ckType.uint64()],
+    }),
+  },
+  (table) => ({
+    engine: "AggregatingMergeTree",
+    orderBy: [table.tenantId, table.minute],
+  }),
+);
+
+await db.createTable(usageMinutes);
+
+const minute = fn.call<Date>("toStartOfMinute", usageEvents.occurredAt);
+await db.createMaterializedView("usage_minutes_mv", {
+  to: usageMinutes,
+  as: db
+    .select({
+      tenantId: usageEvents.tenantId,
+      minute,
+      unitsState: fn.call("sumState", usageEvents.units),
+    })
+    .from(usageEvents)
+    .groupBy(usageEvents.tenantId, minute),
+});
+```
+
+- ClickHouse는 구체화된 뷰의 출력을 컬럼 이름으로 `to`에 쓰므로, ck-orm은 select를 `select ... as <column> from (...)`로 감싸 각 키가 `to`의 해당 컬럼에 들어가게 합니다.
+- `as`의 쿼리 파라미터는 뷰를 만들 때 치환되므로, 저장된 뷰는 그 값을 갖습니다.
+- select가 강제하는 설정, 예를 들어 `leftJoin()`의 `join_use_nulls = 1`은 뷰의 `SETTINGS` 절에 들어갑니다. 요청 설정은 뷰와 함께 저장되지 않기 때문입니다.
+- 뷰는 자신이 생긴 뒤에 삽입된 행만 봅니다. 이전 행을 채우려면 같은 select로 `db.insert(to).fromSelect(...)`를 실행하세요.
+- `mode: "if_not_exists"`는 `IF NOT EXISTS`를 렌더링합니다. ClickHouse 25.8과 26.3에는 `CREATE OR REPLACE MATERIALIZED VIEW`가 없으므로 `or_replace` 모드는 없습니다.
+- `to`는 필수입니다. 자체 `ENGINE`이 있는 뷰, `POPULATE`, 새로 고칠 수 있는 뷰는 지원하지 않습니다. 그런 경우는 `ckSql`과 `command()`를 사용하세요.
+
+### `dropTable()`
+
+`dropTable(table, options?)`은 스키마 객체 또는 이름으로 테이블이나 뷰를 삭제합니다.
+
+```ts
+await db.dropTable("usage_minutes_mv", { sync: true });
+await db.dropTable(usageMinutes, { ifExists: true, sync: true });
+```
+
+- 기본적으로 `DROP TABLE name`을 렌더링하며, 그 이름의 객체가 없으면 `UNKNOWN_TABLE`로 실패합니다.
+- `ifExists: true`는 `IF EXISTS`를 렌더링합니다.
+- `sync: true`는 `SYNC`를 렌더링합니다. 호출은 `Atomic` 데이터베이스 엔진의 지연된 정리에 맡기지 않고, ClickHouse가 데이터를 삭제한 뒤에 반환합니다.
+- 구체화된 뷰를 삭제해도 그 `to` 테이블과 이미 쓰인 행은 남습니다.
+- `ckAlias(...)`로 만든 별칭 테이블은 거부되며, `ON CLUSTER`도 렌더링되지 않습니다. 클러스터에서는 마이그레이션 도구를 쓰거나 `ckSql`과 `command()`를 사용하세요.
 
 ## 세션과 임시 테이블
 <!-- src:8f031227 -->

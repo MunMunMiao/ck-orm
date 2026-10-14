@@ -105,7 +105,7 @@ Sur une colonne `Decimal`, `fn.sum` convertit automatiquement le résultat en `D
 La [page d'exemples](https://ck-orm.lyz.cloud/examples/) présente des requêtes exécutables avec le SQL exact qu'elles envoient à ClickHouse. Chaque exemple est un projet dans [`examples/`](../examples), avec son propre test. Les tests ClickHouse exécutables sont dans [`e2e/`](../e2e), qui contient notamment des schémas de scénarios proches de la production dans [`e2e/scenarios.ts`](../e2e/scenarios.ts).
 
 ## Modèle mental
-<!-- src:f7815577 -->
+<!-- src:a26a2ce8 -->
 
 Gardez ces limites en tête quand vous utilisez `ck-orm` :
 
@@ -117,13 +117,13 @@ Gardez ces limites en tête quand vous utilisez `ck-orm` :
 - la connexion à la base de données passe par `clickhouseClient(...)`
 - les requêtes construites sont le choix par défaut ; le SQL brut reste disponible pour les expressions propres à ClickHouse
 - `runInSession()` est une fonction utilitaire de session ClickHouse, pas une transaction
-- `leftJoin()` utilise par défaut la sémantique SQL des valeurs nulles
+- `leftJoin()` et `asofLeftJoin()` utilisent par défaut la sémantique SQL des valeurs nulles
 - les résultats numériques volumineux ou à risque sont décodés avec prudence, sans conversion silencieuse
 
-`ck-orm` se concentre sur l'accès typé à ClickHouse : définitions de tables, composition de requêtes, fonctions utilitaires d'écriture et de session ainsi que l'observabilité. L'outil de migration utilisé par l'application prend toujours en charge les opérations de DDL en production et les migrations de schéma.
+`ck-orm` se concentre sur l'accès typé à ClickHouse : définitions de tables, composition de requêtes, fonctions utilitaires d'écriture et de session ainsi que l'observabilité. `createTable()`, `createMaterializedView()` et `dropTable()` exécutent chacun une instruction DDL ; les migrations de schéma (comparaison des schémas, `ALTER`, gestion des versions) restent dans l'outil de migration utilisé par l'application.
 
 ## DSL de schéma
-<!-- src:6809e7a9 -->
+<!-- src:5149bff0 -->
 
 ### `ckTable()`
 
@@ -199,9 +199,9 @@ Les définitions de colonne peuvent aussi inclure directement les métadonnées 
 Les métadonnées du schéma remplissent deux rôles dans `ck-orm` :
 
 - elles pilotent les requêtes typées, la validation à l'insertion et le décodage des résultats
-- elles peuvent générer du DDL structuré pour les tables temporaires de session
+- elles produisent l'instruction `CREATE TABLE` de `createTable()` et de `createTemporaryTable()`
 
-Elles ne migrent ni ne synchronisent automatiquement les tables ClickHouse de production. Gardez le DDL de production dans votre outil de migration et alignez `ckTable(...)` sur le schéma utilisé par votre application en lecture et en écriture.
+Elles ne migrent ni ne synchronisent les tables ClickHouse existantes : `createTable()` ne fait que créer une table (voir [Tables et vues matérialisées](#tables-and-materialized-views)). Gardez les migrations de schéma dans votre outil de migration et alignez `ckTable(...)` sur le schéma que votre application lit et écrit.
 
 Exemple :
 
@@ -908,7 +908,7 @@ ck-orm impose à chaque requête un petit ensemble de paramètres du contrat d'�
 - si aucun identifiant n'est fourni, la valeur par défaut est `default` avec un mot de passe vide
 
 ## Constructeur de requêtes
-<!-- src:5152d6ff -->
+<!-- src:fc28245d -->
 
 Les exemples ci-dessous supposent que `db`, `probeTelemetry` et les fonctions utilitaires citées sont importés depuis `ck-orm`.
 
@@ -956,6 +956,48 @@ const rows = await db
     ck.eq(telemetry.probeId, matchedTelemetry.probeId),
   );
 ```
+
+### `asofJoin()`, `asofLeftJoin()`
+
+`asofJoin()` et `asofLeftJoin()` produisent `ASOF JOIN` et `LEFT ASOF JOIN` de ClickHouse. Pour chaque ligne de gauche, ils joignent la seule ligne de droite dont la valeur est la plus proche, au lieu de toutes les lignes correspondantes. La condition combine, avec `ck.and(...)`, une ou plusieurs conditions d'égalité et exactement un `ck.gt`, `ck.gte`, `ck.lt` ou `ck.lte` entre une colonne de gauche et une colonne de droite :
+
+```ts
+import { ck, ckTable, ckType } from "ck-orm";
+
+const trades = ckTable("trades", {
+  tradeId: ckType.uint32("trade_id"),
+  symbol: ckType.string(),
+  tradeTime: ckType.dateTime64("trade_time", { precision: 3, timezone: "UTC" }),
+});
+
+const quotes = ckTable("quotes", {
+  symbol: ckType.string(),
+  quoteTime: ckType.dateTime64("quote_time", { precision: 3, timezone: "UTC" }),
+  price: ckType.decimal({ precision: 20, scale: 5 }),
+});
+
+// Each trade gets the latest quote of its symbol at or before the trade time.
+const rows = await db
+  .select({
+    tradeId: trades.tradeId,
+    price: quotes.price,
+  })
+  .from(trades)
+  .asofLeftJoin(
+    quotes,
+    ck.and(
+      ck.eq(trades.symbol, quotes.symbol),
+      ck.gte(trades.tradeTime, quotes.quoteTime),
+    ),
+  );
+// rows: { tradeId: number; price: string | null }[]
+```
+
+- `ck.gte(left, right)` retient la dernière ligne de droite à la valeur de gauche ou avant, et `ck.gt` la dernière strictement avant. `ck.lte` et `ck.lt` retiennent la première ligne de droite à la valeur de gauche ou après, ou strictement après
+- `asofLeftJoin()` suit la [sémantique des valeurs nulles de `leftJoin()`](#join-null-semantics) : il envoie `join_use_nulls = 1` et type le côté droit comme nullable, donc une ligne de gauche sans correspondance reçoit `null`. `asofJoin()` écarte ces lignes, comme `innerJoin()`
+- la colonne de la correspondance la plus proche doit avoir un type entier, flottant, `Date`, `DateTime` ou `Decimal`, et les deux côtés de cette comparaison doivent désigner des colonnes ; une comparaison avec une valeur ne compte pas. Les filtres d'égalité supplémentaires, comme `ck.eq(quotes.symbol, "BTCUSD")`, sont autorisés
+- ck-orm n'inspecte pas la condition. ClickHouse rejette une condition sans inégalité, avec une seconde inégalité ou avec `ck.or(...)` avant de lire des données ; l'erreur est un `ClickHouseORMError` avec `kind: "request_failed"` et `clickhouseName: "INVALID_JOIN_ON_EXPRESSION"`. Une condition sans égalité et une colonne de correspondance la plus proche d'un autre type sont rejetées aussi, et le nom d'erreur en l'absence d'égalité diffère selon les versions de ClickHouse
+- les jointures ASOF s'exécutent avec le `join_algorithm` par défaut et avec `hash`, `parallel_hash` ou `full_sorting_merge`. `partial_merge`, `grace_hash` et `direct` échouent avec `NOT_IMPLEMENTED`
 
 ### `where()` et fonctions utilitaires pour les conditions
 
@@ -1328,7 +1370,7 @@ L'alias automatique n'est **pas** stable entre deux compilations de requêtes de
 
 #### Conflits de clés de sélection
 
-Les clés de sélection qui portent le même nom qu'une méthode de SelectBuilder (`from`, `where`, `select`, `as`, `innerJoin`, `leftJoin`, `groupBy`, `having`, `orderBy`, `limit`, `offset`, `final`, `limitBy`, `execute`, `iterator`, `then`, `catch`, `finally`, `buildSelectionItems`) conservent leur type de méthode sur le constructeur sans alias. `sub.from` renvoie toujours la méthode du constructeur, jamais une référence de colonne — même si `from` fait partie de la sélection. Renommez ces clés (par exemple, `from` → `fromAddress`) ou encapsulez la sous-requête avec `.as("name")` pour accéder aux colonnes via l'objet `Subquery` dédié.
+Les clés de sélection qui portent le même nom qu'une méthode de SelectBuilder (`from`, `where`, `select`, `as`, `innerJoin`, `leftJoin`, `asofJoin`, `asofLeftJoin`, `groupBy`, `having`, `orderBy`, `limit`, `offset`, `final`, `limitBy`, `execute`, `iterator`, `then`, `catch`, `finally`, `buildSelectionItems`) conservent leur type de méthode sur le constructeur sans alias. `sub.from` renvoie toujours la méthode du constructeur, jamais une référence de colonne — même si `from` fait partie de la sélection. Renommez ces clés (par exemple, `from` → `fromAddress`) ou encapsulez la sous-requête avec `.as("name")` pour accéder aux colonnes via l'objet `Subquery` dédié.
 
 Utilisez `$with()` et `with()` pour les CTE :
 
@@ -1397,9 +1439,9 @@ const wireTotal = await db.count(activeProbes).toMixed(); // number | string
 `.toSafe()` produit `toString(count())` et sert aux lectures exactes. Si vous utilisez ce résultat comme expression SQL, il suit la sémantique de `String` ; pour les comparaisons SQL numériques, utilisez le mode par défaut, `.toUnsafe()` ou `.toMixed()`. `.toMixed()` produit `toUInt64(count())` et préserve le format renvoyé par le pilote et transmis sur le réseau. Avec les paramètres JSON par défaut de ck-orm, qui préservent les entiers de 64 bits sans perte, les réponses effectivement renvoyées par ClickHouse prennent généralement la forme de `string`.
 
 ## Sémantique des valeurs nulles dans les jointures
-<!-- src:5554058b -->
+<!-- src:59e7a4e2 -->
 
-Par défaut, `leftJoin()` utilise la sémantique SQL des valeurs nulles en appliquant automatiquement `join_use_nulls = 1`.
+Par défaut, `leftJoin()` et `asofLeftJoin()` utilisent la sémantique SQL des valeurs nulles en appliquant automatiquement `join_use_nulls = 1`.
 
 Cela signifie :
 
@@ -2179,6 +2221,101 @@ const query = db
   })
   .from(numbers);
 ```
+
+## Tables et vues matérialisées
+<!-- src:03694c38 -->
+
+`createTable()`, `createMaterializedView()` et `dropTable()` envoient chacun une instruction DDL construite à partir d'objets de schéma. Ils ne comparent pas les schémas, n'exécutent pas `ALTER` et n'enregistrent pas de versions ; gardez les migrations des tables existantes dans votre outil de migration. Ils sont disponibles sur le client et sur une session. Les tables et vues qu'ils créent sont persistantes, et `runInSession()` ne les supprime pas.
+
+### `createTable()`
+
+`createTable(table, options?)` envoie l'instruction `CREATE TABLE` produite à partir d'une définition `ckTable(...)` : les colonnes avec leurs métadonnées DDL, puis `ENGINE`, `PARTITION BY`, `PRIMARY KEY`, `ORDER BY`, `SAMPLE BY`, `TTL`, `SETTINGS` et `COMMENT`.
+
+```ts
+import { ckTable, ckType } from "ck-orm";
+
+const usageEvents = ckTable(
+  "usage_events",
+  {
+    tenantId: ckType.string("tenant_id"),
+    occurredAt: ckType.dateTime64("occurred_at", { precision: 3, timezone: "UTC" }),
+    units: ckType.uint64(),
+  },
+  (table) => ({
+    engine: "MergeTree",
+    orderBy: [table.tenantId, table.occurredAt],
+  }),
+);
+
+await db.createTable(usageEvents);
+```
+
+- par défaut, une table existante du même nom fait échouer l'instruction avec `TABLE_ALREADY_EXISTS`
+- `mode: "if_not_exists"` produit `CREATE TABLE IF NOT EXISTS` et laisse la table existante telle quelle, même si ses colonnes diffèrent
+- `mode: "or_replace"` produit `CREATE OR REPLACE TABLE`, qui remplace une table existante et supprime ses données
+- une table sans `engine` reçoit `MergeTree` avec `ORDER BY tuple()`
+- une table alias issue de `ckAlias(...)` est rejetée
+
+### `createMaterializedView()`
+
+`createMaterializedView(name, { to, as, mode? })` crée une vue matérialisée déclenchée par les insertions et qui écrit dans la table existante `to`. `as` est un constructeur de sélection soumis aux mêmes règles que `insert(to).fromSelect(...)` : il doit projeter chaque colonne obligatoire de `to`, et les clés inconnues ou les incompatibilités de type sont des erreurs TypeScript.
+
+```ts
+import { ckTable, ckType, fn } from "ck-orm";
+
+const usageMinutes = ckTable(
+  "usage_minutes",
+  {
+    tenantId: ckType.string("tenant_id"),
+    minute: ckType.dateTime64({ precision: 3, timezone: "UTC" }),
+    unitsState: ckType.aggregateFunction("units_state", {
+      name: "sum",
+      args: [ckType.uint64()],
+    }),
+  },
+  (table) => ({
+    engine: "AggregatingMergeTree",
+    orderBy: [table.tenantId, table.minute],
+  }),
+);
+
+await db.createTable(usageMinutes);
+
+const minute = fn.call<Date>("toStartOfMinute", usageEvents.occurredAt);
+await db.createMaterializedView("usage_minutes_mv", {
+  to: usageMinutes,
+  as: db
+    .select({
+      tenantId: usageEvents.tenantId,
+      minute,
+      unitsState: fn.call("sumState", usageEvents.units),
+    })
+    .from(usageEvents)
+    .groupBy(usageEvents.tenantId, minute),
+});
+```
+
+- ClickHouse écrit la sortie d'une vue matérialisée dans `to` par nom de colonne, donc ck-orm enveloppe la sélection en `select ... as <column> from (...)` et chaque clé arrive dans sa colonne de `to`
+- les paramètres de requête de `as` sont substitués à la création de la vue, donc la vue stockée conserve leurs valeurs
+- les paramètres que la sélection force, comme `join_use_nulls = 1` issu de `leftJoin()`, vont dans une clause `SETTINGS` de la vue, parce que les paramètres ClickHouse envoyés avec la requête ne sont pas stockés avec la vue
+- la vue ne voit que les lignes insérées après son existence ; pour rattraper l'historique, exécutez `db.insert(to).fromSelect(...)` avec la même sélection
+- `mode: "if_not_exists"` produit `IF NOT EXISTS`. ClickHouse 25.8 et 26.3 n'ont pas `CREATE OR REPLACE MATERIALIZED VIEW`, donc il n'y a pas de mode `or_replace`
+- `to` est obligatoire : les vues avec leur propre `ENGINE`, `POPULATE` et les vues rafraîchissables ne sont pas prises en charge ; utilisez `ckSql` avec `command()` pour celles-là
+
+### `dropTable()`
+
+`dropTable(table, options?)` supprime une table ou une vue, à partir de son objet de schéma ou de son nom :
+
+```ts
+await db.dropTable("usage_minutes_mv", { sync: true });
+await db.dropTable(usageMinutes, { ifExists: true, sync: true });
+```
+
+- par défaut, il produit `DROP TABLE name` et échoue avec `UNKNOWN_TABLE` quand rien ne porte ce nom
+- `ifExists: true` produit `IF EXISTS`
+- `sync: true` produit `SYNC` : l'appel revient une fois que ClickHouse a supprimé les données, au lieu de laisser cela au nettoyage différé du moteur de base `Atomic`
+- supprimer une vue matérialisée laisse sa table `to` et les lignes déjà écrites
+- une table alias issue de `ckAlias(...)` est rejetée, et `ON CLUSTER` n'est pas produit ; sur un cluster, utilisez votre outil de migration ou `ckSql` avec `command()`
 
 ## Sessions et tables temporaires
 <!-- src:8f031227 -->

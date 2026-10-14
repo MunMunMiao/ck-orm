@@ -105,7 +105,7 @@ const rows = await query;
 На [странице примеров](https://ck-orm.lyz.cloud/examples/) показаны запускаемые запросы и точный SQL, который каждый из них отправляет в ClickHouse. Каждый пример — отдельный проект в [`examples/`](../examples) со своим тестом. Запускаемые проверки ClickHouse находятся в [`e2e/`](../e2e), в том числе похожие на продакшен схемы сценариев в [`e2e/scenarios.ts`](../e2e/scenarios.ts).
 
 ## Как устроено
-<!-- src:f7815577 -->
+<!-- src:a26a2ce8 -->
 
 При работе с `ck-orm` учитывайте следующие границы:
 
@@ -117,13 +117,13 @@ const rows = await query;
 - Подключение к базе данных задаётся в `clickhouseClient(...)`.
 - Запросы билдера используйте по умолчанию; для выражений, специфичных для ClickHouse, доступен сырой SQL.
 - `runInSession()` — вспомогательная функция для сессий ClickHouse, а не транзакция.
-- `leftJoin()` по умолчанию использует семантику NULL в стиле SQL.
+- `leftJoin()` и `asofLeftJoin()` по умолчанию используют семантику NULL в стиле SQL.
 - Крупные или потенциально опасные числовые результаты декодируются осторожно, а не неявно приводятся к другому типу.
 
-`ck-orm` предназначен для типизированной работы с ClickHouse: определения таблиц, составления запросов, вспомогательных функций записи и сессий, а также наблюдаемости. DDL для продакшена и сценарии миграции схемы остаются в инструментах миграции, которые использует приложение.
+`ck-orm` предназначен для типизированной работы с ClickHouse: определения таблиц, составления запросов, вспомогательных функций записи и сессий, а также наблюдаемости. `createTable()`, `createMaterializedView()` и `dropTable()` выполняют по одному оператору DDL; миграции схемы (сравнение схем, `ALTER`, версионирование) остаются в инструментах миграции, которые использует приложение.
 
 ## DSL для схем
-<!-- src:6809e7a9 -->
+<!-- src:5149bff0 -->
 
 ### `ckTable()`
 
@@ -199,9 +199,9 @@ const probeTelemetry = ckTable(
 Метаданные схемы в `ck-orm` нужны для двух задач:
 
 - используются для типизированных запросов, проверки данных при вставке и декодирования результатов;
-- позволяют генерировать структурированный DDL для временных таблиц сессии.
+- формируют оператор `CREATE TABLE` для `createTable()` и `createTemporaryTable()`.
 
-Они не выполняют автоматическую миграцию таблиц ClickHouse в продакшене и не синхронизируют их. Сохраняйте DDL для продакшена в инструменте миграций и следите, чтобы `ckTable(...)` совпадала со схемой, из которой приложение читает данные и в которую их записывает.
+Они не мигрируют и не синхронизируют существующие таблицы ClickHouse: `createTable()` только создаёт таблицу (см. [Таблицы и материализованные представления](#tables-and-materialized-views)). Оставляйте миграции схемы в инструменте миграций и следите, чтобы `ckTable(...)` совпадала со схемой, из которой приложение читает данные и в которую их записывает.
 
 Пример:
 
@@ -948,7 +948,7 @@ ck-orm принудительно задаёт на каждом запросе 
 - в структурированном режиме используйте `username` и `password`
 - если учётные данные не переданы, по умолчанию используется `default` с пустым паролем
 ## Построитель запросов
-<!-- src:5152d6ff -->
+<!-- src:fc28245d -->
 
 Ниже `db`, `probeTelemetry` и упомянутые вспомогательные функции уже импортированы из `ck-orm`.
 
@@ -996,6 +996,48 @@ const rows = await db
     ck.eq(telemetry.probeId, matchedTelemetry.probeId),
   );
 ```
+
+### `asofJoin()`, `asofLeftJoin()`
+
+`asofJoin()` и `asofLeftJoin()` формируют ClickHouse `ASOF JOIN` и `LEFT ASOF JOIN`. Для каждой левой строки они присоединяют одну правую строку с ближайшим значением, а не все подходящие строки. Условие через `ck.and(...)` сочетает одно или несколько условий равенства и ровно одно сравнение `ck.gt`, `ck.gte`, `ck.lt` или `ck.lte` между левым и правым столбцом:
+
+```ts
+import { ck, ckTable, ckType } from "ck-orm";
+
+const trades = ckTable("trades", {
+  tradeId: ckType.uint32("trade_id"),
+  symbol: ckType.string(),
+  tradeTime: ckType.dateTime64("trade_time", { precision: 3, timezone: "UTC" }),
+});
+
+const quotes = ckTable("quotes", {
+  symbol: ckType.string(),
+  quoteTime: ckType.dateTime64("quote_time", { precision: 3, timezone: "UTC" }),
+  price: ckType.decimal({ precision: 20, scale: 5 }),
+});
+
+// Each trade gets the latest quote of its symbol at or before the trade time.
+const rows = await db
+  .select({
+    tradeId: trades.tradeId,
+    price: quotes.price,
+  })
+  .from(trades)
+  .asofLeftJoin(
+    quotes,
+    ck.and(
+      ck.eq(trades.symbol, quotes.symbol),
+      ck.gte(trades.tradeTime, quotes.quoteTime),
+    ),
+  );
+// rows: { tradeId: number; price: string | null }[]
+```
+
+- `ck.gte(left, right)` выбирает последнюю правую строку не позже левого значения, а `ck.gt` — последнюю строго раньше него. `ck.lte` и `ck.lt` выбирают самую раннюю правую строку не раньше левого значения или строго позже него.
+- `asofLeftJoin()` следует [семантике NULL у `leftJoin()`](#join-null-semantics): отправляет `join_use_nulls = 1` и помечает правую сторону как допускающую NULL, поэтому левая строка без совпадения получает `null`. `asofJoin()` отбрасывает такие строки, как `innerJoin()`.
+- Столбец ближайшего совпадения должен иметь целый, вещественный тип, `Date`, `DateTime` или `Decimal`, и обе стороны сравнения должны ссылаться на столбцы; сравнение со значением не считается. Дополнительные фильтры равенства, например `ck.eq(quotes.symbol, "BTCUSD")`, допустимы.
+- ck-orm не проверяет условие. ClickHouse отклоняет условие без неравенства, со вторым неравенством или с `ck.or(...)` до чтения данных; ошибка — `ClickHouseORMError` с `kind: "request_failed"` и `clickhouseName: "INVALID_JOIN_ON_EXPRESSION"`. Условие без равенства и столбец ближайшего совпадения другого типа тоже отклоняются, а имя ошибки при отсутствии равенства различается между версиями ClickHouse.
+- ASOF-соединения выполняются с `join_algorithm` по умолчанию, а также с `hash`, `parallel_hash` или `full_sorting_merge`. `partial_merge`, `grace_hash` и `direct` завершаются ошибкой `NOT_IMPLEMENTED`.
 
 ### `where()` и вспомогательные функции условий
 
@@ -1368,7 +1410,7 @@ await db
 
 #### Конфликты ключей проекции
 
-Ключи проекции, совпадающие с именами методов SelectBuilder (`from`, `where`, `select`, `as`, `innerJoin`, `leftJoin`, `groupBy`, `having`, `orderBy`, `limit`, `offset`, `final`, `limitBy`, `execute`, `iterator`, `then`, `catch`, `finally`, `buildSelectionItems`), у билдера без имени по-прежнему имеют тип метода. `sub.from` всегда возвращает метод билдера, а не ссылку на столбец, даже если `from` есть в проекции. Переименуйте такие ключи (например, `from` → `fromAddress`) или оберните подзапрос вызовом `.as("name")`, чтобы обращаться к столбцам через отдельный объект `Subquery`.
+Ключи проекции, совпадающие с именами методов SelectBuilder (`from`, `where`, `select`, `as`, `innerJoin`, `leftJoin`, `asofJoin`, `asofLeftJoin`, `groupBy`, `having`, `orderBy`, `limit`, `offset`, `final`, `limitBy`, `execute`, `iterator`, `then`, `catch`, `finally`, `buildSelectionItems`), у билдера без имени по-прежнему имеют тип метода. `sub.from` всегда возвращает метод билдера, а не ссылку на столбец, даже если `from` есть в проекции. Переименуйте такие ключи (например, `from` → `fromAddress`) или оберните подзапрос вызовом `.as("name")`, чтобы обращаться к столбцам через отдельный объект `Subquery`.
 
 Для CTE используйте `$with()` и `with()`:
 
@@ -1437,9 +1479,9 @@ const wireTotal = await db.count(activeProbes).toMixed(); // number | string
 `.toSafe()` генерирует `toString(count())` и предназначен для чтения без потери точности. Если использовать безопасный режим подсчёта как SQL-выражение, он имеет семантику `String`; для числовых SQL-сравнений используйте режим по умолчанию, `.toUnsafe()` или `.toMixed()`. `.toMixed()` генерирует `toUInt64(count())` и сохраняет форму результата на уровне драйвера и транспорта. При стандартных для ck-orm настройках JSON, сохраняющих точность 64-битных значений, реальные ответы ClickHouse обычно приходят в виде `string`.
 
 ## Семантика NULL при соединениях
-<!-- src:5554058b -->
+<!-- src:59e7a4e2 -->
 
-По умолчанию `leftJoin()` использует семантику NULL в стиле SQL: он автоматически задаёт `join_use_nulls = 1`.
+По умолчанию `leftJoin()` и `asofLeftJoin()` используют семантику NULL в стиле SQL: они автоматически задают `join_use_nulls = 1`.
 
 Это значит:
 
@@ -2251,6 +2293,101 @@ const query = db
   })
   .from(numbers);
 ```
+
+## Таблицы и материализованные представления
+<!-- src:03694c38 -->
+
+`createTable()`, `createMaterializedView()` и `dropTable()` отправляют по одному оператору DDL, построенному из объектов схемы. Они не сравнивают схемы, не выполняют `ALTER` и не записывают версии; миграции существующих таблиц оставляйте в инструменте миграций. Методы доступны и на клиенте, и в сессии. Созданные ими таблицы и представления постоянны, и `runInSession()` их не удаляет.
+
+### `createTable()`
+
+`createTable(table, options?)` отправляет оператор `CREATE TABLE`, собранный из определения `ckTable(...)`: столбцы с метаданными DDL, затем `ENGINE`, `PARTITION BY`, `PRIMARY KEY`, `ORDER BY`, `SAMPLE BY`, `TTL`, `SETTINGS` и `COMMENT`.
+
+```ts
+import { ckTable, ckType } from "ck-orm";
+
+const usageEvents = ckTable(
+  "usage_events",
+  {
+    tenantId: ckType.string("tenant_id"),
+    occurredAt: ckType.dateTime64("occurred_at", { precision: 3, timezone: "UTC" }),
+    units: ckType.uint64(),
+  },
+  (table) => ({
+    engine: "MergeTree",
+    orderBy: [table.tenantId, table.occurredAt],
+  }),
+);
+
+await db.createTable(usageEvents);
+```
+
+- по умолчанию существующая таблица с тем же именем приводит к ошибке `TABLE_ALREADY_EXISTS`
+- `mode: "if_not_exists"` формирует `CREATE TABLE IF NOT EXISTS` и оставляет существующую таблицу как есть, даже если столбцы отличаются
+- `mode: "or_replace"` формирует `CREATE OR REPLACE TABLE`, заменяет существующую таблицу и отбрасывает её данные
+- таблица без `engine` получает `MergeTree` с `ORDER BY tuple()`
+- таблица-псевдоним из `ckAlias(...)` отклоняется
+
+### `createMaterializedView()`
+
+`createMaterializedView(name, { to, as, mode? })` создаёт материализованное представление, которое срабатывает при вставке и пишет в существующую таблицу `to`. `as` — построитель выборки с теми же правилами, что у `insert(to).fromSelect(...)`: он должен спроецировать каждый обязательный столбец `to`, а неизвестные ключи и несовпадение типов — ошибки TypeScript.
+
+```ts
+import { ckTable, ckType, fn } from "ck-orm";
+
+const usageMinutes = ckTable(
+  "usage_minutes",
+  {
+    tenantId: ckType.string("tenant_id"),
+    minute: ckType.dateTime64({ precision: 3, timezone: "UTC" }),
+    unitsState: ckType.aggregateFunction("units_state", {
+      name: "sum",
+      args: [ckType.uint64()],
+    }),
+  },
+  (table) => ({
+    engine: "AggregatingMergeTree",
+    orderBy: [table.tenantId, table.minute],
+  }),
+);
+
+await db.createTable(usageMinutes);
+
+const minute = fn.call<Date>("toStartOfMinute", usageEvents.occurredAt);
+await db.createMaterializedView("usage_minutes_mv", {
+  to: usageMinutes,
+  as: db
+    .select({
+      tenantId: usageEvents.tenantId,
+      minute,
+      unitsState: fn.call("sumState", usageEvents.units),
+    })
+    .from(usageEvents)
+    .groupBy(usageEvents.tenantId, minute),
+});
+```
+
+- ClickHouse записывает вывод материализованного представления в `to` по имени столбца, поэтому ck-orm оборачивает выборку как `select ... as <column> from (...)`, и каждый ключ попадает в свой столбец `to`
+- параметры запроса в `as` подставляются при создании представления, поэтому сохранённое представление хранит их значения
+- настройки, которые выборка задаёт принудительно, например `join_use_nulls = 1` из `leftJoin()`, попадают в предложение `SETTINGS` представления, потому что настройки запроса вместе с представлением не сохраняются
+- представление видит только строки, вставленные после его создания; чтобы заполнить прошлые строки, выполните `db.insert(to).fromSelect(...)` с той же выборкой
+- `mode: "if_not_exists"` формирует `IF NOT EXISTS`. В ClickHouse 25.8 и 26.3 нет `CREATE OR REPLACE MATERIALIZED VIEW`, поэтому режима `or_replace` нет
+- `to` обязателен: представления с собственным `ENGINE`, `POPULATE` и обновляемые представления не поддерживаются; для них используйте `ckSql` с `command()`
+
+### `dropTable()`
+
+`dropTable(table, options?)` удаляет таблицу или представление по объекту схемы или по имени:
+
+```ts
+await db.dropTable("usage_minutes_mv", { sync: true });
+await db.dropTable(usageMinutes, { ifExists: true, sync: true });
+```
+
+- по умолчанию формирует `DROP TABLE name` и завершается ошибкой `UNKNOWN_TABLE`, если объекта с таким именем нет
+- `ifExists: true` формирует `IF EXISTS`
+- `sync: true` формирует `SYNC`: вызов возвращается, когда ClickHouse удалил данные, а не оставляет это отложенной очистке движка базы `Atomic`
+- удаление материализованного представления оставляет его таблицу `to` и уже записанные туда строки
+- таблица-псевдоним из `ckAlias(...)` отклоняется, и `ON CLUSTER` не формируется; в кластере используйте инструмент миграций или `ckSql` с `command()`
 
 ## Сессии и временные таблицы
 <!-- src:8f031227 -->

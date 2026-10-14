@@ -19,12 +19,13 @@ const CLOSER = new Map([
 ]);
 
 const CLAUSES = new Set(["select", "from", "where", "having", "limit", "offset"]);
-// Clauses that are two words, by their first word.
-const SECOND_WORD = new Map([
-  ["group", "by"],
-  ["order", "by"],
-  ["inner", "join"],
-  ["left", "join"],
+// Clauses of more than one word, by their first word.
+const MULTI_WORD_CLAUSES = new Map([
+  ["group", [["by"]]],
+  ["order", [["by"]]],
+  ["inner", [["join"]]],
+  ["left", [["join"], ["asof", "join"]]],
+  ["asof", [["join"]]],
 ]);
 
 const isSpace = (token: string) => /^\s/.test(token);
@@ -110,14 +111,25 @@ export const prettyStatement = (statement: string): string => {
     const word = token.toLowerCase();
 
     if (frame.indent !== undefined) {
-      const secondIndex = nextToken(index + 1);
       let clause: string | undefined;
       let end = index;
       if (CLAUSES.has(word) || (word === "with" && !frame.started)) {
         clause = token;
-      } else if (SECOND_WORD.has(word) && tokens[secondIndex]?.toLowerCase() === SECOND_WORD.get(word)) {
-        clause = `${token} ${tokens[secondIndex]}`;
-        end = secondIndex;
+      } else {
+        for (const rest of MULTI_WORD_CLAUSES.get(word) ?? []) {
+          const words = [token];
+          let at = index;
+          for (const expected of rest) {
+            at = nextToken(at + 1);
+            if (tokens[at]?.toLowerCase() !== expected) break;
+            words.push(tokens[at] as string);
+          }
+          if (words.length === rest.length + 1) {
+            clause = words.join(" ");
+            end = at;
+            break;
+          }
+        }
       }
       if (clause !== undefined) {
         if (frame.started) breakLine(frame.indent);

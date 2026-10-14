@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+  aggregateFunction,
   array,
   bool,
   date,
@@ -17,6 +18,7 @@ import {
   simpleAggregateFunction,
   string,
   tuple,
+  uint64,
 } from "./columns";
 import { fn, tableFn } from "./functions";
 import { bindDatesAsUtc } from "./internal/datetime";
@@ -24,6 +26,7 @@ import {
   and,
   asc,
   between,
+  compileCreateMaterializedView,
   compileQuerySymbol,
   compileWithContextSymbol,
   contains,
@@ -3941,5 +3944,125 @@ describe("ck-orm left join nullability", function describeLeftJoinNullability() 
     const compiled = db.select({ id: metrics.id }).from(metrics)[compileQuerySymbol]();
 
     expect(() => decodeRow({ id: null }, compiled.selection)).toThrow("Failed to decode column");
+  });
+});
+
+describe("ck-orm materialized view compile", function describeMaterializedViewCompile() {
+  const events = ckTable("ck_orm_example_usage_events", {
+    tenantId: string("tenant_id"),
+    userId: string("user_id"),
+    meter: string(),
+    occurredAt: dateTime64("occurred_at", { precision: 3, timezone: "UTC" }),
+    units: uint64(),
+  });
+  const minutes = ckTable("ck_orm_example_usage_minutes", {
+    tenantId: string("tenant_id"),
+    userId: string("user_id"),
+    meter: string(),
+    minute: dateTime64({ precision: 3, timezone: "UTC" }),
+    usageState: aggregateFunction("usage_state", { name: "sum", args: [uint64()] }),
+    eventsState: aggregateFunction("events_state", { name: "count" }),
+  });
+  const usageSelect = () => {
+    const db = createQueryClient();
+    const minute = fn.call<Date>("toStartOfInterval", events.occurredAt, fn.toIntervalMinute(1), "UTC");
+    return db
+      .select({
+        tenantId: events.tenantId,
+        userId: events.userId,
+        meter: events.meter,
+        minute,
+        usageState: fn.call<string>("sumState", events.units),
+        eventsState: fn.call<string>("countState"),
+      })
+      .from(events)
+      .groupBy(events.tenantId, events.userId, events.meter, minute);
+  };
+
+  it("wraps the select so logical keys land on the target columns", function testMaterializedViewWrapper() {
+    const compiled = compileCreateMaterializedView("ck_orm_example_usage_mv", minutes, usageSelect());
+
+    expect(compiled.statement).toBe(
+      "CREATE MATERIALIZED VIEW `ck_orm_example_usage_mv` TO `ck_orm_example_usage_minutes` AS select `__ck_inner`.`tenantId` as `tenant_id`, `__ck_inner`.`userId` as `user_id`, `__ck_inner`.`meter` as `meter`, `__ck_inner`.`minute` as `minute`, `__ck_inner`.`usageState` as `usage_state`, `__ck_inner`.`eventsState` as `events_state` from (select `ck_orm_example_usage_events`.`tenant_id` as `tenantId`, `ck_orm_example_usage_events`.`user_id` as `userId`, `ck_orm_example_usage_events`.`meter` as `meter`, toStartOfInterval(`ck_orm_example_usage_events`.`occurred_at`, toIntervalMinute({orm_param1:Int64}), {orm_param2:String}) as `minute`, sumState(`ck_orm_example_usage_events`.`units`) as `usageState`, countState() as `eventsState` from `ck_orm_example_usage_events` group by `ck_orm_example_usage_events`.`tenant_id`, `ck_orm_example_usage_events`.`user_id`, `ck_orm_example_usage_events`.`meter`, toStartOfInterval(`ck_orm_example_usage_events`.`occurred_at`, toIntervalMinute({orm_param3:Int64}), {orm_param4:String})) as `__ck_inner`",
+    );
+    expect(compiled.params).toEqual({
+      orm_param1: 1,
+      orm_param2: "UTC",
+      orm_param3: 1,
+      orm_param4: "UTC",
+    });
+    expect(compiled.forcedSettings).toBeUndefined();
+    expect(compiled.mode).toBe("command");
+    expect(compiled.metadata).toEqual({
+      rootSourceName: "ck_orm_example_usage_mv",
+      tableName: "ck_orm_example_usage_mv",
+    });
+  });
+
+  it("renders IF NOT EXISTS and omits SETTINGS when the select forces none", function testMaterializedViewModeAndSettings() {
+    const compiled = compileCreateMaterializedView("usage_mv", minutes, usageSelect(), "if_not_exists");
+
+    expect(compiled.statement.startsWith("CREATE MATERIALIZED VIEW IF NOT EXISTS `usage_mv` TO ")).toBe(true);
+    expect(compiled.statement).not.toContain("SETTINGS");
+  });
+
+  it("stores leftJoin and asofLeftJoin forced settings on the view select", function testMaterializedViewJoinSettings() {
+    const db = createQueryClient();
+    const src = ckTable("ddl_src", { k: int32() });
+    const dim = ckTable("ddl_dim", { k: int32(), label: string() });
+    const target = ckTable("ddl_out", { k: int32(), label: string() });
+    const on = eq(src.k, dim.k);
+    const left = compileCreateMaterializedView(
+      "ddl_mv",
+      target,
+      db.select({ k: src.k, label: dim.label }).from(src).leftJoin(dim, on),
+    );
+    const asof = compileCreateMaterializedView(
+      "ddl_mv",
+      target,
+      db.select({ k: src.k, label: dim.label }).from(src).asofLeftJoin(dim, on),
+    );
+
+    expect(left.statement).toBe(
+      "CREATE MATERIALIZED VIEW `ddl_mv` TO `ddl_out` AS select `__ck_inner`.`k` as `k`, `__ck_inner`.`label` as `label` from (select `ddl_src`.`k` as `k`, `ddl_dim`.`label` as `label` from `ddl_src` left join `ddl_dim` on `ddl_src`.`k` = `ddl_dim`.`k`) as `__ck_inner` SETTINGS join_use_nulls = 1",
+    );
+    expect(left.forcedSettings).toBeUndefined();
+    expect(asof.statement).toContain(
+      "left asof join `ddl_dim` on `ddl_src`.`k` = `ddl_dim`.`k`) as `__ck_inner` SETTINGS join_use_nulls = 1",
+    );
+    expect(asof.forcedSettings).toBeUndefined();
+  });
+
+  it("rejects an aliased target and prefixes projection errors", function testMaterializedViewValidation() {
+    const db = createQueryClient();
+    expect(() => compileCreateMaterializedView("usage_mv", ckAlias(minutes, "m"), usageSelect())).toThrow(
+      "Schema DDL requires a base table, not an aliased table",
+    );
+
+    const generated = ckTable("generated_minutes", {
+      tenantId: string("tenant_id"),
+      shardDay: int32("shard_day").materialized(sql`toYYYYMM(tenant_id)`),
+    });
+    expect(() =>
+      compileCreateMaterializedView(
+        "usage_mv",
+        generated,
+        db.select({ tenantId: events.tenantId, shardDay: events.units }).from(events) as never,
+      ),
+    ).toThrow('createMaterializedView() cannot target generated column "shardDay"');
+    expect(() =>
+      compileCreateMaterializedView(
+        "usage_mv",
+        minutes,
+        db.select({ tenantId: events.tenantId, extra: events.units }).from(events) as never,
+      ),
+    ).toThrow('createMaterializedView() projects unknown column "extra"');
+    expect(() =>
+      compileCreateMaterializedView(
+        "usage_mv",
+        minutes,
+        db.select({ tenantId: events.tenantId }).from(events) as never,
+      ),
+    ).toThrow("createMaterializedView() select is missing required columns:");
   });
 });

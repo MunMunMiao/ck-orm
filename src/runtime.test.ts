@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import { string } from "./columns";
+import { nullable, string } from "./columns";
 import { isClickHouseORMError } from "./errors";
 import { fn } from "./functions";
-import { eq } from "./query";
+import { compileCreateMaterializedView, compileQuerySymbol, eq } from "./query";
 import { type ClickHouseClientConfig, type ClickHouseQueryOptions, clickhouseClient } from "./runtime";
 import { ckTable } from "./schema";
+import { buildCreateTableStatement, buildDropTableStatement } from "./schema-ddl";
 import { sql } from "./sql";
 import { orderRewardLog } from "./test-schema/commerce";
 
@@ -1247,5 +1248,131 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
 
     const headers = new Headers(calls[0]?.init.headers);
     expect(headers.get("Authorization")).toBe("Basic ZGVtby11c2VyOmRlbW8tcGFzcw==");
+  });
+
+  it("decodes unmatched asofLeftJoin rows from a fake fetch", async function testAsofLeftJoinFakeFetchDecode() {
+    const trades = ckTable("trades", { id: string(), symbol: string() });
+    const quotes = ckTable("quotes", { symbol: string(), note: string() });
+    const nullableQuotes = ckTable("nullable_quotes", {
+      symbol: nullable(string()),
+      note: nullable(string()),
+    });
+    const json = (data: readonly Record<string, unknown>[]) => new Response(JSON.stringify({ data }), { status: 200 });
+    const unmatchedRow = (query: {
+      [compileQuerySymbol](): { selection: readonly { sqlAlias: string; path: readonly string[] }[] };
+    }) => {
+      const row: Record<string, unknown> = {};
+      for (const item of query[compileQuerySymbol]().selection) {
+        const [group, field] = item.path;
+        row[item.sqlAlias] = group === "trades" ? (field === "id" ? "1" : "BTCUSD") : null;
+      }
+      return row;
+    };
+
+    const explicitDb = clickhouseClient({ host: "http://localhost:8123" });
+    const explicit = explicitDb
+      .select({ id: trades.id, note: quotes.note })
+      .from(trades)
+      .asofLeftJoin(quotes, eq(trades.symbol, quotes.symbol));
+    const explicitFetch = setFetchMock(() => json([{ id: "1", note: null }]));
+    expect(await explicit).toEqual([{ id: "1", note: null }]);
+    expect(explicitFetch.calls[0]?.url.searchParams.get("join_use_nulls")).toBe("1");
+
+    const implicit = explicitDb
+      .select()
+      .from(trades)
+      .asofLeftJoin(nullableQuotes, eq(trades.symbol, nullableQuotes.symbol));
+    setFetchMock(() => json([unmatchedRow(implicit)]));
+    expect(await implicit).toEqual([{ trades: { id: "1", symbol: "BTCUSD" }, nullable_quotes: null }]);
+
+    const zero = clickhouseClient({
+      host: "http://localhost:8123",
+      clickhouse_settings: { join_use_nulls: 0 },
+    });
+    const zeroQuery = zero.select().from(trades).asofLeftJoin(nullableQuotes, eq(trades.symbol, nullableQuotes.symbol));
+    const zeroFetch = setFetchMock(() => json([unmatchedRow(zeroQuery)]));
+    expect(await zeroQuery).toEqual([
+      {
+        trades: { id: "1", symbol: "BTCUSD" },
+        nullable_quotes: { symbol: null, note: null },
+      },
+    ]);
+    expect(zeroFetch.calls[0]?.url.searchParams.get("join_use_nulls")).toBe("0");
+  });
+
+  it("sends createTable, createMaterializedView and dropTable statements", async function testPersistentDdlStatements() {
+    const bodies: string[] = [];
+    const events = ckTable("ddl_events", { id: string() });
+    const dim = ckTable("ddl_dim", { id: string(), label: string() });
+    const target = ckTable("ddl_out", { id: string(), label: nullable(string()) });
+    setFetchMock(async (_url, init) => {
+      const text = await readBodyText(init.body);
+      if (typeof text === "string") {
+        bodies.push(text);
+      }
+      return new Response("", { status: 200 });
+    });
+
+    const db = clickhouseClient({ host: "http://localhost:8123" });
+    const selectId = db.select({ id: events.id }).from(events);
+    const joined = db.select({ id: events.id, label: dim.label }).from(events).leftJoin(dim, eq(events.id, dim.id));
+
+    await db.createTable(events);
+    await db.createTable(events, { mode: "or_replace" });
+    await db.createTable(events, { mode: "if_not_exists" });
+    await db.dropTable(events);
+    await db.dropTable("ddl_events", { ifExists: true });
+    await db.dropTable(events, { sync: true });
+    await db.dropTable("ddl_events", { ifExists: true, sync: true });
+    await db.createMaterializedView("ddl_mv", { to: events, as: selectId });
+    await db.createMaterializedView("ddl_mv", { to: target, as: joined, mode: "if_not_exists" });
+
+    expect(bodies).toEqual([
+      buildCreateTableStatement(events),
+      buildCreateTableStatement(events, "or_replace"),
+      buildCreateTableStatement(events, "if_not_exists"),
+      buildDropTableStatement(events),
+      buildDropTableStatement("ddl_events", { ifExists: true }),
+      buildDropTableStatement(events, { sync: true }),
+      buildDropTableStatement("ddl_events", { ifExists: true, sync: true }),
+      compileCreateMaterializedView("ddl_mv", events, selectId).statement,
+      compileCreateMaterializedView("ddl_mv", target, joined, "if_not_exists").statement,
+    ]);
+    expect(bodies[8]).toContain("SETTINGS join_use_nulls = 1");
+  });
+
+  it("keeps session ids on persistent DDL and does not drop createTable targets", async function testPersistentDdlSession() {
+    const bodies: string[] = [];
+    const events = ckTable("ddl_events", { id: string() });
+    const { calls } = setFetchMock(async (_url, init) => {
+      const text = await readBodyText(init.body);
+      if (typeof text === "string") {
+        bodies.push(text);
+      }
+      return new Response("", { status: 200 });
+    });
+
+    const db = clickhouseClient({ host: "http://localhost:8123" });
+    await db.runInSession(
+      async (session) => {
+        await session.createTable(events);
+        await session.createMaterializedView("ddl_mv", {
+          to: events,
+          as: session.select({ id: events.id }).from(events),
+        });
+        await session.dropTable("ddl_mv", { sync: true });
+      },
+      { session_id: "ddl_session" },
+    );
+
+    expect(bodies).toEqual([
+      buildCreateTableStatement(events),
+      compileCreateMaterializedView("ddl_mv", events, db.select({ id: events.id }).from(events)).statement,
+      "DROP TABLE `ddl_mv` SYNC",
+    ]);
+    expect(calls).toHaveLength(3);
+    for (const call of calls) {
+      expect(call.url.searchParams.get("session_id")).toBe("ddl_session");
+    }
   });
 });

@@ -105,7 +105,7 @@ const rows = await query;
 [範例頁面](https://ck-orm.lyz.cloud/examples/) 會展示可執行的查詢，以及每個查詢實際送往 ClickHouse 的 SQL。每個範例都是 [`examples/`](../examples) 內的獨立項目，各自有測試。可執行的 ClickHouse 測試覆蓋範圍放在 [`e2e/`](../e2e)，其中包括 [`e2e/scenarios.ts`](../e2e/scenarios.ts) 內貼近生產環境的場景模式。
 
 ## 心智模型
-<!-- src:f7815577 -->
+<!-- src:a26a2ce8 -->
 
 使用 `ck-orm` 時，請記住以下界線：
 
@@ -117,13 +117,13 @@ const rows = await query;
 - 數據庫連線放在 `clickhouseClient(...)` 上
 - 建構器查詢是預設路徑；遇到 ClickHouse 專用運算式時，可使用原始 SQL
 - `runInSession()` 是 ClickHouse 的工作階段輔助工具，不是交易
-- `leftJoin()` 預設使用 SQL 風格的 NULL 語義
+- `leftJoin()` 和 `asofLeftJoin()` 預設使用 SQL 風格的 NULL 語義
 - 數值較大或風險較高的結果會以保守方式解碼，而不是靜默強制轉換
 
-`ck-orm` 專注於具類型的 ClickHouse 存取：資料表定義、查詢組合、寫入輔助工具、工作階段輔助工具和可觀測性。生產環境的 DDL 和模式遷移工作流程仍由應用程式使用的遷移工具處理。
+`ck-orm` 專注於具類型的 ClickHouse 存取：資料表定義、查詢組合、寫入輔助工具、工作階段輔助工具和可觀測性。`createTable()`、`createMaterializedView()` 和 `dropTable()` 各自執行一條 DDL 語句；模式遷移（比較模式、`ALTER`、版本管理）仍由應用程式使用的遷移工具處理。
 
 ## 模式 DSL
-<!-- src:6809e7a9 -->
+<!-- src:5149bff0 -->
 
 ### `ckTable()`
 
@@ -199,9 +199,9 @@ const probeTelemetry = ckTable(
 模式中繼資料在 `ck-orm` 中負責兩件事：
 
 - 驅動具類型的查詢、插入驗證和結果解碼
-- 可以為工作階段暫存資料表產生結構化 DDL
+- 為 `createTable()` 和 `createTemporaryTable()` 渲染 `CREATE TABLE` 語句
 
-它不會自動遷移或同步生產環境的 ClickHouse 資料表。生產環境的 DDL 要由遷移工具管理，也要讓 `ckTable(...)` 與應用程式實際讀寫的模式保持一致。
+它不會遷移或同步既有的 ClickHouse 資料表：`createTable()` 只建立資料表（見 [資料表與物化視圖](#tables-and-materialized-views)）。模式遷移留在遷移工具裡，也要讓 `ckTable(...)` 與應用程式實際讀寫的模式保持一致。
 
 範例：
 
@@ -846,7 +846,7 @@ ck-orm 會在每次請求中強制套用一組精簡的傳輸契約設定：`htt
 - 未提供登入憑證時，預設用戶名稱是 `default`，密碼留空
 
 ## 查詢建構器
-<!-- src:5152d6ff -->
+<!-- src:fc28245d -->
 
 以下片段假設 `db`、`probeTelemetry` 以及文中使用的輔助工具都已從 `ck-orm` 匯入。
 
@@ -894,6 +894,48 @@ const rows = await db
     ck.eq(telemetry.probeId, matchedTelemetry.probeId),
   );
 ```
+
+### `asofJoin()`, `asofLeftJoin()`
+
+`asofJoin()` 和 `asofLeftJoin()` 會渲染 ClickHouse 的 `ASOF JOIN` 和 `LEFT ASOF JOIN`。對左側每一筆資料列，它們只聯結右側值最接近的那一筆資料列，而不是每一筆符合的結果。條件用 `ck.and(...)` 組合一個或多個相等條件，以及左右欄位之間恰好一個 `ck.gt`、`ck.gte`、`ck.lt` 或 `ck.lte`：
+
+```ts
+import { ck, ckTable, ckType } from "ck-orm";
+
+const trades = ckTable("trades", {
+  tradeId: ckType.uint32("trade_id"),
+  symbol: ckType.string(),
+  tradeTime: ckType.dateTime64("trade_time", { precision: 3, timezone: "UTC" }),
+});
+
+const quotes = ckTable("quotes", {
+  symbol: ckType.string(),
+  quoteTime: ckType.dateTime64("quote_time", { precision: 3, timezone: "UTC" }),
+  price: ckType.decimal({ precision: 20, scale: 5 }),
+});
+
+// Each trade gets the latest quote of its symbol at or before the trade time.
+const rows = await db
+  .select({
+    tradeId: trades.tradeId,
+    price: quotes.price,
+  })
+  .from(trades)
+  .asofLeftJoin(
+    quotes,
+    ck.and(
+      ck.eq(trades.symbol, quotes.symbol),
+      ck.gte(trades.tradeTime, quotes.quoteTime),
+    ),
+  );
+// rows: { tradeId: number; price: string | null }[]
+```
+
+- `ck.gte(left, right)` 選取不晚於左側值的最新右側資料列，`ck.gt` 選取嚴格早於左側值的最新一筆資料列。`ck.lte` 和 `ck.lt` 分別選取不早於、或嚴格晚於左側值的最早右側資料列。
+- `asofLeftJoin()` 遵循 [`leftJoin()` 的 NULL 語義](#join-null-semantics)：它會送出 `join_use_nulls = 1`，並把右側類型標成可為 NULL，所以沒有符合項目的左側資料列會得到 `null`。`asofJoin()` 會丟掉這些資料列，和 `innerJoin()` 一樣。
+- 用來找最接近值的欄位必須是整數、浮點數、`Date`、`DateTime` 或 `Decimal`，比較的兩邊都必須是欄位；和值比較不算。可以再加上相等過濾，例如 `ck.eq(quotes.symbol, "BTCUSD")`。
+- ck-orm 不檢查這個條件。沒有不等比較、出現第二個不等比較，或寫了 `ck.or(...)` 時，ClickHouse 會在讀取任何資料之前拒絕；錯誤是 `ClickHouseORMError`，`kind` 為 `"request_failed"`，`clickhouseName` 為 `"INVALID_JOIN_ON_EXPRESSION"`。沒有相等條件，以及最接近匹配欄位是其他類型，同樣會被拒絕；缺少相等條件時的錯誤名稱在不同 ClickHouse 版本之間不一樣。
+- ASOF 聯結使用預設的 `join_algorithm`，也可以用 `hash`、`parallel_hash` 或 `full_sorting_merge`。`partial_merge`、`grace_hash` 和 `direct` 會以 `NOT_IMPLEMENTED` 失敗。
 
 ### `where()` 與條件輔助工具
 
@@ -1266,7 +1308,7 @@ await db
 
 #### 選取鍵與方法名稱衝突
 
-如果選取鍵和 SelectBuilder 的方法名稱撞名（`from`、`where`、`select`、`as`、`innerJoin`、`leftJoin`、`groupBy`、`having`、`orderBy`、`limit`、`offset`、`final`、`limitBy`、`execute`、`iterator`、`then`、`catch`、`finally`、`buildSelectionItems`），未加別名的建構器會保留方法類型。`sub.from` 永遠返回建構器方法，不會返回欄位參照；即使選取內容包含 `from` 也一樣。這類鍵請改名（例如 `from` → `fromAddress`），或用 `.as("name")` 包裝子查詢，讓欄位存取改由專用的 `Subquery` 物件處理。
+如果選取鍵和 SelectBuilder 的方法名稱撞名（`from`、`where`、`select`、`as`、`innerJoin`、`leftJoin`、`asofJoin`、`asofLeftJoin`、`groupBy`、`having`、`orderBy`、`limit`、`offset`、`final`、`limitBy`、`execute`、`iterator`、`then`、`catch`、`finally`、`buildSelectionItems`），未加別名的建構器會保留方法類型。`sub.from` 永遠返回建構器方法，不會返回欄位參照；即使選取內容包含 `from` 也一樣。這類鍵請改名（例如 `from` → `fromAddress`），或用 `.as("name")` 包裝子查詢，讓欄位存取改由專用的 `Subquery` 物件處理。
 
 使用 `$with()` 和 `with()` 建立 CTE：
 
@@ -1335,9 +1377,9 @@ const wireTotal = await db.count(activeProbes).toMixed(); // number | string
 `.toSafe()` 會產生 `toString(count())`，主要用於讀取精確值。如果把這個安全計數值用作 SQL 運算式，它會採用 `String` 語義；要在 SQL 中作數值比較，請使用預設模式、`.toUnsafe()` 或 `.toMixed()`。`.toMixed()` 會產生 `toUInt64(count())`，並保留驅動程式和傳輸結構；依照 ck-orm 預設的無損 64 位元 JSON 設定，實際 ClickHouse 回應通常會以 `string` 返回。
 
 ## JOIN 的 NULL 語義
-<!-- src:5554058b -->
+<!-- src:59e7a4e2 -->
 
-`leftJoin()` 預設會自動套用 `join_use_nulls = 1`，因此使用 SQL 風格的 NULL 語義。
+`leftJoin()` 和 `asofLeftJoin()` 預設會自動套用 `join_use_nulls = 1`，因此使用 SQL 風格的 NULL 語義。
 
 具體來說：
 
@@ -2099,6 +2141,101 @@ const query = db
   })
   .from(numbers);
 ```
+
+## 資料表與物化視圖
+<!-- src:03694c38 -->
+
+`createTable()`、`createMaterializedView()` 和 `dropTable()` 各自送出一條由模式物件產生的 DDL 語句。它們不比較模式、不執行 `ALTER`，也不記錄版本；既有資料表的遷移留在遷移工具裡。客戶端和工作階段上都可以呼叫。它們建立的資料表和視圖是持久的，`runInSession()` 不會刪除它們。
+
+### `createTable()`
+
+`createTable(table, options?)` 送出由 `ckTable(...)` 定義渲染出的 `CREATE TABLE` 語句：先是帶有 DDL 元資料的欄位，然後是 `ENGINE`、`PARTITION BY`、`PRIMARY KEY`、`ORDER BY`、`SAMPLE BY`、`TTL`、`SETTINGS` 和 `COMMENT`。
+
+```ts
+import { ckTable, ckType } from "ck-orm";
+
+const usageEvents = ckTable(
+  "usage_events",
+  {
+    tenantId: ckType.string("tenant_id"),
+    occurredAt: ckType.dateTime64("occurred_at", { precision: 3, timezone: "UTC" }),
+    units: ckType.uint64(),
+  },
+  (table) => ({
+    engine: "MergeTree",
+    orderBy: [table.tenantId, table.occurredAt],
+  }),
+);
+
+await db.createTable(usageEvents);
+```
+
+- 預設情況下，已有同名資料表時語句會失敗，錯誤名稱是 `TABLE_ALREADY_EXISTS`
+- `mode: "if_not_exists"` 渲染 `CREATE TABLE IF NOT EXISTS`，既有資料表保持原樣，即使欄位定義不同也不改
+- `mode: "or_replace"` 渲染 `CREATE OR REPLACE TABLE`，會取代既有資料表並捨棄其中的資料
+- 沒有 `engine` 的資料表會使用 `MergeTree`，並帶上 `ORDER BY tuple()`
+- 來自 `ckAlias(...)` 的別名資料表會被拒絕
+
+### `createMaterializedView()`
+
+`createMaterializedView(name, { to, as, mode? })` 建立一個由插入觸發的物化視圖，寫入既有資料表 `to`。`as` 是 `select()` 建構器，規則與 `insert(to).fromSelect(...)` 相同：必須投影 `to` 的每一個必填欄位；未知鍵或類型不符是 TypeScript 錯誤。
+
+```ts
+import { ckTable, ckType, fn } from "ck-orm";
+
+const usageMinutes = ckTable(
+  "usage_minutes",
+  {
+    tenantId: ckType.string("tenant_id"),
+    minute: ckType.dateTime64({ precision: 3, timezone: "UTC" }),
+    unitsState: ckType.aggregateFunction("units_state", {
+      name: "sum",
+      args: [ckType.uint64()],
+    }),
+  },
+  (table) => ({
+    engine: "AggregatingMergeTree",
+    orderBy: [table.tenantId, table.minute],
+  }),
+);
+
+await db.createTable(usageMinutes);
+
+const minute = fn.call<Date>("toStartOfMinute", usageEvents.occurredAt);
+await db.createMaterializedView("usage_minutes_mv", {
+  to: usageMinutes,
+  as: db
+    .select({
+      tenantId: usageEvents.tenantId,
+      minute,
+      unitsState: fn.call("sumState", usageEvents.units),
+    })
+    .from(usageEvents)
+    .groupBy(usageEvents.tenantId, minute),
+});
+```
+
+- ClickHouse 按欄位名稱把物化視圖的輸出寫入 `to`，所以 ck-orm 把 select 包成 `select ... as <column> from (...)`，讓每個鍵落到 `to` 中對應的欄位
+- `as` 裡的查詢參數在建立視圖時被替換，因此存下來的視圖持有這些值
+- select 強制的設定，例如 `leftJoin()` 的 `join_use_nulls = 1`，會寫進視圖的 `SETTINGS` 子句，因為請求設定不會隨視圖保存
+- 視圖只能看到建立之後插入的資料列；要回填，用同一個 select 執行 `db.insert(to).fromSelect(...)`
+- `mode: "if_not_exists"` 渲染 `IF NOT EXISTS`。ClickHouse 25.8 和 26.3 沒有 `CREATE OR REPLACE MATERIALIZED VIEW`，所以沒有 `or_replace` 模式
+- `to` 是必填的：自帶 `ENGINE` 的視圖、`POPULATE` 和可刷新的視圖都不支援；這些情況用 `ckSql` 配合 `command()`
+
+### `dropTable()`
+
+`dropTable(table, options?)` 刪除一張資料表或一個視圖。可以傳入模式物件，也可以傳入名稱：
+
+```ts
+await db.dropTable("usage_minutes_mv", { sync: true });
+await db.dropTable(usageMinutes, { ifExists: true, sync: true });
+```
+
+- 預設渲染 `DROP TABLE name`；沒有這個名稱的物件時，以 `UNKNOWN_TABLE` 失敗
+- `ifExists: true` 渲染 `IF EXISTS`
+- `sync: true` 渲染 `SYNC`：呼叫在 ClickHouse 刪掉資料之後才返回，而不是把刪除留給 `Atomic` 數據庫引擎的延遲清理
+- 刪除物化視圖後，它的 `to` 資料表以及已經寫入的資料列都還在
+- 來自 `ckAlias(...)` 的別名資料表會被拒絕，也不會渲染 `ON CLUSTER`；在叢集上，使用遷移工具，或用 `ckSql` 配合 `command()`
 
 ## 工作階段與暫存資料表
 <!-- src:8f031227 -->

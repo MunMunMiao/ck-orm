@@ -540,7 +540,12 @@ describe("ck-orm public api", function describePublicApi() {
     expectType<RootApi.ClickHouseStreamOptions | undefined>(undefined);
     expectType<RootApi.CompiledQuery | undefined>(undefined);
     expectType<RootApi.CompiledQueryMetadata | undefined>(undefined);
+    expectType<
+      RootApi.CreateMaterializedViewOptions<RootApi.AnyTable, RootApi.InsertBuilder<RootApi.AnyTable>> | undefined
+    >(undefined);
+    expectType<RootApi.CreateTableOptions | undefined>(undefined);
     expectType<RootApi.CreateTemporaryTableOptions | undefined>(undefined);
+    expectType<RootApi.DropTableOptions | undefined>(undefined);
     expectType<RootApi.InferInsertModel<RootApi.AnyTable> | undefined>(undefined);
     expectType<RootApi.InferInsertSchema<Record<string, RootApi.AnyTable>> | undefined>(undefined);
     expectType<RootApi.InferSelectModel<RootApi.AnyTable> | undefined>(undefined);

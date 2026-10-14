@@ -105,7 +105,7 @@ const rows = await query;
 [使用例ページ](https://ck-orm.lyz.cloud/examples/)では、実行可能なクエリと、それぞれがClickHouseへ送信する正確なSQLを確認できます。各例は[`examples/`](../examples)内に個別のプロジェクトとして置かれ、それぞれにテストがあります。実際にClickHouseで実行するテストは[`e2e/`](../e2e)にあります。[`e2e/scenarios.ts`](../e2e/scenarios.ts)には、本番環境と同じ構成のシナリオスキーマも含まれます。
 
 ## メンタルモデル
-<!-- src:f7815577 -->
+<!-- src:a26a2ce8 -->
 
 `ck-orm`は、次の点を押さえて使います。
 
@@ -117,13 +117,13 @@ const rows = await query;
 - データベース接続は`clickhouseClient(...)`で扱います。
 - ビルダーのクエリが基本の使い方で、ClickHouse固有の式には生SQLも使えます。
 - `runInSession()`はClickHouseのセッションヘルパーであり、トランザクションではありません。
-- `leftJoin()`はデフォルトでSQLと同じNULLの扱いを使います。
+- `leftJoin()`と`asofLeftJoin()`はデフォルトでSQLと同じNULLの扱いを使います。
 - 桁数が大きい、または精度を失うおそれのある数値結果は、暗黙に変換せず、精度を保ってデコードします。
 
-`ck-orm`は、型付きのClickHouseアクセスを中心に、テーブル定義、クエリの組み立て、書き込みヘルパー、セッションヘルパー、オブザーバビリティを扱います。本番環境のDDLとスキーマのマイグレーション処理は、従来どおりアプリケーション側のマイグレーションツールで扱います。
+`ck-orm`は、型付きのClickHouseアクセスを中心に、テーブル定義、クエリの組み立て、書き込みヘルパー、セッションヘルパー、オブザーバビリティを扱います。`createTable()`、`createMaterializedView()`、`dropTable()`は、それぞれDDL文を1つ実行します。スキーマのマイグレーション（スキーマの比較、`ALTER`、バージョン管理）は、アプリケーション側のマイグレーションツールで扱います。
 
 ## スキーマDSL
-<!-- src:6809e7a9 -->
+<!-- src:5149bff0 -->
 
 ### `ckTable()`
 
@@ -199,9 +199,9 @@ const probeTelemetry = ckTable(
 スキーマメタデータには、`ck-orm`で2つの役割があります。
 
 - 型付きクエリ、挿入時の検証、結果のデコードを支えます。
-- セッション用一時テーブルの構造化DDLを生成できます。
+- `createTable()`と`createTemporaryTable()`の`CREATE TABLE`文をレンダリングします。
 
-ck-ormは、本番環境のClickHouseテーブルを自動でマイグレーションも同期もしません。本番環境のDDLはマイグレーションツールで管理し、`ckTable(...)`はアプリケーションが読み書きするスキーマと一致させてください。
+ck-ormは、既存のClickHouseテーブルをマイグレーションも同期もしません。`createTable()`はテーブルを作成するだけです（[テーブルとマテリアライズドビュー](#tables-and-materialized-views)を参照）。スキーマのマイグレーションはマイグレーションツールに残し、`ckTable(...)`はアプリケーションが読み書きするスキーマと一致させてください。
 
 例を示します。
 
@@ -846,7 +846,7 @@ ck-ormは、すべてのリクエストでワイヤ契約に必要な少数の�
 - 資格情報を指定しない場合、デフォルトはパスワードが空の`default`です
 
 ## クエリビルダー
-<!-- src:5152d6ff -->
+<!-- src:fc28245d -->
 
 以下のコード例では、`db`、`probeTelemetry`、参照するヘルパーは`ck-orm`からインポート済みとします。
 
@@ -894,6 +894,48 @@ const rows = await db
     ck.eq(telemetry.probeId, matchedTelemetry.probeId),
   );
 ```
+
+### `asofJoin()`, `asofLeftJoin()`
+
+`asofJoin()`と`asofLeftJoin()`は、ClickHouseの`ASOF JOIN`と`LEFT ASOF JOIN`をレンダリングします。左側の各行に対して、一致する行をすべて結合するのではなく、値が最も近い右側の行を1つだけ結合します。条件は`ck.and(...)`で、1つ以上の等値条件と、左右のカラムの間の`ck.gt`、`ck.gte`、`ck.lt`、`ck.lte`のいずれか1つだけを組み合わせます。
+
+```ts
+import { ck, ckTable, ckType } from "ck-orm";
+
+const trades = ckTable("trades", {
+  tradeId: ckType.uint32("trade_id"),
+  symbol: ckType.string(),
+  tradeTime: ckType.dateTime64("trade_time", { precision: 3, timezone: "UTC" }),
+});
+
+const quotes = ckTable("quotes", {
+  symbol: ckType.string(),
+  quoteTime: ckType.dateTime64("quote_time", { precision: 3, timezone: "UTC" }),
+  price: ckType.decimal({ precision: 20, scale: 5 }),
+});
+
+// Each trade gets the latest quote of its symbol at or before the trade time.
+const rows = await db
+  .select({
+    tradeId: trades.tradeId,
+    price: quotes.price,
+  })
+  .from(trades)
+  .asofLeftJoin(
+    quotes,
+    ck.and(
+      ck.eq(trades.symbol, quotes.symbol),
+      ck.gte(trades.tradeTime, quotes.quoteTime),
+    ),
+  );
+// rows: { tradeId: number; price: string | null }[]
+```
+
+- `ck.gte(left, right)`は左側の値以前で最新の右側の行を選び、`ck.gt`は左側の値より厳密に前の最新の行を選びます。`ck.lte`と`ck.lt`は、左側の値以降、または厳密に後の、最も早い右側の行を選びます。
+- `asofLeftJoin()`は[`leftJoin()`のNULLの扱い](#join-null-semantics)に従います。`join_use_nulls = 1`を送り、右側をNULL許容として型付けするので、一致しない左側の行は`null`になります。`asofJoin()`は`innerJoin()`と同じく、そのような行を除きます。
+- 最も近い値を探すカラムは、整数、浮動小数点数、`Date`、`DateTime`、`Decimal`のいずれかでなければならず、比較の両辺はカラムを参照しなければなりません。値との比較は数えません。`ck.eq(quotes.symbol, "BTCUSD")`のような追加の等値フィルタは使えます。
+- ck-ormはこの条件を検査しません。不等比較がない、不等比較が2つある、または`ck.or(...)`を含む条件は、データを読む前にClickHouseが拒否します。エラーは`ClickHouseORMError`で、`kind`は`"request_failed"`、`clickhouseName`は`"INVALID_JOIN_ON_EXPRESSION"`です。等値条件がない場合と、最も近い値のカラムが別の型である場合も拒否されます。等値条件がないときのエラー名は、ClickHouseのバージョンによって異なります。
+- ASOF結合はデフォルトの`join_algorithm`に加え、`hash`、`parallel_hash`、`full_sorting_merge`で実行できます。`partial_merge`、`grace_hash`、`direct`は`NOT_IMPLEMENTED`で失敗します。
 
 ### `where()`と条件ヘルパー
 
@@ -1268,7 +1310,7 @@ await db
 #### Selectionキーの競合
 
 SelectBuilderのメソッド名（`from`,
-`where`, `select`, `as`, `innerJoin`, `leftJoin`, `groupBy`, `having`,
+`where`, `select`, `as`, `innerJoin`, `leftJoin`, `asofJoin`, `asofLeftJoin`, `groupBy`, `having`,
 `orderBy`, `limit`, `offset`, `final`, `limitBy`, `execute`, `iterator`,
 `then`, `catch`, `finally`, `buildSelectionItems`）と衝突するSelectionキーは、
 エイリアスなしのビルダーではメソッドの型を保ちます。`sub.from`は、選択に
@@ -1343,9 +1385,9 @@ const wireTotal = await db.count(activeProbes).toMixed(); // number | string
 `.toSafe()`は`toString(count())`を出力し、正確な値を読むためのものです。安全なカウント値をSQL式として使うと、`String`として扱われます。SQLで数値比較をする場合は、デフォルトの動作、`.toUnsafe()`、または`.toMixed()`を使ってください。`.toMixed()`は`toUInt64(count())`を出力し、ドライバーから返る値の形式と通信時の形式を保ちます。ck-ormのデフォルトJSON設定では、64ビット整数の精度を保つため、実際のClickHouseレスポンスは通常`string`で届きます。
 
 ## 結合時のNULLの扱い
-<!-- src:5554058b -->
+<!-- src:59e7a4e2 -->
 
-`leftJoin()`は`join_use_nulls = 1`を自動で適用し、デフォルトではSQLと同じNULLの扱いを使います。
+`leftJoin()`と`asofLeftJoin()`は`join_use_nulls = 1`を自動で適用し、デフォルトではSQLと同じNULLの扱いを使います。
 
 つまり、次のようになります。
 
@@ -2088,6 +2130,101 @@ const query = db
   })
   .from(numbers);
 ```
+
+## テーブルとマテリアライズドビュー
+<!-- src:03694c38 -->
+
+`createTable()`、`createMaterializedView()`、`dropTable()`は、それぞれスキーマオブジェクトから作ったDDL文を1つ送ります。スキーマの比較、`ALTER`の実行、バージョンの記録はしません。既存テーブルのマイグレーションはマイグレーションツールに残してください。クライアントとセッションの両方で使えます。これらが作るテーブルとビューは永続で、`runInSession()`は削除しません。
+
+### `createTable()`
+
+`createTable(table, options?)`は、`ckTable(...)`の定義からレンダリングした`CREATE TABLE`文を送ります。DDLメタデータを持つカラムに続き、`ENGINE`、`PARTITION BY`、`PRIMARY KEY`、`ORDER BY`、`SAMPLE BY`、`TTL`、`SETTINGS`、`COMMENT`が続きます。
+
+```ts
+import { ckTable, ckType } from "ck-orm";
+
+const usageEvents = ckTable(
+  "usage_events",
+  {
+    tenantId: ckType.string("tenant_id"),
+    occurredAt: ckType.dateTime64("occurred_at", { precision: 3, timezone: "UTC" }),
+    units: ckType.uint64(),
+  },
+  (table) => ({
+    engine: "MergeTree",
+    orderBy: [table.tenantId, table.occurredAt],
+  }),
+);
+
+await db.createTable(usageEvents);
+```
+
+- デフォルトでは、同じ名前のテーブルが既にあると文は失敗し、エラー名は`TABLE_ALREADY_EXISTS`です。
+- `mode: "if_not_exists"`は`CREATE TABLE IF NOT EXISTS`をレンダリングし、カラムが違っていても既存のテーブルをそのまま残します。
+- `mode: "or_replace"`は`CREATE OR REPLACE TABLE`をレンダリングし、既存のテーブルを置き換えてデータを破棄します。
+- `engine`がないテーブルは`MergeTree`になり、`ORDER BY tuple()`が付きます。
+- `ckAlias(...)`で作ったエイリアス付きテーブルは拒否されます。
+
+### `createMaterializedView()`
+
+`createMaterializedView(name, { to, as, mode? })`は、挿入を契機に既存のテーブル`to`へ書き込むマテリアライズドビューを作ります。`as`は`insert(to).fromSelect(...)`と同じ規則のselectビルダーです。`to`の必須カラムをすべて投影しなければならず、未知のキーや型の不一致はTypeScriptのエラーになります。
+
+```ts
+import { ckTable, ckType, fn } from "ck-orm";
+
+const usageMinutes = ckTable(
+  "usage_minutes",
+  {
+    tenantId: ckType.string("tenant_id"),
+    minute: ckType.dateTime64({ precision: 3, timezone: "UTC" }),
+    unitsState: ckType.aggregateFunction("units_state", {
+      name: "sum",
+      args: [ckType.uint64()],
+    }),
+  },
+  (table) => ({
+    engine: "AggregatingMergeTree",
+    orderBy: [table.tenantId, table.minute],
+  }),
+);
+
+await db.createTable(usageMinutes);
+
+const minute = fn.call<Date>("toStartOfMinute", usageEvents.occurredAt);
+await db.createMaterializedView("usage_minutes_mv", {
+  to: usageMinutes,
+  as: db
+    .select({
+      tenantId: usageEvents.tenantId,
+      minute,
+      unitsState: fn.call("sumState", usageEvents.units),
+    })
+    .from(usageEvents)
+    .groupBy(usageEvents.tenantId, minute),
+});
+```
+
+- ClickHouseはマテリアライズドビューの出力をカラム名で`to`に書き込むため、ck-ormはselectを`select ... as <column> from (...)`で包み、各キーが`to`の対応するカラムに入るようにします。
+- `as`のクエリパラメータはビュー作成時に置換されるので、保存されるビューはその値を保持します。
+- selectが強制する設定、たとえば`leftJoin()`の`join_use_nulls = 1`は、ビューの`SETTINGS`句に入ります。リクエスト設定はビューと一緒に保存されないためです。
+- ビューが見るのは、ビューが存在するようになった後に挿入された行だけです。過去の行を埋めるには、同じselectで`db.insert(to).fromSelect(...)`を実行します。
+- `mode: "if_not_exists"`は`IF NOT EXISTS`をレンダリングします。ClickHouse 25.8と26.3には`CREATE OR REPLACE MATERIALIZED VIEW`がないので、`or_replace`モードはありません。
+- `to`は必須です。独自の`ENGINE`を持つビュー、`POPULATE`、リフレッシュ可能なビューはサポートしません。それらには`ckSql`と`command()`を使ってください。
+
+### `dropTable()`
+
+`dropTable(table, options?)`は、スキーマオブジェクトまたは名前を指定して、テーブルまたはビューを削除します。
+
+```ts
+await db.dropTable("usage_minutes_mv", { sync: true });
+await db.dropTable(usageMinutes, { ifExists: true, sync: true });
+```
+
+- デフォルトでは`DROP TABLE name`をレンダリングし、その名前のオブジェクトがなければ`UNKNOWN_TABLE`で失敗します。
+- `ifExists: true`は`IF EXISTS`をレンダリングします。
+- `sync: true`は`SYNC`をレンダリングします。呼び出しは、`Atomic`データベースエンジンの遅延クリーンアップに任せず、ClickHouseがデータを削除してから戻ります。
+- マテリアライズドビューを削除しても、その`to`テーブルと、すでに書き込まれた行は残ります。
+- `ckAlias(...)`で作ったエイリアス付きテーブルは拒否され、`ON CLUSTER`もレンダリングされません。クラスタでは、マイグレーションツールか、`ckSql`と`command()`を使ってください。
 
 ## セッションと一時テーブル
 <!-- src:8f031227 -->

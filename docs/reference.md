@@ -129,10 +129,10 @@ Use `ck-orm` with these boundaries in mind:
 - the database connection lives on `clickhouseClient(...)`
 - builder queries are the default path, with raw SQL available for ClickHouse-specific expressions
 - `runInSession()` is a ClickHouse session helper, not a transaction
-- `leftJoin()` uses SQL-style null semantics by default
+- `leftJoin()` and `asofLeftJoin()` use SQL-style null semantics by default
 - large or high-risk numeric results are decoded conservatively rather than silently coerced
 
-`ck-orm` focuses on typed ClickHouse access: table definitions, query composition, write helpers, session helpers, and observability. Production DDL and schema migration workflows remain in the migration tooling used by the application.
+`ck-orm` focuses on typed ClickHouse access: table definitions, query composition, write helpers, session helpers, and observability. `createTable()`, `createMaterializedView()` and `dropTable()` each run one DDL statement; schema migrations (comparing schemas, `ALTER`, versioning) remain in the migration tooling used by the application.
 
 ## Schema DSL
 
@@ -210,9 +210,9 @@ Column definitions can also carry DDL metadata directly:
 Schema metadata has two jobs in `ck-orm`:
 
 - it drives typed queries, insert validation, and result decoding
-- it can render structured DDL for session temporary tables
+- it renders the `CREATE TABLE` statement for `createTable()` and `createTemporaryTable()`
 
-It does not automatically migrate or synchronize production ClickHouse tables. Keep production DDL in your migration tool, and keep `ckTable(...)` aligned with the schema your application reads and writes.
+It does not migrate or synchronize existing ClickHouse tables: `createTable()` only creates a table (see [Tables and materialized views](#tables-and-materialized-views)). Keep schema migrations in your migration tool, and keep `ckTable(...)` aligned with the schema your application reads and writes.
 
 Example:
 
@@ -957,6 +957,48 @@ const rows = await db
   );
 ```
 
+### `asofJoin()`, `asofLeftJoin()`
+
+`asofJoin()` and `asofLeftJoin()` render ClickHouse `ASOF JOIN` and `LEFT ASOF JOIN`. For each left row they join the one right row whose value is closest, instead of every matching row. The condition combines one or more equality conditions and exactly one `ck.gt`, `ck.gte`, `ck.lt` or `ck.lte` between a left and a right column with `ck.and(...)`:
+
+```ts
+import { ck, ckTable, ckType } from "ck-orm";
+
+const trades = ckTable("trades", {
+  tradeId: ckType.uint32("trade_id"),
+  symbol: ckType.string(),
+  tradeTime: ckType.dateTime64("trade_time", { precision: 3, timezone: "UTC" }),
+});
+
+const quotes = ckTable("quotes", {
+  symbol: ckType.string(),
+  quoteTime: ckType.dateTime64("quote_time", { precision: 3, timezone: "UTC" }),
+  price: ckType.decimal({ precision: 20, scale: 5 }),
+});
+
+// Each trade gets the latest quote of its symbol at or before the trade time.
+const rows = await db
+  .select({
+    tradeId: trades.tradeId,
+    price: quotes.price,
+  })
+  .from(trades)
+  .asofLeftJoin(
+    quotes,
+    ck.and(
+      ck.eq(trades.symbol, quotes.symbol),
+      ck.gte(trades.tradeTime, quotes.quoteTime),
+    ),
+  );
+// rows: { tradeId: number; price: string | null }[]
+```
+
+- `ck.gte(left, right)` picks the latest right row at or before the left value, and `ck.gt` the latest one strictly before it. `ck.lte` and `ck.lt` pick the earliest right row at or after, or strictly after, the left value.
+- `asofLeftJoin()` follows the [`leftJoin()` null semantics](#join-null-semantics): it sends `join_use_nulls = 1` and types the right side as nullable, so a left row without a match gets `null`. `asofJoin()` drops such rows, like `innerJoin()`.
+- The closest-match column must have an integer, float, `Date`, `DateTime` or `Decimal` type, and both sides of that comparison must refer to columns; a comparison with a value does not count. Extra equality filters such as `ck.eq(quotes.symbol, "BTCUSD")` are allowed.
+- ck-orm does not inspect the condition. ClickHouse rejects a condition without an inequality, with a second inequality or with `ck.or(...)` before it reads any data; the error is a `ClickHouseORMError` with `kind: "request_failed"` and `clickhouseName: "INVALID_JOIN_ON_EXPRESSION"`. A condition without an equality and a closest-match column of another type are rejected too, and the error name for a missing equality differs between ClickHouse versions.
+- ASOF joins run with the default `join_algorithm` and with `hash`, `parallel_hash` or `full_sorting_merge`. `partial_merge`, `grace_hash` and `direct` fail with `NOT_IMPLEMENTED`.
+
 ### `where()` and condition helpers
 
 Public condition helpers:
@@ -1334,7 +1376,7 @@ the same builder tree — `snapshot` style tests don't need normalization.
 #### Selection key conflicts
 
 Selection keys that collide with SelectBuilder method names (`from`,
-`where`, `select`, `as`, `innerJoin`, `leftJoin`, `groupBy`, `having`,
+`where`, `select`, `as`, `innerJoin`, `leftJoin`, `asofJoin`, `asofLeftJoin`, `groupBy`, `having`,
 `orderBy`, `limit`, `offset`, `final`, `limitBy`, `execute`, `iterator`,
 `then`, `catch`, `finally`, `buildSelectionItems`) keep their method type
 on the bare builder. `sub.from` always returns the builder method, never a
@@ -1410,7 +1452,7 @@ const wireTotal = await db.count(activeProbes).toMixed(); // number | string
 
 ## Join null semantics
 
-`leftJoin()` defaults to SQL-style null semantics by automatically applying `join_use_nulls = 1`.
+`leftJoin()` and `asofLeftJoin()` default to SQL-style null semantics by automatically applying `join_use_nulls = 1`.
 
 That means:
 
@@ -2177,6 +2219,100 @@ const query = db
   })
   .from(numbers);
 ```
+
+## Tables and materialized views
+
+`createTable()`, `createMaterializedView()` and `dropTable()` each send one DDL statement built from schema objects. They do not compare schemas, run `ALTER` or record versions; keep migrations of existing tables in your migration tool. They are available on the client and on a session. Tables and views they create are persistent, and `runInSession()` does not drop them.
+
+### `createTable()`
+
+`createTable(table, options?)` sends the `CREATE TABLE` statement rendered from a `ckTable(...)` definition: the columns with their DDL metadata, then `ENGINE`, `PARTITION BY`, `PRIMARY KEY`, `ORDER BY`, `SAMPLE BY`, `TTL`, `SETTINGS` and `COMMENT`.
+
+```ts
+import { ckTable, ckType } from "ck-orm";
+
+const usageEvents = ckTable(
+  "usage_events",
+  {
+    tenantId: ckType.string("tenant_id"),
+    occurredAt: ckType.dateTime64("occurred_at", { precision: 3, timezone: "UTC" }),
+    units: ckType.uint64(),
+  },
+  (table) => ({
+    engine: "MergeTree",
+    orderBy: [table.tenantId, table.occurredAt],
+  }),
+);
+
+await db.createTable(usageEvents);
+```
+
+- by default, an existing table with the same name makes the statement fail with `TABLE_ALREADY_EXISTS`
+- `mode: "if_not_exists"` renders `CREATE TABLE IF NOT EXISTS` and leaves an existing table as it is, even when its columns differ
+- `mode: "or_replace"` renders `CREATE OR REPLACE TABLE`, which replaces an existing table and discards its data
+- a table without `engine` gets `MergeTree` with `ORDER BY tuple()`
+- an aliased table from `ckAlias(...)` is rejected
+
+### `createMaterializedView()`
+
+`createMaterializedView(name, { to, as, mode? })` creates an insert-triggered materialized view that writes into the existing table `to`. `as` is a select builder with the same rules as `insert(to).fromSelect(...)`: it must project every required column of `to`, and unknown keys or type mismatches are TypeScript errors.
+
+```ts
+import { ckTable, ckType, fn } from "ck-orm";
+
+const usageMinutes = ckTable(
+  "usage_minutes",
+  {
+    tenantId: ckType.string("tenant_id"),
+    minute: ckType.dateTime64({ precision: 3, timezone: "UTC" }),
+    unitsState: ckType.aggregateFunction("units_state", {
+      name: "sum",
+      args: [ckType.uint64()],
+    }),
+  },
+  (table) => ({
+    engine: "AggregatingMergeTree",
+    orderBy: [table.tenantId, table.minute],
+  }),
+);
+
+await db.createTable(usageMinutes);
+
+const minute = fn.call<Date>("toStartOfMinute", usageEvents.occurredAt);
+await db.createMaterializedView("usage_minutes_mv", {
+  to: usageMinutes,
+  as: db
+    .select({
+      tenantId: usageEvents.tenantId,
+      minute,
+      unitsState: fn.call("sumState", usageEvents.units),
+    })
+    .from(usageEvents)
+    .groupBy(usageEvents.tenantId, minute),
+});
+```
+
+- ClickHouse writes the output of a materialized view into `to` by column name, so ck-orm wraps the select as `select ... as <column> from (...)` and each key lands on its column in `to`
+- query parameters in `as` are substituted when the view is created, so the stored view holds their values
+- settings that the select forces, such as `join_use_nulls = 1` from `leftJoin()`, go into a `SETTINGS` clause of the view, because request settings are not stored with a view
+- the view only sees rows inserted after it exists; to backfill, run `db.insert(to).fromSelect(...)` with the same select
+- `mode: "if_not_exists"` renders `IF NOT EXISTS`. ClickHouse 25.8 and 26.3 have no `CREATE OR REPLACE MATERIALIZED VIEW`, so there is no `or_replace` mode
+- `to` is required: views with their own `ENGINE`, `POPULATE` and refreshable views are not supported; use `ckSql` with `command()` for those
+
+### `dropTable()`
+
+`dropTable(table, options?)` drops a table or a view, given its schema object or its name:
+
+```ts
+await db.dropTable("usage_minutes_mv", { sync: true });
+await db.dropTable(usageMinutes, { ifExists: true, sync: true });
+```
+
+- by default it renders `DROP TABLE name` and fails with `UNKNOWN_TABLE` when nothing has that name
+- `ifExists: true` renders `IF EXISTS`
+- `sync: true` renders `SYNC`: the call returns once ClickHouse has removed the data, instead of leaving that to the delayed cleanup of the `Atomic` database engine
+- dropping a materialized view leaves its `to` table and the rows already written there
+- an aliased table from `ckAlias(...)` is rejected, and `ON CLUSTER` is not rendered; on a cluster, use your migration tool or `ckSql` with `command()`
 
 ## Sessions and temporary tables
 

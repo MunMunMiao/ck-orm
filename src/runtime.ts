@@ -17,7 +17,9 @@ export type {
   ClickHouseFetchConfigOptions,
   ClickHouseQueryOptions,
   ClickHouseStreamOptions,
+  CreateTableOptions,
   CreateTemporaryTableOptions,
+  DropTableOptions,
   Session,
 } from "./runtime/config";
 export type {

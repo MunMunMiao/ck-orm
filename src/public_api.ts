@@ -223,6 +223,7 @@ export type {
   BuiltQuery,
   CompiledQuery,
   CompiledQueryMetadata,
+  CreateMaterializedViewOptions,
   FromSelectShapeConstraint,
   InsertBuilder,
   InsertFromSelectBuilder,
@@ -241,8 +242,10 @@ export {
   type ClickHouseSettings,
   type ClickHouseSettingValue,
   type ClickHouseStreamOptions,
+  type CreateTableOptions,
   type CreateTemporaryTableOptions,
   clickhouseClient,
+  type DropTableOptions,
   type Session,
 } from "./runtime";
 export type { AnyTable, Table } from "./schema";
