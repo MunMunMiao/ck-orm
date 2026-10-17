@@ -1,5 +1,16 @@
 import { expect, it } from "bun:test";
-import { propagation, type TextMapPropagator, TraceFlags, type Tracer, trace } from "@opentelemetry/api";
+import { createRequire } from "node:module";
+import { resolve } from "node:path";
+import {
+  type Attributes,
+  propagation,
+  type SpanStatus,
+  SpanStatusCode,
+  type TextMapPropagator,
+  TraceFlags,
+  type Tracer,
+  trace,
+} from "@opentelemetry/api";
 import {
   type ClickHouseORMLogger,
   type ClickHouseORMQueryErrorEvent,
@@ -8,10 +19,49 @@ import {
   ck,
   ckSql,
   fn,
+  isClickHouseORMError,
 } from "./ck-orm";
 import { otelTracing } from "./ck-orm-otel";
 import { createE2EDb, getE2EConfig, users } from "./shared";
-import { describeE2E } from "./test-helpers";
+import { describeE2E, expectPresent } from "./test-helpers";
+
+const requireExample = createRequire(resolve(import.meta.dir, "../examples/otel-tracing/package.json"));
+type FinishedSpan = {
+  name: string;
+  status: SpanStatus;
+  attributes: Attributes;
+  events: ReadonlyArray<{ name: string; attributes?: Attributes }>;
+  links: readonly unknown[];
+};
+const {
+  InMemorySpanExporter,
+  NodeTracerProvider,
+  SimpleSpanProcessor,
+}: {
+  InMemorySpanExporter: new () => { getFinishedSpans(): FinishedSpan[] };
+  SimpleSpanProcessor: new (exporter: unknown) => unknown;
+  NodeTracerProvider: new (options: {
+    spanProcessors: unknown[];
+  }) => {
+    getTracer(name: string): Tracer;
+    forceFlush(): Promise<void>;
+    shutdown(): Promise<void>;
+  };
+} = requireExample("@opentelemetry/sdk-trace-node");
+
+const REAL_DB_MARKER = "AUDIT_SEC005_REAL_DATABASE_SECRET_7F4C";
+
+const exportedChannels = ({ name, status, attributes, events, links }: FinishedSpan) =>
+  JSON.stringify({ name, status, attributes, events, links });
+
+const realSdk = () => {
+  const exporter = new InMemorySpanExporter();
+  const provider = new NodeTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
+  const db = createE2EDb({
+    plugins: [otelTracing({ tracer: provider.getTracer("ck-orm-e2e-sec005-real-db"), includeStatement: false })],
+  });
+  return { db, exporter, provider };
+};
 
 type CapturedSpan = {
   name: string;
@@ -287,4 +337,53 @@ describeE2E("ck-orm e2e observability", function describeObservability() {
       propagation.disable();
     }
   });
+
+  it("SEC-005 RED: real ClickHouse conversion error keeps caller detail but not exported secret", async () => {
+    const sdk = realSdk();
+    try {
+      let caught: unknown;
+      try {
+        await sdk.db.execute(ckSql`SELECT toUInt32(${REAL_DB_MARKER}) AS value`, {
+          abort_signal: AbortSignal.timeout(10_000),
+        });
+      } catch (error) {
+        caught = error;
+      }
+      expect(isClickHouseORMError(caught)).toBe(true);
+      if (!isClickHouseORMError(caught)) {
+        throw new Error("missing real ClickHouse request error");
+      }
+      expect(caught.kind).toBe("request_failed");
+      expect(caught.responseText).toContain(REAL_DB_MARKER);
+      expect(caught.message).toContain(REAL_DB_MARKER);
+      await sdk.provider.forceFlush();
+      const spans = sdk.exporter.getFinishedSpans();
+      expect(spans).toHaveLength(1);
+      const span = expectPresent(spans[0], "conversion-error span");
+      expect(span.status.code).toBe(SpanStatusCode.ERROR);
+      expect(span.attributes["ck_orm.error.kind"]).toBe("request_failed");
+      expect(span.attributes["db.statement"]).toBeUndefined();
+      expect(span.events.length).toBeGreaterThan(0);
+      expect(exportedChannels(span)).not.toContain(REAL_DB_MARKER);
+    } finally {
+      await sdk.provider.shutdown();
+    }
+  }, 15_000);
+
+  it("SEC-005 CONTROL: real ClickHouse success preserves bound data without exporting it", async () => {
+    const sdk = realSdk();
+    try {
+      expect(
+        await sdk.db.execute(ckSql`SELECT ${REAL_DB_MARKER} AS value`, { abort_signal: AbortSignal.timeout(10_000) }),
+      ).toEqual([{ value: REAL_DB_MARKER }]);
+      await sdk.provider.forceFlush();
+      const spans = sdk.exporter.getFinishedSpans();
+      expect(spans).toHaveLength(1);
+      const span = expectPresent(spans[0], "success span");
+      expect(span.status.code).toBe(SpanStatusCode.OK);
+      expect(exportedChannels(span)).not.toContain(REAL_DB_MARKER);
+    } finally {
+      await sdk.provider.shutdown();
+    }
+  }, 15_000);
 });

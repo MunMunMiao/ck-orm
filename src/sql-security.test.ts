@@ -16,13 +16,19 @@ import {
 } from "./columns";
 import { fn, tableFn } from "./functions";
 import {
+  compileCreateMaterializedView,
   compileQuerySymbol,
   contains,
   containsIgnoreCase,
+  createQueryClient,
   createSelectBuilder,
   endsWith,
   endsWithIgnoreCase,
+  eq,
+  exists,
+  expr,
   ilike,
+  inArray,
   like,
   notLike,
   startsWith,
@@ -30,7 +36,7 @@ import {
 } from "./query";
 import type { Selection, SqlExpression } from "./query-shared";
 import { normalizeSingleStatementSql } from "./runtime/sql-scan";
-import { ckTable } from "./schema";
+import { ckAlias, ckTable } from "./schema";
 import { compileSql, sql } from "./sql";
 
 // Public selections hide their compiler internals; tests inspect them through the internal type.
@@ -385,5 +391,262 @@ describe("ck-orm sql security", function describeSqlSecurity() {
     const endsWithIgnoreCaseCompiled = builder.where(endsWithIgnoreCase(testTable.name, literal))[compileQuerySymbol]();
     expect(endsWithIgnoreCaseCompiled.statement).toContain("ilike");
     expect(endsWithIgnoreCaseCompiled.params.orm_param1).toBe("%50\\%\\_\\\\");
+  });
+});
+
+const auditEvents = ckTable(
+  "audit_sql_unit",
+  { id: int32(), tenant_id: string(), label: string() },
+  { engine: "Memory" },
+);
+const auditDim = ckTable("audit_sql_dim", { id: int32(), label: string() }, { engine: "Memory" });
+const auditMvTarget = ckTable("audit_sql_mv", { id: int32(), tenant_id: string(), label: string() });
+const nestedCompileCases = ["named subquery", "CTE", "IN subquery"] as const;
+
+function compiledBindings(sqlText: string, params: Record<string, unknown>) {
+  return [...sqlText.matchAll(/\{([^{}:]+):([^{}]+)\}/g)].map((match) => ({
+    name: match[1],
+    type: match[2],
+    value: params[match[1]],
+  }));
+}
+
+function nestedAuditQuery(
+  db: ReturnType<typeof createQueryClient>,
+  kind: (typeof nestedCompileCases)[number],
+  predicate: "template" | "structured",
+) {
+  const tenantFilter =
+    predicate === "template"
+      ? expr<boolean>(sql`${auditEvents.tenant_id} = ${"tenant_A"}`)
+      : eq(auditEvents.tenant_id, "tenant_A");
+
+  if (kind === "IN subquery") {
+    const inner = db.select({ id: auditEvents.id }).from(auditEvents).where(tenantFilter);
+    return db
+      .select({ id: auditEvents.id, tenant_id: auditEvents.tenant_id, label: auditEvents.label })
+      .from(auditEvents)
+      .where(inArray(auditEvents.id, inner), eq(auditEvents.label, "tenant_B"))
+      .orderBy(auditEvents.id);
+  }
+
+  const inner = db
+    .select({ id: auditEvents.id, tenant_id: auditEvents.tenant_id, label: auditEvents.label })
+    .from(auditEvents)
+    .where(tenantFilter);
+
+  if (kind === "named subquery") {
+    const scoped = inner.as("scoped");
+    return db
+      .select({ id: scoped.id, tenant_id: scoped.tenant_id, label: scoped.label })
+      .from(scoped)
+      .where(eq(scoped.label, "tenant_B"))
+      .orderBy(scoped.id);
+  }
+
+  const scoped = db.$with("scoped").as(inner);
+  return db
+    .with(scoped)
+    .select({ id: scoped.id, tenant_id: scoped.tenant_id, label: scoped.label })
+    .from(scoped)
+    .where(eq(scoped.label, "tenant_B"))
+    .orderBy(scoped.id);
+}
+
+function expectDistinctTenantBindings(built: { sql: string; params: Record<string, unknown> }) {
+  const refs = compiledBindings(built.sql, built.params);
+  expect(refs.map(({ value }) => value)).toEqual(["tenant_A", "tenant_B"]);
+  expect(refs.map(({ type }) => type)).toEqual(["String", "String"]);
+  expect(new Set(refs.map(({ name }) => name)).size).toBe(2);
+  expect(Object.keys(built.params).sort()).toEqual(refs.map(({ name }) => name).sort());
+}
+
+describe("ck-orm sql table identity", function describeSqlTableIdentity() {
+  const db = createQueryClient();
+
+  it("keeps ordinary table-shaped JSON as a bound Map value", function testOrdinaryTableShapedJsonStaysBound() {
+    const value: unknown = JSON.parse('{"kind":"table","originalName":"tenant_id"}');
+    const built = db.select({ probe: sql`${value}` }).toSQL();
+    expect(compiledBindings(built.sql, built.params).map(({ value: bound }) => bound)).toEqual([
+      { kind: "table", originalName: "tenant_id" },
+    ]);
+    expect(compiledBindings(built.sql, built.params).map(({ type }) => type)).toEqual(["Map(String, String)"]);
+    expect(Object.keys(built.params)).toHaveLength(1);
+    expect(built.sql).not.toContain("`tenant_id`");
+  });
+
+  it("keeps ordinary alias-shaped JSON as a bound Map value", function testOrdinaryAliasShapedJsonStaysBound() {
+    const value: unknown = JSON.parse('{"kind":"table","originalName":"tenant_id","alias":"chosen"}');
+    const built = db.select({ probe: sql`${value}` }).toSQL();
+    expect(compiledBindings(built.sql, built.params).map(({ value: bound }) => bound)).toEqual([
+      { kind: "table", originalName: "tenant_id", alias: "chosen" },
+    ]);
+    expect(compiledBindings(built.sql, built.params).map(({ type }) => type)).toEqual(["Map(String, String)"]);
+    expect(Object.keys(built.params)).toHaveLength(1);
+    expect(built.sql).not.toContain("`tenant_id`");
+  });
+
+  it("keeps ordinary objects as bound Map values", function testOrdinaryObjectsStayBound() {
+    const value: unknown = JSON.parse('{"kind":"record","originalName":"tenant_id"}');
+    const built = db.select({ probe: sql`${value}` }).toSQL();
+    expect(compiledBindings(built.sql, built.params).map(({ value: bound }) => bound)).toEqual([
+      { kind: "record", originalName: "tenant_id" },
+    ]);
+    expect(compiledBindings(built.sql, built.params).map(({ type }) => type)).toEqual(["Map(String, String)"]);
+  });
+
+  it("binds structured scalar predicates to the supplied tenant", function testStructuredScalarPredicateBinding() {
+    const built = db.select().from(auditEvents).where(eq(auditEvents.tenant_id, "tenant_A")).toSQL();
+    expect(compiledBindings(built.sql, built.params).map(({ value }) => value)).toEqual(["tenant_A"]);
+    expect(compiledBindings(built.sql, built.params).map(({ type }) => type)).toEqual(["String"]);
+  });
+
+  it("keeps genuine tables and aliases as template identifiers", function testGenuineTablesRemainIdentifiers() {
+    const alias = ckAlias(auditEvents, "e");
+    const plain = db.select({ id: sql`(SELECT id FROM ${auditEvents} LIMIT 1)` }).toSQL();
+    const aliased = db.select({ id: sql`(SELECT id FROM ${alias} LIMIT 1)` }).toSQL();
+    expect(plain.sql).toContain("FROM `audit_sql_unit` LIMIT 1");
+    expect(aliased.sql).toContain("FROM `audit_sql_unit` as `e` LIMIT 1");
+    expect(plain.params).toEqual({});
+    expect(aliased.params).toEqual({});
+  });
+
+  it("keeps the explicit identifier API independent of table-shaped data", function testExplicitIdentifierApi() {
+    expect(compileSql(sql.identifier({ table: "tenant_id", as: "chosen" })).query).toBe("`tenant_id` as `chosen`");
+  });
+
+  it("treats the options-callback table as an identifier with no params", function testOptionsCallbackTableIsIdentifier() {
+    let fragment: ReturnType<typeof sql> | undefined;
+    ckTable("callback_table", { id: int32() }, (table) => {
+      fragment = sql`select * from ${table}`;
+      return {};
+    });
+    if (fragment === undefined) {
+      throw new Error("options callback did not construct a fragment");
+    }
+    const built = compileSql(fragment);
+    expect(built.query).toBe("select * from `callback_table`");
+    expect(built.params).toEqual({});
+  });
+});
+
+describe("ck-orm nested compile parameter sync", function describeNestedCompileParameterSync() {
+  const db = createQueryClient();
+
+  it("does not mutate a public compileSql initialContext copy", function testPublicCompileSqlCopyIsolation() {
+    const initialParams = { seed: "keep" };
+    const initialTypes = { seed: "String" };
+    const initialContext = {
+      params: initialParams,
+      paramTypes: initialTypes,
+      nextParamIndex: 3,
+    };
+    const built = compileSql(sql`select ${"x"}`, initialContext);
+    expect(initialParams).toEqual({ seed: "keep" });
+    expect(initialTypes).toEqual({ seed: "String" });
+    expect(initialContext.nextParamIndex).toBe(3);
+    expect(built.params).not.toBe(initialParams);
+    expect(built.paramTypes).not.toBe(initialTypes);
+    expect(built.params).toEqual({ seed: "keep", orm_param4: "x" });
+    expect(built.paramTypes).toEqual({ seed: "String", orm_param4: "String" });
+    expect(built.nextParamIndex).toBe(4);
+    built.params.orm_param4 = "mutated";
+    built.paramTypes.orm_param4 = "Int64";
+    expect(initialParams).toEqual({ seed: "keep" });
+    expect(initialTypes).toEqual({ seed: "String" });
+  });
+
+  for (const kind of nestedCompileCases) {
+    it(`preserves distinct inner template and outer scalar bindings for ${kind}`, () => {
+      expectDistinctTenantBindings(nestedAuditQuery(db, kind, "template").toSQL());
+    });
+
+    it(`preserves structured predicate bindings for ${kind}`, () => {
+      expectDistinctTenantBindings(nestedAuditQuery(db, kind, "structured").toSQL());
+    });
+  }
+
+  it("keeps a nested template binding when the outer query has no parameter", function testNestedTemplateWithoutOuterParam() {
+    const inner = db
+      .select({ id: auditEvents.id })
+      .from(auditEvents)
+      .where(expr<boolean>(sql`${auditEvents.tenant_id} = ${"tenant_A"}`))
+      .as("scoped");
+    const built = db.select({ id: inner.id }).from(inner).toSQL();
+    expect(compiledBindings(built.sql, built.params).map(({ value }) => value)).toEqual(["tenant_A"]);
+    expect(Object.keys(built.params)).toHaveLength(1);
+  });
+
+  it("keeps an EXISTS nested template binding without an outer parameter", function testExistsNestedTemplateBinding() {
+    const inner = db
+      .select({ id: auditEvents.id })
+      .from(auditEvents)
+      .where(expr<boolean>(sql`${auditEvents.tenant_id} = ${"tenant_A"}`));
+    const built = db.select({ id: auditEvents.id }).from(auditEvents).where(exists(inner)).toSQL();
+    expect(compiledBindings(built.sql, built.params).map(({ value }) => value)).toEqual(["tenant_A"]);
+    expect(Object.keys(built.params)).toHaveLength(1);
+  });
+
+  it("forwards insert.fromSelect nested template bindings", function testInsertFromSelectNestedTemplateBinding() {
+    const compiled = db
+      .insert(auditEvents)
+      .fromSelect(
+        db
+          .select({ id: auditEvents.id, tenant_id: auditEvents.tenant_id, label: auditEvents.label })
+          .from(auditEvents)
+          .where(expr<boolean>(sql`${auditEvents.tenant_id} = ${"tenant_A"}`)),
+      )
+      [compileQuerySymbol]();
+    expect(compiledBindings(compiled.statement, compiled.params).map(({ value }) => value)).toEqual(["tenant_A"]);
+    expect(Object.keys(compiled.params)).toHaveLength(1);
+    expect(compiled.paramTypes).toEqual({ orm_param1: "String" });
+  });
+
+  it("forwards materialized-view nested template bindings and preserves compile metadata", function testMaterializedViewNestedTemplateBinding() {
+    const compiled = compileCreateMaterializedView(
+      "audit_sql_mv",
+      auditMvTarget,
+      db
+        .select({ id: auditEvents.id, tenant_id: auditEvents.tenant_id, label: auditEvents.label })
+        .from(auditEvents)
+        .where(expr<boolean>(sql`${auditEvents.tenant_id} = ${"tenant_A"}`)),
+    );
+    expect(compiledBindings(compiled.statement, compiled.params).map(({ value }) => value)).toEqual(["tenant_A"]);
+    expect(Object.keys(compiled.params)).toHaveLength(1);
+    expect(compiled.forcedSettings).toBeUndefined();
+    expect(compiled.mode).toBe("command");
+    expect(compiled.metadata).toEqual({
+      rootSourceName: "audit_sql_mv",
+      tableName: "audit_sql_mv",
+    });
+  });
+
+  it("preserves nested left-join forced settings with a deferred template binding", function testNestedForcedSettingsWithTemplateBinding() {
+    const inner = db
+      .select({ id: auditEvents.id, tenant_id: auditEvents.tenant_id, label: auditEvents.label })
+      .from(auditEvents)
+      .leftJoin(auditDim, eq(auditEvents.id, auditDim.id))
+      .where(expr<boolean>(sql`${auditEvents.tenant_id} = ${"tenant_A"}`));
+    const scoped = inner.as("scoped");
+    const compiled = db.select({ id: scoped.id }).from(scoped)[compileQuerySymbol]();
+    expect(compiled.forcedSettings).toEqual({ join_use_nulls: 1 });
+    expect(compiled.metadata).toEqual({
+      rootSourceName: "scoped",
+      tableName: undefined,
+      joinCount: 0,
+    });
+    expect(compiledBindings(compiled.statement, compiled.params).map(({ value }) => value)).toEqual(["tenant_A"]);
+  });
+
+  it("repeats nested structured compiles with isolated copies", function testRepeatedNestedCompileIsolation() {
+    const query = nestedAuditQuery(db, "named subquery", "structured");
+    const first = query.toSQL();
+    const second = query.toSQL();
+    expectDistinctTenantBindings(first);
+    expectDistinctTenantBindings(second);
+    expect(first.params).toEqual(second.params);
+    expect(first.params).not.toBe(second.params);
+    (first.params as Record<string, unknown>)[Object.keys(first.params)[0]] = "hijack";
+    expectDistinctTenantBindings(query.toSQL());
   });
 });

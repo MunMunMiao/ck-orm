@@ -32,6 +32,7 @@ import {
   createJsonEachRowBody,
   createLineStream,
   extractClickHouseJsonStatistics,
+  type JsonEachRowRequestBody,
   parseJsonEachRowLine,
   parseValidatedResponseJson,
   readValidatedResponseText,
@@ -84,6 +85,7 @@ export const createFetchClickHouseTransport = (config: NormalizedClientConfig): 
     readonly parseMode: ResponseParseMode;
     readonly body?: RequestBody;
     readonly duplex?: "half";
+    readonly createBody?: () => JsonEachRowRequestBody | Promise<JsonEachRowRequestBody>;
     readonly sendQueryInBody: boolean;
     readonly streaming?: boolean;
     readonly ignoreErrorResponse?: boolean;
@@ -131,8 +133,20 @@ export const createFetchClickHouseTransport = (config: NormalizedClientConfig): 
       role: mergedOptions.role,
     });
 
+    const headers = createHeaders({
+      config,
+      options: mergedOptions,
+      auth,
+    });
+    const requestUrl = buildRequestUrl(config.url, searchParams);
+
     let body: RequestBody | undefined = input.body;
-    if (body === undefined) {
+    let duplex = input.duplex;
+    if (input.createBody) {
+      const requestedBody = await input.createBody();
+      body = requestedBody.body;
+      duplex = requestedBody.duplex;
+    } else if (body === undefined) {
       if (useMultipart) {
         const form = new FormData();
         form.append("query", normalizedStatement);
@@ -146,12 +160,6 @@ export const createFetchClickHouseTransport = (config: NormalizedClientConfig): 
       }
     }
 
-    const headers = createHeaders({
-      config,
-      options: mergedOptions,
-      auth,
-    });
-
     const { signal, cleanup: finalize } = createAbortController(config.request_timeout, mergedOptions.abort_signal);
 
     try {
@@ -161,11 +169,11 @@ export const createFetchClickHouseTransport = (config: NormalizedClientConfig): 
         body: body as BodyInit | null | undefined,
         signal,
       };
-      if (body instanceof ReadableStream && input.duplex === "half") {
+      if (body instanceof ReadableStream && duplex === "half") {
         init.duplex = "half";
       }
 
-      const response = await config.fetch(new Request(buildRequestUrl(config.url, searchParams), init));
+      const response = await config.fetch(new Request(requestUrl, init));
       const ignoreErrorResponse = mergedOptions.ignore_error_response ?? false;
       return {
         response,
@@ -284,21 +292,51 @@ export const createFetchClickHouseTransport = (config: NormalizedClientConfig): 
       rows: readonly Record<string, unknown>[] | AsyncIterable<Record<string, unknown>>,
       options?: ClickHouseBaseQueryOptions,
     ) {
-      const requestBody = await createJsonEachRowBody(rows, config.json);
       const tableIdentifier = quoteIdentifier({ table: tableName });
       const statement = `INSERT INTO ${tableIdentifier} FORMAT JSONEachRow`;
-      const request = await send({
-        statement,
-        options,
-        body: requestBody.body,
-        duplex: requestBody.duplex,
-        parseMode: "text",
-        sendQueryInBody: false,
-      });
+      let requestBody: JsonEachRowRequestBody | undefined;
+      let primary: { error: unknown } | undefined;
       try {
-        await request.readValidatedText();
+        const request = await send({
+          statement,
+          options,
+          parseMode: "text",
+          sendQueryInBody: false,
+          createBody: async () => {
+            requestBody = await createJsonEachRowBody(rows, config.json);
+            return requestBody;
+          },
+        });
+        try {
+          await request.readValidatedText();
+        } finally {
+          request.finalize();
+        }
+      } catch (error) {
+        primary = { error };
       } finally {
-        request.finalize();
+        const close = requestBody?.close;
+        if (close) {
+          if (primary === undefined) {
+            try {
+              await close();
+            } catch (closeError) {
+              primary = { error: closeError };
+            }
+          } else {
+            // A known request/response failure must not wait for an
+            // uncooperative source `return()` queued behind in-flight `next()`.
+            // Start the same memoized close once and observe later rejection.
+            try {
+              void Promise.resolve(close()).then(undefined, () => undefined);
+            } catch {
+              // Sync close throw after a known primary must not replace it.
+            }
+          }
+        }
+      }
+      if (primary) {
+        throw primary.error;
       }
     },
 

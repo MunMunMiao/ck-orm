@@ -87,7 +87,7 @@ export type SessionRunInSessionOptions = Omit<ClickHouseBaseQueryOptions, "sessi
   session_id?: string;
   /**
    * Optional callback invoked when one or more temporary-table cleanup
-   * statements (`DROP TABLE IF EXISTS`) fail at the end of a session.
+   * statements (`DROP TEMPORARY TABLE IF EXISTS`) fail at the end of a session.
    *
    * Cleanup errors never override the user callback's error — they are
    * collected after the user callback resolves/rejects and surfaced here.
@@ -667,6 +667,34 @@ const normalizePathname = (pathname: string) => {
   return pathname.startsWith("/") ? pathname : `/${pathname}`;
 };
 
+const parseAbsoluteUrl = (value: string | URL, message: string): URL => {
+  try {
+    return new URL(value);
+  } catch {
+    throw createClientValidationError(message);
+  }
+};
+
+/**
+ * Case-insensitive HTTP header merge using the runtime `Headers` map.
+ * Later sources win; duplicate mixed-case keys collapse to one name so
+ * `Request`/`Headers.set` cannot resurrect an earlier value.
+ */
+export const mergeHttpHeaders = (
+  ...sources: ReadonlyArray<Record<string, string> | undefined>
+): Record<string, string> => {
+  const headers = new Headers();
+  for (const source of sources) {
+    if (!source) {
+      continue;
+    }
+    for (const [key, value] of Object.entries(source)) {
+      headers.set(key, value);
+    }
+  }
+  return Object.fromEntries(headers.entries());
+};
+
 const decodeUrlCredential = (value: string) => {
   return decodeURIComponent(value);
 };
@@ -682,7 +710,7 @@ const resolveUrlAuth = (resolved: URL) => {
 };
 
 const resolveDatabaseUrlConfig = (databaseUrl: string | URL) => {
-  const resolved = new URL(databaseUrl);
+  const resolved = parseAbsoluteUrl(databaseUrl, "clickhouseClient() databaseUrl is not a valid absolute URL");
   const authFromUrl = resolveUrlAuth(resolved);
   const database = resolved.pathname.trim().length > 1 ? resolved.pathname.slice(1) : "default";
 
@@ -702,7 +730,10 @@ const resolveDatabaseUrlConfig = (databaseUrl: string | URL) => {
 };
 
 const resolveStructuredConfig = (config: StructuredConnectionConfig) => {
-  const resolved = new URL(config.host ?? "http://localhost:8123");
+  const resolved = parseAbsoluteUrl(
+    config.host ?? "http://localhost:8123",
+    "clickhouseClient() host is not a valid absolute URL",
+  );
   const authFromUrl = resolveUrlAuth(resolved);
   if (authFromUrl) {
     throw createClientValidationError(
@@ -826,9 +857,7 @@ export const normalizeClientConfig = (config: ClickHouseFetchConfigOptions): Nor
     session_id: config.session_id,
     session_max_concurrent_requests: sessionMaxConcurrentRequests,
     role: config.role,
-    http_headers: {
-      ...(config.http_headers ?? {}),
-    },
+    http_headers: mergeHttpHeaders(config.http_headers),
     json: {
       ...defaultJsonHandling,
     },
@@ -885,10 +914,7 @@ export const createHeaders = (input: {
   readonly auth?: ClickHouseAuth;
 }) => {
   const headers = new Headers();
-  for (const [key, value] of Object.entries(input.config.http_headers)) {
-    headers.set(key, value);
-  }
-  for (const [key, value] of Object.entries(input.options.http_headers ?? {})) {
+  for (const [key, value] of Object.entries(mergeHttpHeaders(input.config.http_headers, input.options.http_headers))) {
     headers.set(key, value);
   }
 

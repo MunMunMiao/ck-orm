@@ -14,6 +14,7 @@ const compileSqlSymbol = Symbol("clickhouseORMCompileSql");
 // runs — otherwise a hostile literal could ship its own SQL into the wire.
 const trustedExpressionObjects = new WeakSet<object>();
 const trustedSourceObjects = new WeakSet<object>();
+const trustedTableObjects = new WeakSet<object>();
 
 export type QueryParams = Record<string, unknown>;
 export type QueryParamTypes = Record<string, string>;
@@ -69,6 +70,11 @@ export const isTrustedSqlExpressionObject = (value: object): boolean => trustedE
 
 export const trustSqlSourceObject = <TValue extends object>(value: TValue): TValue => {
   trustedSourceObjects.add(value);
+  return value;
+};
+
+export const trustSqlTableObject = <TValue extends object>(value: TValue): TValue => {
+  trustedTableObjects.add(value);
   return value;
 };
 
@@ -342,12 +348,7 @@ const isCompilableSource = (value: unknown): value is CompilableSource =>
   "compileSource" in value &&
   typeof value.compileSource === "function";
 
-const isTableLike = (value: unknown): value is TableLike =>
-  isRecord(value) &&
-  "kind" in value &&
-  value.kind === "table" &&
-  "originalName" in value &&
-  typeof value.originalName === "string";
+const isTableLike = (value: unknown): value is TableLike => isRecord(value) && trustedTableObjects.has(value);
 
 const normalizeTemplateValue = (value: unknown): SQLFragment<unknown> => {
   if (isSqlFragment(value)) {

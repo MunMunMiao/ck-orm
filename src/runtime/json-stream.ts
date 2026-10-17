@@ -17,14 +17,10 @@ export type JsonHandling = {
 // multi-byte sequences across `decode(chunk, { stream: true })` calls.
 const sharedUtf8Encoder = new TextEncoder();
 
-// Compact `createLineStream`'s buffer once the head index has consumed at
-// least this many bytes — keeps memory bounded on long-running streams while
-// staying out of the way for short responses.
-const LINE_STREAM_COMPACT_THRESHOLD = 64 * 1024;
-
 export type JsonEachRowRequestBody = {
   body: string | ReadableStream<Uint8Array>;
   duplex?: "half";
+  close?: () => Promise<void>;
 };
 
 type ClickHouseJsonStatistics = {
@@ -185,13 +181,9 @@ export const createLineStream = async function* (response: Response) {
     return;
   }
 
-  // Append-and-mark via `start` index instead of `buffer = buffer.slice(...)` per
-  // line, then occasionally compact. The naive `+= chunk; = slice()` form falls
-  // off V8's fast path for cons-strings on multi-MB JSONEachRow responses.
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  let buffer = "";
-  let start = 0;
+  const fragments: string[] = [];
 
   try {
     while (true) {
@@ -199,23 +191,32 @@ export const createLineStream = async function* (response: Response) {
       if (done) {
         break;
       }
-      buffer += decoder.decode(value, { stream: true });
-      let newlineIndex = buffer.indexOf("\n", start);
+      // Search only the newly decoded chunk. Join a spanning line once, when
+      // its newline arrives (or at EOF), never re-flatten the growing prefix.
+      const chunk = decoder.decode(value, { stream: true });
+      let lineStart = 0;
+      let newlineIndex = chunk.indexOf("\n");
       while (newlineIndex >= 0) {
-        const line = buffer.slice(start, newlineIndex).trim();
-        start = newlineIndex + 1;
+        let line: string;
+        if (fragments.length > 0) {
+          fragments.push(chunk.slice(lineStart, newlineIndex));
+          line = fragments.join("").trim();
+          fragments.length = 0;
+        } else {
+          line = chunk.slice(lineStart, newlineIndex).trim();
+        }
+        lineStart = newlineIndex + 1;
         if (line) {
           yield line;
         }
-        newlineIndex = buffer.indexOf("\n", start);
+        newlineIndex = chunk.indexOf("\n", lineStart);
       }
-      if (start >= LINE_STREAM_COMPACT_THRESHOLD) {
-        buffer = buffer.slice(start);
-        start = 0;
+      if (lineStart < chunk.length) {
+        fragments.push(chunk.slice(lineStart));
       }
     }
 
-    const finalLine = buffer.slice(start).trim();
+    const finalLine = fragments.join("").trim();
     if (finalLine) {
       yield finalLine;
     }
@@ -245,18 +246,25 @@ export const createJsonEachRowBody = (
     );
   }
 
-  const iterator = (rows as AsyncIterable<Record<string, unknown>>)[Symbol.asyncIterator]();
-  let closing: Promise<unknown> | undefined;
+  let iterator: AsyncIterator<Record<string, unknown>> | undefined;
+  let closing: Promise<void> | undefined;
+
+  const getIterator = () => {
+    iterator ??= (rows as AsyncIterable<Record<string, unknown>>)[Symbol.asyncIterator]();
+    return iterator;
+  };
 
   const closeIterator = () => {
-    closing ??= Promise.resolve(iterator.return?.());
+    closing ??= Promise.resolve()
+      .then(() => getIterator().return?.())
+      .then(() => undefined);
     return closing;
   };
 
   const body = new ReadableStream<Uint8Array>({
     async pull(controller) {
       try {
-        const result = await iterator.next();
+        const result = await getIterator().next();
         if (result.done) {
           await closeIterator();
           controller.close();
@@ -282,10 +290,12 @@ export const createJsonEachRowBody = (
     },
   });
 
+  const close = () => closeIterator();
+
   // Imperative assignment instead of a conditional spread — this ships on
   // the AsyncIterable upload path that already allocates a stream, so even
   // though it's not hot, the explicit shape reads more directly.
-  const result: JsonEachRowRequestBody = { body };
+  const result: JsonEachRowRequestBody = { body, close };
   if (bodyMode === "duplex-half") {
     result.duplex = "half";
   }

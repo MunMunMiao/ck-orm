@@ -187,22 +187,24 @@ export const prettyRows = (body: string): string => {
   if (!tokens) return body;
 
   let depth = 0;
-  let out = "";
+  const rows: string[] = [];
+  let row = "";
   let skipSpace = false;
   for (const token of tokens) {
     if (isSpace(token)) {
-      if (!skipSpace) out += token;
+      if (!skipSpace) row += token;
       continue;
     }
     skipSpace = false;
     if (CLOSER.has(token)) depth += 1;
     if (token === ")" || token === "]" || token === "}") depth -= 1;
     if (token === "," && depth === 0) {
-      out = `${out.trimEnd()},\n`;
+      rows.push(`${row.trimEnd()},`);
+      row = "\n";
       skipSpace = true;
       continue;
     }
-    out += token;
+    row += token;
   }
-  return depth === 0 ? out.trimEnd() : body;
+  return depth === 0 ? (rows.join("") + row).trimEnd() : body;
 };

@@ -388,8 +388,8 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
     expect(bodies).toEqual([
       "CREATE TEMPORARY TABLE `tmp_scope`\n(\n  `user_id` String\n)\nENGINE = Memory",
       "select 1",
-      "DROP TABLE IF EXISTS `tmp_manual`",
-      "DROP TABLE IF EXISTS `tmp_scope`",
+      "DROP TEMPORARY TABLE IF EXISTS `tmp_manual`",
+      "DROP TEMPORARY TABLE IF EXISTS `tmp_scope`",
     ]);
     for (const call of calls) {
       expect(call.url.searchParams.get("session_id")).toBe("session_under_test");
@@ -464,7 +464,7 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
     });
     setFetchMock(async (_url, init) => {
       const text = await readBodyText(init.body);
-      if (typeof text === "string" && text.startsWith("DROP TABLE")) {
+      if (typeof text === "string" && text.startsWith("DROP TEMPORARY TABLE")) {
         return sessionLockedResponse();
       }
       return new Response("", { status: 200 });
@@ -499,7 +499,7 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
     });
     setFetchMock(async (_url, init) => {
       const text = await readBodyText(init.body);
-      if (typeof text === "string" && text.startsWith("DROP TABLE")) {
+      if (typeof text === "string" && text.startsWith("DROP TEMPORARY TABLE")) {
         return sessionLockedResponse();
       }
       return new Response("", { status: 200 });

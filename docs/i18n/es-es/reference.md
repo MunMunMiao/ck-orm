@@ -2580,7 +2580,7 @@ await db.replicasStatus();
 ```
 
 ## Observabilidad
-<!-- src:11c06560 -->
+<!-- src:45091b93 -->
 
 `ck-orm` incluye dos capas de observabilidad:
 
@@ -2686,6 +2686,8 @@ Los spans son de tipo `CLIENT` y se llaman `clickhouse QUERY` si la consulta dev
 El plugin usa `trace.getTracer("ck-orm")` salvo que pases `tracer`. Obtiene el nombre de la base de datos, la dirección del servidor, el puerto del servidor y el tiempo de espera de la solicitud a partir de la configuración de `clickhouseClient(...)`. Pasa las etiquetas de nivel de servicio mediante `attributes`; las claves que empiezan por `db.` se ignoran para que el código de la aplicación no pueda sobrescribir los atributos de base de datos integrados.
 
 En sistemas de trazado compartidos, es más seguro usar `includeStatement: false`. El valor predeterminado es `true`; desactiva esta opción cuando los nombres de las tablas o columnas, o la forma de la consulta, no deban salir del perímetro del servicio. Los valores vinculados no se incorporan a la sentencia compactada, pero la forma del SQL puede seguir resultando sensible desde el punto de vista operativo.
+
+Los spans fallidos usan siempre el estado `ERROR`. De forma predeterminada el plugin conserva la clasificación de fallo del conjunto cerrado (`error.type`, `ck_orm.error.kind`, `ck_orm.execution_state` y, cuando exista, un código ClickHouse asignado o un estado HTTP asignado) y omite del span exportado el message, la pila, el cuerpo y el cause originales. El objeto de error del llamador no cambia. `includeErrorDiagnostics: true` restaura la exportación actual de diagnósticos en bruto —el message del estado, `recordException` del error original y los atributos de error existentes— con independencia de `includeStatement`. Solo habilita esa opción una propiedad de datos propia cuyo valor es el boolean `true`, leída una vez al construir `otelTracing()`. No es una garantía completa de ocultación de datos sensibles. El logger integrado y `includeStatement: true` siguen transportando el contenido que aporta el llamador.
 
 #### Spans del lado del servidor
 
@@ -2845,7 +2847,7 @@ const toPublicQueryError = (error: unknown) => {
 No devuelvas `responseText` ni el `message` sin procesar del error a clientes que no sean de confianza. ClickHouse puede incluir fragmentos SQL y nombres de objetos en el texto del error.
 
 ## Seguridad
-<!-- src:062d0032 -->
+<!-- src:b6d029f6 -->
 
 `ck-orm` está diseñado para que, de forma predeterminada, sea difícil construir SQL inseguro.
 
@@ -2876,6 +2878,8 @@ Si necesitas DDL de tablas temporales que solo pueda ejecutar código de confian
 `otelTracing()` adjunta el texto SQL compactado a los spans como `db.statement` y `db.query.text` porque `includeStatement` tiene `true` como valor predeterminado.
 
 Los valores vinculados se guardan por separado como parámetros con nombre de ClickHouse y no aparecen en el texto de la sentencia, pero los nombres de tabla y columna y la forma de la consulta sí aparecen en la salida de trazado. Si el sistema de trazado es compartido o está fuera del host, desactiva `includeStatement` o filtra `db.statement` / `db.query.text` en el Collector.
+
+Si la consulta falla, la exportación de trazado predeterminada conserva la clasificación del conjunto cerrado y omite el texto original del error. `includeErrorDiagnostics: true` vuelve a exportar explícitamente los diagnósticos en bruto, con independencia de `includeStatement`. Ni esa opción, ni `includeStatement: true`, ni el logger integrado son un control completo de ocultación de datos sensibles.
 
 Los spans de servidor de ClickHouse también registran la sentencia como `db.statement` en `system.opentelemetry_span_log`. Esa tabla permanece en el servidor ClickHouse salvo que la exportes.
 
