@@ -2684,6 +2684,8 @@ The plugin uses `trace.getTracer("ck-orm")` unless you pass `tracer`. It derives
 
 `includeStatement: false` is the safer setting for shared tracing backends. The default is `true`; turn it off when table names, column names, or query shape should not leave the service boundary. Bound values are not embedded in the compacted statement, but SQL shape can still be operationally sensitive.
 
+Failed spans always use status `ERROR`. By default the plugin keeps closed-set failure classification (`error.type`, `ck_orm.error.kind`, `ck_orm.execution_state`, and a mapped ClickHouse code or assigned HTTP status when one is present) and omits the original error message, stack, body, and cause from the exported span. The caller's error object is unchanged. `includeErrorDiagnostics: true` restores the current raw diagnostic export — status message, `recordException` of the original error, and the existing error attributes — independently of `includeStatement`. Only an own data property whose value is boolean `true`, read once when `otelTracing()` is constructed, enables that opt-in. It is not a comprehensive redaction guarantee. The built-in logger and `includeStatement: true` still carry caller-supplied content.
+
 #### Server-side spans
 
 Set `propagateTraceContext: true` to send the span's W3C trace context (`traceparent`, `tracestate`) with each request. ClickHouse then records its own spans for the query, such as `HTTPHandler`, `query`, and pipeline stages, as children of the ck-orm span. The plugin forwards only those two headers, never `baggage` or vendor headers from your global propagator, and only for sampled spans: ClickHouse records server spans for every trace context it receives, sampled or not. The plugin injects through the globally registered propagator, which the OpenTelemetry SDK sets to W3C trace context by default; with no propagator registered, nothing is sent.
@@ -2871,6 +2873,8 @@ For trusted temporary-table DDL that cannot be represented with `ckTable(...)`, 
 `otelTracing()` attaches compacted SQL text to spans as `db.statement` and `db.query.text` because `includeStatement` defaults to `true`.
 
 Bound values are stored separately as ClickHouse named parameters and are not included in the statement text, but table names, column names, and query shape still appear in tracing output. If your trace backend is shared or off-host, disable `includeStatement` or filter `db.statement` / `db.query.text` in your collector.
+
+On failure, the default tracing export retains closed-set classification and omits original error text. `includeErrorDiagnostics: true` explicitly re-exports raw diagnostics independently of `includeStatement`. Neither that flag, `includeStatement: true`, nor the built-in logger is a comprehensive redaction control.
 
 ClickHouse server spans also record the statement as `db.statement` in `system.opentelemetry_span_log`. That table stays on the ClickHouse server unless you export it.
 

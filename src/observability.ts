@@ -6,11 +6,11 @@ export type ClickHouseORMQueryMode = "query" | "stream" | "command" | "insert";
 export type ClickHouseORMQueryKind = "typed" | "raw";
 
 export interface ClickHouseORMLogger {
-  trace(message: string, fields?: Record<string, unknown>): void;
-  debug(message: string, fields?: Record<string, unknown>): void;
-  info(message: string, fields?: Record<string, unknown>): void;
-  warn(message: string, fields?: Record<string, unknown>): void;
-  error(message: string, fields?: Record<string, unknown>): void;
+  trace(message: string, fields?: Record<string, unknown>): void | Promise<void>;
+  debug(message: string, fields?: Record<string, unknown>): void | Promise<void>;
+  info(message: string, fields?: Record<string, unknown>): void | Promise<void>;
+  warn(message: string, fields?: Record<string, unknown>): void | Promise<void>;
+  error(message: string, fields?: Record<string, unknown>): void | Promise<void>;
 }
 
 export interface ClickHouseORMQueryStatistics {
@@ -263,7 +263,7 @@ export const createLoggerPlugin = (
       if (!shouldWriteLog(minimumLevel, "debug")) {
         return;
       }
-      logger.debug("[clickhouse] orm", {
+      return logger.debug("[clickhouse] orm", {
         ...buildBaseLogFields(event),
         outcome: "start",
       });
@@ -272,7 +272,7 @@ export const createLoggerPlugin = (
       if (!shouldWriteLog(minimumLevel, "debug")) {
         return;
       }
-      logger.debug("[clickhouse] orm", {
+      return logger.debug("[clickhouse] orm", {
         ...buildBaseLogFields(event),
         durationMs: event.durationMs,
         outcome: "success",
@@ -285,7 +285,7 @@ export const createLoggerPlugin = (
       });
     },
     onQueryError(event) {
-      logger.error("[clickhouse] orm", {
+      return logger.error("[clickhouse] orm", {
         ...buildBaseLogFields(event),
         durationMs: event.durationMs,
         outcome: "error",

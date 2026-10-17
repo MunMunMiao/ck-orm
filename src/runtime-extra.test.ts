@@ -1072,7 +1072,7 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
     expect(urls.some((url) => url.searchParams.get("max_threads") === "2")).toBe(true);
     expect(bodies).toContain("select 42");
     expect(bodies).toContain("select 1");
-    expect(bodies).toContain("DROP TABLE IF EXISTS `tmp_users`");
+    expect(bodies).toContain("DROP TEMPORARY TABLE IF EXISTS `tmp_users`");
   });
 
   it("rejects runInSession session_check without an explicit session_id", async function testRunInSessionSessionCheckBoundary() {
@@ -1250,7 +1250,7 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
         return new Response("", { status: 200 });
       }
 
-      const dropMatch = bodyText.match(/^DROP TABLE IF EXISTS `([^`]+)`/i);
+      const dropMatch = bodyText.match(/^DROP TEMPORARY TABLE IF EXISTS `([^`]+)`/i);
       if (dropMatch) {
         getTempTables(sessionId).delete(dropMatch[1]);
         return new Response("", { status: 200 });
@@ -1636,9 +1636,11 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
 
   it("keeps async iterable HTTPS inserts as stream bodies", async function testHttpsAsyncInsertBody() {
     let capturedBody: BodyInit | null | undefined;
+    let capturedBodyText: string | undefined;
     const fetchSpy = mock(async (input: string | URL | Request, requestInit?: RequestInit) => {
       const init = initOf(input, requestInit);
       capturedBody = init?.body;
+      capturedBodyText = await readBodyText(init?.body);
       return new Response("", { status: 200 });
     });
     globalThis.fetch = fetchSpy as unknown as typeof fetch;
@@ -1660,7 +1662,7 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(capturedBody).toBeInstanceOf(ReadableStream);
     expect(
-      (await readBodyText(capturedBody))
+      capturedBodyText
         ?.trim()
         .split("\n")
         .map((line) => JSON.parse(line)),
@@ -1691,7 +1693,7 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
     });
 
     expect(bodies).toContain("CREATE TEMPORARY TABLE `tmp_scope` (note String DEFAULT ';')");
-    expect(bodies).toContain("DROP TABLE IF EXISTS `tmp_scope`");
+    expect(bodies).toContain("DROP TEMPORARY TABLE IF EXISTS `tmp_scope`");
   });
 
   it("rejects createTemporaryTableRaw definitions that contain inline semicolons", async function testCreateTemporaryTableRejectsSemicolons() {
@@ -1752,7 +1754,7 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
       const bodyText = await readBodyText(init?.body);
       if (typeof bodyText === "string") {
         bodies.push(bodyText);
-        if (bodyText.startsWith("DROP TABLE IF EXISTS")) {
+        if (bodyText.startsWith("DROP TEMPORARY TABLE IF EXISTS")) {
           throw new TypeError("network blew up");
         }
       }
@@ -1776,15 +1778,15 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
       },
     );
 
-    expect(bodies).toContain("DROP TABLE IF EXISTS `tmp_a`");
-    expect(bodies).toContain("DROP TABLE IF EXISTS `tmp_b`");
+    expect(bodies).toContain("DROP TEMPORARY TABLE IF EXISTS `tmp_a`");
+    expect(bodies).toContain("DROP TEMPORARY TABLE IF EXISTS `tmp_b`");
   });
 
   it("preserves the user error and routes cleanup errors to onCleanupError hook", async function testRunInSessionCleanupHookPreservesUserError() {
     globalThis.fetch = mock(async (input: string | URL | Request, requestInit?: RequestInit) => {
       const init = initOf(input, requestInit);
       const bodyText = await readBodyText(init?.body);
-      if (typeof bodyText === "string" && bodyText.startsWith("DROP TABLE IF EXISTS")) {
+      if (typeof bodyText === "string" && bodyText.startsWith("DROP TEMPORARY TABLE IF EXISTS")) {
         throw new TypeError("server gone");
       }
       return new Response("", { status: 200 });
@@ -1849,7 +1851,7 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
     ).rejects.toBe(userError);
 
     expect(bodies).toContain("CREATE TEMPORARY TABLE `tmp_abort_cleanup` (id Int32)");
-    expect(bodies).toContain("DROP TABLE IF EXISTS `tmp_abort_cleanup`");
+    expect(bodies).toContain("DROP TEMPORARY TABLE IF EXISTS `tmp_abort_cleanup`");
   });
 
   it("does not leak abort listeners on the user-owned signal across success and timeout paths", async function testAbortListenerCleanup() {

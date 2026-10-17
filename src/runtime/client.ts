@@ -31,6 +31,7 @@ import {
   type DropTableOptions,
   encodeJsonEachRowInstants,
   mergeClickHouseSettings,
+  mergeHttpHeaders,
   mergeQueryParams,
   normalizeRawQueryInput,
   normalizeSingleStatementSql,
@@ -181,12 +182,13 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
     return {
       ...defaultOptions,
       ...options,
+      session_id: options?.session_id !== undefined ? options.session_id : defaultOptions.session_id,
       clickhouse_settings: mergeClickHouseSettings(defaultOptions.clickhouse_settings, options?.clickhouse_settings),
-      http_headers: {
-        ...(defaultOptions.http_headers ?? {}),
-        ...(options?.http_headers ?? {}),
-        ...(sessionController ? { "X-ClickHouse-Replica-Tag": sessionController.sessionId } : {}),
-      },
+      http_headers: mergeHttpHeaders(
+        defaultOptions.http_headers,
+        options?.http_headers,
+        sessionController ? { "X-ClickHouse-Replica-Tag": sessionController.sessionId } : undefined,
+      ),
       query_params: queryParams,
       query_id: options?.query_id ?? defaultOptions.query_id ?? createUuid(),
     } as ClickHouseBaseQueryOptions & TOptions;
@@ -252,7 +254,7 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
     if (Object.keys(pluginHeaders).length === 0) {
       return options;
     }
-    return { ...options, http_headers: { ...pluginHeaders, ...options.http_headers } };
+    return { ...options, http_headers: mergeHttpHeaders(pluginHeaders, options.http_headers) };
   };
 
   const executeWithPlugins = async <TValue, TOptions extends ClickHouseBaseQueryOptions>(
@@ -261,6 +263,7 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
       options: TOptions,
     ) => Promise<{ value: TValue; rowCount?: number; statistics?: ClickHouseORMQueryStatistics }>,
   ): Promise<TValue> => {
+    if (plugins.length === 0) return (await operation(input.options)).value;
     const event = buildQueryEvent(input);
     const pluginHeaders = await emitQueryStart(plugins, event);
 
@@ -281,6 +284,10 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
     input: PluginContext<TOptions>,
     operation: (options: TOptions) => AsyncGenerator<TValue, void, unknown>,
   ): AsyncGenerator<TValue, void, unknown> {
+    if (plugins.length === 0) {
+      for await (const row of operation(input.options)) yield row;
+      return;
+    }
     const event = buildQueryEvent(input);
     const pluginHeaders = await emitQueryStart(plugins, event);
 
@@ -567,9 +574,31 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
       return rows.map(mapRow);
     }
 
+    const iterable = rows as AsyncIterable<Record<string, unknown>>;
     return (async function* mappedRows() {
-      for await (const row of rows) {
-        yield mapRow(row);
+      const iterator = iterable[Symbol.asyncIterator]();
+      let mappingFailure: { error: unknown } | undefined;
+      try {
+        while (true) {
+          const next = await iterator.next();
+          if (next.done) {
+            break;
+          }
+          yield mapRow(next.value);
+        }
+      } catch (error) {
+        mappingFailure = { error };
+        throw error;
+      } finally {
+        if (mappingFailure !== undefined) {
+          try {
+            await iterator.return?.();
+          } catch {
+            // Close errors must not replace a known next()/mapping failure.
+          }
+        } else {
+          await iterator.return?.();
+        }
       }
     })();
   };
@@ -855,7 +884,7 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
             defaultOptions.clickhouse_settings,
             options?.clickhouse_settings,
           ),
-          http_headers: { ...defaultOptions.http_headers, ...options?.http_headers },
+          http_headers: mergeHttpHeaders(defaultOptions.http_headers, options?.http_headers),
           query_params: { ...defaultOptions.query_params, ...options?.query_params },
           session_id: sessionId,
         },
@@ -879,7 +908,7 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
       for (const tableName of childSessionController.listTempTablesForCleanup()) {
         try {
           const identifier = renderTempTableIdentifier(tableName);
-          await sessionClient.command(sql(`DROP TABLE IF EXISTS ${identifier}`), {
+          await sessionClient.command(sql(`DROP TEMPORARY TABLE IF EXISTS ${identifier}`), {
             abort_signal: undefined,
           });
         } catch (error) {

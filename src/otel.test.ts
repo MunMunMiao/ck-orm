@@ -1,7 +1,21 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { propagation, type Span, type TextMapPropagator, TraceFlags, type Tracer, trace } from "@opentelemetry/api";
+import {
+  propagation,
+  type Span,
+  SpanStatusCode,
+  type TextMapPropagator,
+  TraceFlags,
+  type Tracer,
+  trace,
+} from "@opentelemetry/api";
 import { createRequestFailedError } from "./errors";
-import { createQueryErrorEvent, createQueryEvent, createQuerySuccessEvent, hashStatement } from "./observability";
+import {
+  createQueryErrorEvent,
+  createQueryEvent,
+  createQuerySuccessEvent,
+  emitQueryError,
+  hashStatement,
+} from "./observability";
 import * as otelApi from "./otel";
 import { otelTracing } from "./otel";
 import { clickhouseClient } from "./runtime";
@@ -263,7 +277,23 @@ describe("ck-orm/otel", function describeOtelPlugin() {
     await instrumentation.onQueryStart?.(streamEvent);
     await instrumentation.onQueryError?.(createQueryErrorEvent(streamEvent, "bad", 20, 5));
     expect(tracer.spans[1]?.attributes["db.response.row_count"]).toBeUndefined();
-    expect(tracer.spans[1]?.exceptions).toEqual(["bad"]);
+    expect(tracer.spans[1]?.exceptions).toEqual([{ name: "string" }]);
+    expect(Object.getPrototypeOf(tracer.spans[1]?.exceptions[0] ?? {})).toBe(null);
+    expect(tracer.spans[1]?.status).toEqual({ code: SpanStatusCode.ERROR });
+
+    const rawStreamTracer = createCapturedTracer();
+    const rawStreamInstrumentation = otelTracing({
+      tracer: rawStreamTracer.tracer,
+      includeStatement: false,
+      includeErrorDiagnostics: true,
+    });
+    await rawStreamInstrumentation.onQueryStart?.(streamEvent);
+    await rawStreamInstrumentation.onQueryError?.(createQueryErrorEvent(streamEvent, "bad", 20, 5));
+    expect(rawStreamTracer.spans[0]?.exceptions).toEqual(["bad"]);
+    expect(rawStreamTracer.spans[0]?.status).toEqual({
+      code: SpanStatusCode.ERROR,
+      message: "bad",
+    });
 
     const clickhouseErrorEvent = createQueryEvent({
       mode: "query",
@@ -364,10 +394,26 @@ describe("ck-orm/otel", function describeOtelPlugin() {
     expect(traced.spans[0]?.attributes["db.response.format"]).toBe("JSONEachRow");
     expect(traced.spans[0]?.attributes["db.response.row_count"]).toBe(2);
     expect(traced.spans[0]?.attributes["db.response.returned_rows"]).toBe(2);
-    expect(traced.spans[1]?.exceptions).toEqual([boom]);
+    expect(traced.spans[1]?.exceptions).toEqual([{ name: "Error" }]);
+    expect(Object.getPrototypeOf(traced.spans[1]?.exceptions[0] ?? {})).toBe(null);
+    expect(traced.spans[1]?.status).toEqual({ code: SpanStatusCode.ERROR });
     expect(traced.spans[1]?.attributes["error.type"]).toBe("Error");
     expect(traced.spans[1]?.attributes["db.response.row_count"]).toBe(3);
     expect(traced.spans[1]?.attributes["db.response.returned_rows"]).toBe(3);
+
+    const rawTraced = createCapturedTracer();
+    const rawTracedInstrumentation = otelTracing({
+      tracer: rawTraced.tracer,
+      includeRowCount: true,
+      includeErrorDiagnostics: true,
+    });
+    await rawTracedInstrumentation.onQueryStart?.(errorEvent);
+    await rawTracedInstrumentation.onQueryError?.(createQueryErrorEvent(errorEvent, boom, 6, 3));
+    expect(rawTraced.spans[0]?.exceptions).toEqual([boom]);
+    expect(rawTraced.spans[0]?.status).toEqual({
+      code: SpanStatusCode.ERROR,
+      message: "boom",
+    });
 
     const noCountTracer = createCapturedTracer();
     const noCountInstrumentation = otelTracing({
@@ -418,5 +464,127 @@ describe("ck-orm/otel", function describeOtelPlugin() {
     await sessionlessInstrumentation.onQueryStart?.(sessionlessEvent);
     expect(sessionlessTracer.spans[0]?.attributes["db.session.id"]).toBeUndefined();
     expect(sessionlessTracer.spans[0]?.attributes["ck_orm.session_id"]).toBeUndefined();
+  });
+
+  const createProjectionTracer = (policy: { throwOnErrorTypeUntil?: number; throwOnSetStatus?: boolean }) => {
+    const captured = createCapturedTracer();
+    let errorTypeAttempts = 0;
+    let setStatusAttempts = 0;
+    let endAttempts = 0;
+    const innerStart = captured.tracer.startSpan.bind(captured.tracer);
+    captured.tracer.startSpan = ((name, options) => {
+      const span = innerStart(name, options);
+      const setAttribute = span.setAttribute.bind(span);
+      const setStatus = span.setStatus.bind(span);
+      const end = span.end.bind(span);
+      span.setAttribute = (key, value) => {
+        if (key === "error.type") {
+          errorTypeAttempts += 1;
+          if (policy.throwOnErrorTypeUntil !== undefined && errorTypeAttempts <= policy.throwOnErrorTypeUntil) {
+            throw new Error("AUDIT_OTEL_PROJECTION_TYPE");
+          }
+        }
+        return setAttribute(key, value);
+      };
+      span.setStatus = (status) => {
+        setStatusAttempts += 1;
+        if (policy.throwOnSetStatus) {
+          throw new Error("AUDIT_OTEL_PROJECTION_STATUS");
+        }
+        return setStatus(status);
+      };
+      span.end = () => {
+        endAttempts += 1;
+        end();
+      };
+      return span;
+    }) as Tracer["startSpan"];
+    return {
+      spans: captured.spans,
+      tracer: captured.tracer,
+      attempts: () => ({ errorTypeAttempts, setStatusAttempts, endAttempts }),
+    };
+  };
+
+  const emitProjectionError = async (tracer: Tracer, error: unknown) => {
+    const stderr: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => {
+      stderr.push(
+        args.map((item) => (item instanceof Error ? `${item.name}: ${item.message}` : String(item))).join(" "),
+      );
+    };
+    const plugin = otelTracing({ tracer, includeStatement: false });
+    const event = createQueryEvent({
+      mode: "query",
+      queryKind: "raw",
+      operation: "SELECT",
+      statement: "SELECT 1",
+      startedAt: 0,
+    });
+    try {
+      await plugin.onQueryStart?.(event);
+      await emitQueryError([plugin], createQueryErrorEvent(event, error, 4));
+      return { stderr: stderr.join("\n") };
+    } finally {
+      console.error = original;
+    }
+  };
+
+  it("SEC-005 CONTROL: error.type publish records Error without projection traps", async () => {
+    const tracer = createProjectionTracer({});
+    const captured = await emitProjectionError(tracer.tracer, new Error("safe"));
+    expect(tracer.attempts()).toEqual({ errorTypeAttempts: 1, setStatusAttempts: 1, endAttempts: 1 });
+    expect(tracer.spans).toHaveLength(1);
+    expect(tracer.spans[0]?.ended).toBe(true);
+    expect(tracer.spans[0]?.attributes["db.query.duration_ms"]).toBe(4);
+    expect(tracer.spans[0]?.attributes["error.type"]).toBe("Error");
+    expect(tracer.spans[0]?.status).toEqual({ code: SpanStatusCode.ERROR });
+    expect(tracer.spans[0]?.exceptions).toEqual([{ name: "Error" }]);
+    expect(Object.getPrototypeOf(tracer.spans[0]?.exceptions[0] ?? {})).toBe(null);
+    expect(captured.stderr).toBe("");
+  });
+
+  it("SEC-005 COVERAGE: first error.type publish failure falls back to object", async () => {
+    const tracer = createProjectionTracer({ throwOnErrorTypeUntil: 1 });
+    const captured = await emitProjectionError(tracer.tracer, new Error("safe"));
+    expect(tracer.attempts()).toEqual({ errorTypeAttempts: 2, setStatusAttempts: 1, endAttempts: 1 });
+    expect(tracer.spans).toHaveLength(1);
+    expect(tracer.spans[0]?.ended).toBe(true);
+    expect(tracer.spans[0]?.attributes["db.query.duration_ms"]).toBe(4);
+    expect(tracer.spans[0]?.attributes["error.type"]).toBe("object");
+    expect(tracer.spans[0]?.status).toEqual({ code: SpanStatusCode.ERROR });
+    expect(tracer.spans[0]?.exceptions).toEqual([{ name: "object" }]);
+    expect(Object.getPrototypeOf(tracer.spans[0]?.exceptions[0] ?? {})).toBe(null);
+    expect(captured.stderr).not.toContain("AUDIT_OTEL_PROJECTION_TYPE");
+    expect(captured.stderr).not.toContain('[ck-orm] plugin "otel"');
+  });
+
+  it("SEC-005 COVERAGE: fallback error.type publish failure still records ERROR status", async () => {
+    const tracer = createProjectionTracer({ throwOnErrorTypeUntil: 2 });
+    const captured = await emitProjectionError(tracer.tracer, new Error("safe"));
+    expect(tracer.attempts()).toEqual({ errorTypeAttempts: 2, setStatusAttempts: 1, endAttempts: 1 });
+    expect(tracer.spans).toHaveLength(1);
+    expect(tracer.spans[0]?.ended).toBe(true);
+    expect(tracer.spans[0]?.attributes["db.query.duration_ms"]).toBe(4);
+    expect(tracer.spans[0]?.attributes["error.type"]).toBeUndefined();
+    expect(tracer.spans[0]?.status).toEqual({ code: SpanStatusCode.ERROR });
+    expect(tracer.spans[0]?.exceptions).toEqual([]);
+    expect(captured.stderr).not.toContain("AUDIT_OTEL_PROJECTION_TYPE");
+    expect(captured.stderr).not.toContain('[ck-orm] plugin "otel"');
+  });
+
+  it("SEC-005 COVERAGE: setStatus failure during projection does not escape emitQueryError", async () => {
+    const tracer = createProjectionTracer({ throwOnErrorTypeUntil: 2, throwOnSetStatus: true });
+    const captured = await emitProjectionError(tracer.tracer, new Error("safe"));
+    expect(tracer.attempts()).toEqual({ errorTypeAttempts: 2, setStatusAttempts: 1, endAttempts: 1 });
+    expect(tracer.spans).toHaveLength(1);
+    expect(tracer.spans[0]?.ended).toBe(true);
+    expect(tracer.spans[0]?.attributes["error.type"]).toBeUndefined();
+    expect(tracer.spans[0]?.status).toBeUndefined();
+    expect(tracer.spans[0]?.exceptions).toEqual([]);
+    expect(captured.stderr).not.toContain("AUDIT_OTEL_PROJECTION_STATUS");
+    expect(captured.stderr).not.toContain("AUDIT_OTEL_PROJECTION_TYPE");
+    expect(captured.stderr).not.toContain('[ck-orm] plugin "otel"');
   });
 });

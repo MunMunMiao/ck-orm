@@ -759,6 +759,7 @@ const createColumnFactory = <
       const validateSync = (value: unknown, context: "decode" | "encode") => {
         const result = schema["~standard"].validate(value);
         if (result instanceof Promise) {
+          void result.then(undefined, () => undefined);
           const label = context === "decode" ? "decode" : "insert";
           const message = `Async Standard Schema validators are not supported on the ${label} path`;
           if (context === "decode") {

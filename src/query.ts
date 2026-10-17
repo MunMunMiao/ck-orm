@@ -21,6 +21,7 @@ import {
   type Order,
   type Predicate,
   type QueryParams,
+  readStructuralStamp,
   type Selection,
   type SelectionMeta,
   type SqlExpression,
@@ -33,6 +34,7 @@ import type { AllInsertableKeys, AnyTable, InsertDataOf, RequiredInsertKeys, Tab
 import { renderTableIdentifier } from "./schema";
 import { renderSettings, validateCreateTableTarget } from "./schema-ddl";
 import {
+  allocParam,
   compileSql,
   inferPrimitiveType,
   isSqlFragment,
@@ -822,11 +824,13 @@ const createReferenceExpression = <TData, TSourceKey extends string>(
   // `sourceAlias.columnName` fragment once instead of paying for
   // `sql.identifier({ ... })` on every compile of the same reference.
   const identifierFragment = sql.identifier({ table: sourceAlias, column: columnName });
+  const compile = () => identifierFragment;
   const expression = createExpression({
-    compile: () => identifierFragment,
+    compile,
     decoder,
     sqlType,
     sourceKey: sourceAlias,
+    stamp: { k: "named", table: sourceAlias, column: columnName, compile },
   });
   // Propagate `nestedShape` metadata when the underlying selection item is a
   // direct nested column reference. `compileInsertFromSelect` reads this to
@@ -852,11 +856,13 @@ const createLazyAliasReferenceExpression = <TData>(
   sqlType?: string,
 ): SqlSelection<TData, string> => {
   // `origin` stands in for the missing sourceKey and survives `.as()` / `.mapWith()`.
+  const compile = (ctx: BuildContext) => sql.identifier({ table: resolveAlias(ctx), column: columnName });
   return createExpression<TData, string>({
-    compile: (ctx) => sql.identifier({ table: resolveAlias(ctx), column: columnName }),
+    compile,
     decoder,
     sqlType,
     origin: source,
+    stamp: { k: "lazy", source, column: columnName, resolveAlias, compile },
   });
 };
 
@@ -1108,14 +1114,16 @@ const buildLogicalPredicate = (operator: "and" | "or", predicates: readonly SqlP
   // `SQL_AND` is the same ` and ` literal that BETWEEN uses, so we reuse it
   // as the AND-separator instead of allocating a parallel constant.
   const separatorFragment = operator === "and" ? SQL_AND : SQL_OR_SEPARATOR;
+  const compile = (ctx: BuildContext) =>
+    sql`${SQL_OPEN_PAREN}${sql.join(
+      predicates.map((predicate) => predicate.compile(ctx)),
+      separatorFragment,
+    )}${SQL_CLOSE_PAREN}`;
   return createExpression<boolean>({
-    compile: (ctx) =>
-      sql`${SQL_OPEN_PAREN}${sql.join(
-        predicates.map((predicate) => predicate.compile(ctx)),
-        separatorFragment,
-      )}${SQL_CLOSE_PAREN}`,
+    compile,
     decoder: booleanCastDecoder,
     sqlType: "Bool",
+    stamp: { k: "logical", op: operator, parts: predicates, compile },
   });
 };
 
@@ -1686,6 +1694,271 @@ export type SelectBuilderWithRefs<
 > = SelectBuilder<TResult, TSelection, TRootSource, TJoinedSources, TJoinUseNulls> &
   SelectBuilderColumnRefs<TResult, TSelection>;
 
+// Local derived-table lowering for a deterministic structural subset. The IR is
+// frozen from construction stamps and consumed by both the eligibility check
+// and the renderer. Anything unstamped, rebound, or impure stays on renderCtes.
+type LowerCompile = (ctx: BuildContext) => SQLFragment;
+type LowerStamp =
+  | { k: "const"; value: number | string | boolean | bigint; sqlType?: string; compile: LowerCompile }
+  | { k: "named"; table: string; column: string; compile: LowerCompile }
+  | { k: "lazy"; source: object; column: string; resolveAlias: (ctx: BuildContext) => string; compile: LowerCompile }
+  | { k: "binary"; op: string; left: unknown; right: unknown; sqlType?: string; compile: LowerCompile }
+  | { k: "logical"; op: "and" | "or"; parts: readonly unknown[]; compile: LowerCompile }
+  | { k: "not"; inner: unknown; compile: LowerCompile }
+  | { k: "isnull"; not: boolean; left: unknown; compile: LowerCompile };
+type LowerIr =
+  | { k: "const"; value: number | string | boolean | bigint; sqlType?: string }
+  | { k: "named"; table: string; column: string }
+  | { k: "lazy"; source: object; column: string; resolveAlias: (ctx: BuildContext) => string }
+  | { k: "binary"; op: string; left: LowerIr; right: LowerIr }
+  | { k: "logical"; op: "and" | "or"; parts: LowerIr[] }
+  | { k: "not"; inner: LowerIr }
+  | { k: "isnull"; not: boolean; left: LowerIr };
+type LowerLive = { expr: SqlExpression<unknown>; compile: LowerCompile };
+type LowerPlan = {
+  k: "lower";
+  from: AnyCte;
+  ctesRef: readonly AnyCte[];
+  ctesSnap: readonly AnyCte[];
+  items: { sqlAlias: string; ir: LowerIr }[];
+  where?: LowerIr;
+  lives: LowerLive[];
+};
+type SelectPlan = LowerPlan | { k: "leaf"; lives: LowerLive[] };
+const selectPlans = new WeakMap<object, SelectPlan | null>();
+
+const isLowerStamp = (value: unknown): value is LowerStamp =>
+  typeof value === "object" &&
+  value !== null &&
+  "k" in value &&
+  "compile" in value &&
+  typeof value.compile === "function";
+
+const isClosedPrimitive = (value: unknown): value is number | string | boolean | bigint =>
+  typeof value === "number" || typeof value === "string" || typeof value === "boolean" || typeof value === "bigint";
+
+const freezeExpr = (value: unknown, lives: LowerLive[]): LowerIr | null => {
+  if (!isExpression(value)) return null;
+  const stamp = readStructuralStamp(value);
+  if (!isLowerStamp(stamp) || stamp.compile !== value.compile) return null;
+  lives.push({ expr: value, compile: value.compile });
+  switch (stamp.k) {
+    case "const":
+      return { k: "const", value: stamp.value, sqlType: stamp.sqlType };
+    case "named":
+      return { k: "named", table: stamp.table, column: stamp.column };
+    case "lazy":
+      return { k: "lazy", source: stamp.source, column: stamp.column, resolveAlias: stamp.resolveAlias };
+    case "binary": {
+      const left = freezeExpr(stamp.left, lives);
+      if (!left) return null;
+      if (isClosedPrimitive(stamp.right)) {
+        return { k: "binary", op: stamp.op, left, right: { k: "const", value: stamp.right, sqlType: stamp.sqlType } };
+      }
+      const right = freezeExpr(stamp.right, lives);
+      if (!right) return null;
+      return { k: "binary", op: stamp.op, left, right };
+    }
+    case "logical": {
+      const parts: LowerIr[] = [];
+      for (const part of stamp.parts) {
+        const frozen = freezeExpr(part, lives);
+        if (!frozen) return null;
+        parts.push(frozen);
+      }
+      return { k: "logical", op: stamp.op, parts };
+    }
+    case "not": {
+      const inner = freezeExpr(stamp.inner, lives);
+      return inner ? { k: "not", inner } : null;
+    }
+    case "isnull": {
+      const left = freezeExpr(stamp.left, lives);
+      return left ? { k: "isnull", not: stamp.not, left } : null;
+    }
+  }
+};
+
+const refsBind = (ir: LowerIr, from: AnyCte | undefined): boolean => {
+  switch (ir.k) {
+    case "const":
+      return true;
+    case "named":
+      return from?.name !== undefined && ir.table === from.name;
+    case "lazy":
+      return from !== undefined && ir.source === from;
+    case "binary":
+      return refsBind(ir.left, from) && refsBind(ir.right, from);
+    case "logical":
+      return ir.parts.every((part) => refsBind(part, from));
+    case "not":
+      return refsBind(ir.inner, from);
+    case "isnull":
+      return refsBind(ir.left, from);
+  }
+};
+
+const sliceClosed = (ctes: readonly AnyCte[]): boolean => {
+  for (const cte of ctes) {
+    if (!isSelectBuilder(cte.query) || !selectPlans.get(cte.query)) return false;
+  }
+  return true;
+};
+
+const freezeSelectPlan = (
+  state: {
+    selection?: unknown;
+    ctes: readonly AnyCte[];
+    fromSource?: unknown;
+    joins: readonly unknown[];
+    groupByItems: readonly unknown[];
+    havingClause?: unknown;
+    orderByItems: readonly unknown[];
+    limitValue?: unknown;
+    offsetValue?: unknown;
+    limitByValue?: unknown;
+    useFinal: boolean;
+    whereClause?: unknown;
+  },
+  getItems: () => readonly SelectionItem[],
+): SelectPlan | null => {
+  if (
+    state.joins.length > 0 ||
+    state.groupByItems.length > 0 ||
+    state.havingClause ||
+    state.orderByItems.length > 0 ||
+    state.limitValue !== undefined ||
+    state.offsetValue !== undefined ||
+    state.limitByValue ||
+    state.useFinal
+  ) {
+    return null;
+  }
+  if (!state.selection) return null;
+  const fromSource = state.fromSource;
+  if (fromSource && !isCte(fromSource)) return null;
+  if (isCte(fromSource) && isSelectBuilder(fromSource.query) && selectPlans.get(fromSource.query) === null) {
+    return null;
+  }
+  if (!fromSource && state.ctes.length > 0) return null;
+  const items = getItems();
+  const sources = new Set<AnyCte>();
+  const names = new Set<string>();
+  for (const cte of state.ctes) {
+    if (sources.has(cte)) return null;
+    sources.add(cte);
+    if (cte.name !== undefined) {
+      quoteIdentifier(cte.name);
+      if (names.has(cte.name)) return null;
+      names.add(cte.name);
+    }
+  }
+  const lives: LowerLive[] = [];
+  const frozenItems: { sqlAlias: string; ir: LowerIr }[] = [];
+  for (const item of items) {
+    quoteIdentifier(item.sqlAlias);
+    const ir = freezeExpr(item.expression, lives);
+    if (!ir) return null;
+    frozenItems.push({ sqlAlias: item.sqlAlias, ir });
+  }
+  let where: LowerIr | undefined;
+  if (state.whereClause) {
+    const ir = freezeExpr(state.whereClause, lives);
+    if (!ir) return null;
+    where = ir;
+  }
+  const from = state.fromSource;
+  if (!from) {
+    if (frozenItems.some((item) => !refsBind(item.ir, undefined)) || (where && !refsBind(where, undefined))) {
+      return null;
+    }
+    return { k: "leaf", lives };
+  }
+  if (!isCte(from) || !state.ctes.includes(from)) return null;
+  if (frozenItems.some((item) => !refsBind(item.ir, from)) || (where && !refsBind(where, from))) return null;
+  if (!sliceClosed(state.ctes)) return null;
+  const dependencies = new Set<AnyCte>();
+  let dependency: AnyCte | undefined = from;
+  while (dependency) {
+    if (dependencies.has(dependency)) return null;
+    dependencies.add(dependency);
+    const child = selectPlans.get(dependency.query);
+    dependency = child?.k === "lower" ? child.from : undefined;
+  }
+  if (state.ctes.some((cte) => !dependencies.has(cte))) return null;
+  return { k: "lower", from, ctesRef: state.ctes, ctesSnap: state.ctes.slice(), items: frozenItems, where, lives };
+};
+
+const loweringIntact = (plan: SelectPlan, checked: Map<SelectPlan, boolean>): boolean => {
+  const seen = checked.get(plan);
+  if (seen !== undefined) return seen;
+  checked.set(plan, false);
+  for (const live of plan.lives) {
+    if (live.expr.compile !== live.compile) return false;
+  }
+  if (plan.k === "lower") {
+    if (plan.ctesRef.length !== plan.ctesSnap.length) return false;
+    for (let index = 0; index < plan.ctesSnap.length; index += 1) {
+      if (plan.ctesRef[index] !== plan.ctesSnap[index]) return false;
+    }
+    for (const cte of plan.ctesSnap) {
+      const child = selectPlans.get(cte.query);
+      if (!child || !loweringIntact(child, checked)) return false;
+    }
+  }
+  checked.set(plan, true);
+  return true;
+};
+
+const lowerCheckedSymbol = Symbol("ckOrmLowerChecked");
+const lowerSuppressedSymbol = Symbol("ckOrmLowerSuppressed");
+
+const isLowerSuppressed = (ctx: BuildContext): boolean =>
+  (ctx as BuildContext & { [lowerSuppressedSymbol]?: boolean })[lowerSuppressedSymbol] === true;
+
+const renderIr = (ir: LowerIr, ctx: BuildContext): string => {
+  switch (ir.k) {
+    case "const":
+      return allocParam(ctx, ir.value, ir.sqlType);
+    case "named":
+      return `${quoteIdentifier(ir.table)}.${quoteIdentifier(ir.column)}`;
+    case "lazy":
+      return `${quoteIdentifier(ir.resolveAlias(ctx))}.${quoteIdentifier(ir.column)}`;
+    case "binary":
+      return `${renderIr(ir.left, ctx)} ${ir.op} ${renderIr(ir.right, ctx)}`;
+    case "logical":
+      return `(${ir.parts.map((part) => renderIr(part, ctx)).join(ir.op === "and" ? " and " : " or ")})`;
+    case "not":
+      return `not (${renderIr(ir.inner, ctx)})`;
+    case "isnull":
+      return `${renderIr(ir.left, ctx)}${ir.not ? " is not null" : " is null"}`;
+  }
+};
+
+const renderLowered = (
+  plan: LowerPlan,
+  ctx: BuildContext,
+  selection: readonly SelectionMeta[],
+): CompiledQuery<never> => {
+  const child = plan.from.query[compileWithContextSymbol](ctx);
+  const alias = plan.from.name ?? resolveAnonymousCteAlias(ctx, plan.from);
+  const list = plan.items.map((item) => `${renderIr(item.ir, ctx)} as ${quoteIdentifier(item.sqlAlias)}`).join(", ");
+  const where = plan.where === undefined ? "" : ` where ${renderIr(plan.where, ctx)}`;
+  return createCompiledQuery(
+    `select ${list} from (${child.statement}) as ${quoteIdentifier(alias)}${where}`,
+    selection,
+    "query",
+    { ...ctx.params },
+    { ...ctx.paramTypes },
+    mergeForcedSettings(undefined, child.forcedSettings),
+    {
+      rootSourceName: getSourceKey(plan.from),
+      tableName: getSingleTableName(plan.from, []),
+      joinCount: 0,
+    },
+  );
+};
+
 export const createSelectBuilder = <
   TResult extends Record<string, unknown> = Record<string, unknown>,
   TSelection extends SelectionRecord | undefined = SelectionRecord | undefined,
@@ -2099,128 +2372,157 @@ export const createSelectBuilder = <
     },
 
     [compileWithContextSymbol](ctx: BuildContext): CompiledQuery<TResult> {
-      const anonymousCteSources = new WeakSet<AnyCte>();
-      const { result, forcedSettings: nestedForcedSettings } = withCompileState(ctx, () => {
-        const selectionItems = buildSelectionItems();
-        const queryParts: SQLFragment[] = [];
-        const cteFragment = renderCtes(state.ctes, ctx);
-        if (cteFragment) {
-          queryParts.push(cteFragment);
-        }
-
-        queryParts.push(sql`${SQL_SELECT}${renderSelection(selectionItems, ctx)}`);
-
-        if (state.fromSource) {
-          const fromSource = renderRootSource(
-            state.fromSource,
-            ctx,
-            state.useFinal,
-            state.joins.length > 0,
-            anonymousCteSources,
-          );
-          queryParts.push(sql`${SQL_FROM}${fromSource}`);
-        }
-
-        if (state.joins.length > 0) {
-          for (const join of state.joins) {
-            const joinKeyword = join.asof
-              ? join.type === "inner"
-                ? SQL_ASOF_JOIN
-                : SQL_LEFT_ASOF_JOIN
-              : join.type === "inner"
-                ? SQL_INNER_JOIN
-                : SQL_LEFT_JOIN;
-            queryParts.push(
-              sql`${joinKeyword}${renderSource(join.source, ctx, anonymousCteSources)}${SQL_ON}${join.on.compile(ctx)}`,
-            );
+      const suppressedCtx = ctx as BuildContext & {
+        [lowerSuppressedSymbol]?: boolean;
+        [lowerCheckedSymbol]?: Map<SelectPlan, boolean>;
+      };
+      if (!isLowerSuppressed(ctx)) {
+        const plan = selectPlans.get(builder);
+        const inheritedChecks = suppressedCtx[lowerCheckedSymbol];
+        const checked = inheritedChecks ?? new Map<SelectPlan, boolean>();
+        if (plan?.k === "lower" && loweringIntact(plan, checked)) {
+          suppressedCtx[lowerCheckedSymbol] = checked;
+          try {
+            return renderLowered(plan, ctx, buildSelectionItems());
+          } finally {
+            if (!inheritedChecks) delete suppressedCtx[lowerCheckedSymbol];
           }
         }
+      }
+      const wasSuppressed = isLowerSuppressed(ctx);
+      if (!wasSuppressed) suppressedCtx[lowerSuppressedSymbol] = true;
+      try {
+        const anonymousCteSources = new WeakSet<AnyCte>();
+        const { result, forcedSettings: nestedForcedSettings } = withCompileState(ctx, () => {
+          const selectionItems = buildSelectionItems();
+          const queryParts: SQLFragment[] = [];
+          const cteFragment = renderCtes(state.ctes, ctx);
+          if (cteFragment) {
+            queryParts.push(cteFragment);
+          }
 
-        if (state.whereClause) {
-          queryParts.push(sql`${SQL_WHERE}${state.whereClause.compile(ctx)}`);
-        }
+          queryParts.push(sql`${SQL_SELECT}${renderSelection(selectionItems, ctx)}`);
 
-        if (state.groupByItems.length > 0) {
-          queryParts.push(
-            sql`${SQL_GROUP_BY}${joinSqlParts(
-              state.groupByItems.map((item) => item.compile(ctx)),
-              ", ",
-            )}`,
-          );
-        }
+          if (state.fromSource) {
+            const fromSource = renderRootSource(
+              state.fromSource,
+              ctx,
+              state.useFinal,
+              state.joins.length > 0,
+              anonymousCteSources,
+            );
+            queryParts.push(sql`${SQL_FROM}${fromSource}`);
+          }
 
-        if (state.havingClause) {
-          queryParts.push(sql`${SQL_HAVING}${state.havingClause.compile(ctx)}`);
-        }
-
-        if (state.orderByItems.length > 0) {
-          const orderByParts = state.orderByItems.map((item) => {
-            const directionFragment = item.direction === "asc" ? SQL_ASC : SQL_DESC;
-            return sql`${item.expression.compile(ctx)}${directionFragment}`;
-          });
-          queryParts.push(sql`${SQL_ORDER_BY}${joinSqlParts(orderByParts, ", ")}`);
-        }
-
-        if (state.limitByValue) {
-          queryParts.push(
-            sql`${SQL_LIMIT}${normalizeLimitValue(state.limitByValue.limit, ctx)}${SQL_LIMIT_BY}${joinSqlParts(
-              state.limitByValue.columns.map((column) => column.compile(ctx)),
-              ", ",
-            )}`,
-          );
-        }
-
-        if (state.limitValue !== undefined) {
-          queryParts.push(sql`${SQL_LIMIT}${normalizeLimitValue(state.limitValue, ctx)}`);
-        }
-
-        if (state.offsetValue !== undefined) {
-          queryParts.push(sql`${SQL_OFFSET}${normalizeLimitValue(state.offsetValue, ctx)}`);
-        }
-
-        const statement = sql`${joinSqlParts(queryParts, " ")}`;
-        const compiled = compileSql(statement, ctx);
-        // SelectionItem extends SelectionMeta; the embedded `expression` field
-        // is harmless extra data on the wire-serialised metadata.
-        const selection: readonly SelectionMeta[] = selectionItems;
-
-        const localForcedSettings =
-          isNullableJoinEnabled() && state.joins.some((join) => join.type === "left")
-            ? { join_use_nulls: 1 }
-            : undefined;
-
-        const metadata: CompiledQueryMetadata | undefined = state.fromSource
-          ? {
-              rootSourceName: getSourceKey(state.fromSource),
-              tableName: getSingleTableName(state.fromSource, state.joins),
-              joinCount: state.joins.length,
+          if (state.joins.length > 0) {
+            for (const join of state.joins) {
+              const joinKeyword = join.asof
+                ? join.type === "inner"
+                  ? SQL_ASOF_JOIN
+                  : SQL_LEFT_ASOF_JOIN
+                : join.type === "inner"
+                  ? SQL_INNER_JOIN
+                  : SQL_LEFT_JOIN;
+              queryParts.push(
+                sql`${joinKeyword}${renderSource(join.source, ctx, anonymousCteSources)}${SQL_ON}${join.on.compile(ctx)}`,
+              );
             }
-          : state.joins.length > 0
-            ? { joinCount: state.joins.length }
-            : undefined;
+          }
 
-        return {
-          compiled,
-          selection,
-          localForcedSettings,
-          metadata,
-        };
-      });
+          if (state.whereClause) {
+            queryParts.push(sql`${SQL_WHERE}${state.whereClause.compile(ctx)}`);
+          }
 
-      const forcedSettings = mergeForcedSettings(
-        mergeForcedSettings(undefined, nestedForcedSettings),
-        result.localForcedSettings,
-      );
+          if (state.groupByItems.length > 0) {
+            queryParts.push(
+              sql`${SQL_GROUP_BY}${joinSqlParts(
+                state.groupByItems.map((item) => item.compile(ctx)),
+                ", ",
+              )}`,
+            );
+          }
 
-      return createCompiledQuery<TResult>(
-        result.compiled.query,
-        result.selection,
-        "query",
-        { ...result.compiled.params },
-        { ...result.compiled.paramTypes },
-        forcedSettings,
-        result.metadata,
-      );
+          if (state.havingClause) {
+            queryParts.push(sql`${SQL_HAVING}${state.havingClause.compile(ctx)}`);
+          }
+
+          if (state.orderByItems.length > 0) {
+            const orderByParts = state.orderByItems.map((item) => {
+              const directionFragment = item.direction === "asc" ? SQL_ASC : SQL_DESC;
+              return sql`${item.expression.compile(ctx)}${directionFragment}`;
+            });
+            queryParts.push(sql`${SQL_ORDER_BY}${joinSqlParts(orderByParts, ", ")}`);
+          }
+
+          if (state.limitByValue) {
+            queryParts.push(
+              sql`${SQL_LIMIT}${normalizeLimitValue(state.limitByValue.limit, ctx)}${SQL_LIMIT_BY}${joinSqlParts(
+                state.limitByValue.columns.map((column) => column.compile(ctx)),
+                ", ",
+              )}`,
+            );
+          }
+
+          if (state.limitValue !== undefined) {
+            queryParts.push(sql`${SQL_LIMIT}${normalizeLimitValue(state.limitValue, ctx)}`);
+          }
+
+          if (state.offsetValue !== undefined) {
+            queryParts.push(sql`${SQL_OFFSET}${normalizeLimitValue(state.offsetValue, ctx)}`);
+          }
+
+          const statement = sql`${joinSqlParts(queryParts, " ")}`;
+          const compiled = compileSql(statement, ctx);
+          // compileSql copies params/paramTypes/nextParamIndex. Nested callers
+          // (FROM, CTE, IN, EXISTS, insert.fromSelect, materialized views) share
+          // this ctx, so write the inner allocations back before returning.
+          Object.assign(ctx.params, compiled.params);
+          Object.assign(ctx.paramTypes, compiled.paramTypes);
+          ctx.nextParamIndex = compiled.nextParamIndex;
+          // SelectionItem extends SelectionMeta; the embedded `expression` field
+          // is harmless extra data on the wire-serialised metadata.
+          const selection: readonly SelectionMeta[] = selectionItems;
+
+          const localForcedSettings =
+            isNullableJoinEnabled() && state.joins.some((join) => join.type === "left")
+              ? { join_use_nulls: 1 }
+              : undefined;
+
+          const metadata: CompiledQueryMetadata | undefined = state.fromSource
+            ? {
+                rootSourceName: getSourceKey(state.fromSource),
+                tableName: getSingleTableName(state.fromSource, state.joins),
+                joinCount: state.joins.length,
+              }
+            : state.joins.length > 0
+              ? { joinCount: state.joins.length }
+              : undefined;
+
+          return {
+            compiled,
+            selection,
+            localForcedSettings,
+            metadata,
+          };
+        });
+
+        const forcedSettings = mergeForcedSettings(
+          mergeForcedSettings(undefined, nestedForcedSettings),
+          result.localForcedSettings,
+        );
+
+        return createCompiledQuery<TResult>(
+          result.compiled.query,
+          result.selection,
+          "query",
+          { ...result.compiled.params },
+          { ...result.compiled.paramTypes },
+          forcedSettings,
+          result.metadata,
+        );
+      } finally {
+        if (!wasSuppressed) delete suppressedCtx[lowerSuppressedSymbol];
+      }
     },
 
     toSQL(options?: ToSQLOptions): BuiltQuery {
@@ -2272,6 +2574,15 @@ export const createSelectBuilder = <
       );
     }
     attachSafeColumnRefs(builder, autoRefs, FORBIDDEN_AUTO_COLUMN_KEYS);
+  }
+
+  try {
+    selectPlans.set(
+      builder,
+      freezeSelectPlan(state, () => buildSelectionItems()),
+    );
+  } catch {
+    selectPlans.set(builder, null);
   }
 
   return builder;
@@ -2366,9 +2677,16 @@ export interface InsertFromSelectBuilder<TTable extends AnyTable> extends Promis
 
 const insertFromSelectBuilderTableSymbol = Symbol("clickhouseORMInsertFromSelectBuilderTable");
 
+type InsertValuesState<TTable extends AnyTable> = {
+  readonly kind: "values";
+  readonly rows: readonly InsertRowInput<TTable>[];
+  readonly previous?: InsertValuesState<TTable>;
+  readonly rowCount?: number;
+};
+
 type InsertBuilderState<TTable extends AnyTable> =
   | { readonly kind: "empty" }
-  | { readonly kind: "values"; readonly rows: readonly InsertRowInput<TTable>[] }
+  | InsertValuesState<TTable>
   | { readonly kind: "from_select"; readonly query: AnySelectBuilder };
 
 // ClickHouse still evaluates Values text as expressions through template
@@ -2381,14 +2699,26 @@ const INSERT_VALUES_SETTINGS = {
 
 const compileInsertValues = <TTable extends AnyTable>(
   table: TTable,
-  rows: readonly InsertRowInput<TTable>[],
+  state: InsertValuesState<TTable>,
 ): CompiledQuery<never> => {
   const columnEntries = createInsertColumnEntries(table);
-  const body = rows
-    .map(
-      (row) => `(${columnEntries.map((entry) => formatInsertCell(row as Record<string, unknown>, entry)).join(",")})`,
-    )
-    .join(", ");
+  const batches: (readonly InsertRowInput<TTable>[])[] = [];
+  for (let segment: InsertValuesState<TTable> | undefined = state; segment; segment = segment.previous) {
+    batches[batches.length] = segment.rows;
+  }
+  const parts: string[] = new Array(state.rowCount ?? state.rows.length);
+  let index = 0;
+  for (let batchIndex = batches.length - 1; batchIndex >= 0; batchIndex--) {
+    const batch = batches[batchIndex];
+    if (batch === undefined) {
+      throw createClientValidationError("insert().values() compile encountered a missing VALUES segment");
+    }
+    for (const row of batch) {
+      parts[index++] =
+        `(${columnEntries.map((entry) => formatInsertCell(row as Record<string, unknown>, entry)).join(",")})`;
+    }
+  }
+  const body = parts.join(", ");
   const statement = sql`insert into ${renderTableIdentifier(table)} (${joinSqlParts(
     columnEntries.map((entry) => renderInsertColumnIdentifier(entry)),
     ", ",
@@ -2711,10 +3041,13 @@ export const createInsertBuilder = <TTable extends AnyTable>(
         );
       }
       const normalized = normalizeInsertRows(table, values);
-      const mergedRows = initialState.kind === "values" ? [...initialState.rows, ...normalized] : normalized;
+      const previous = initialState.kind === "values" ? initialState : undefined;
+      const mergeTail = previous !== undefined && previous.rows.length + normalized.length <= 32;
       return createInsertBuilder(table, runner, {
         kind: "values",
-        rows: mergedRows,
+        rows: mergeTail ? [...previous.rows, ...normalized] : normalized,
+        previous: mergeTail ? previous.previous : previous,
+        rowCount: (previous?.rowCount ?? previous?.rows.length ?? 0) + normalized.length,
       }) as unknown as InsertValuesBuilder<TTable>;
     },
 
@@ -2777,7 +3110,7 @@ export const createInsertBuilder = <TTable extends AnyTable>(
         if (initialState.rows.length === 0) {
           throw createClientValidationError("insert().values() must be called with at least one row before execute()");
         }
-        return compileInsertValues(table, initialState.rows);
+        return compileInsertValues(table, initialState);
       }
       return compileInsertFromSelect(table, initialState.query);
     },
@@ -3061,10 +3394,12 @@ const createNullPredicateExpression = (operator: "is null" | "is not null", left
   assertPredicateExpressionInput(left, operator === "is null" ? "isNull" : "isNotNull");
   const leftExpression = ensureComparableExpression(left);
   const operatorFragment = operator === "is null" ? SQL_IS_NULL : SQL_IS_NOT_NULL;
+  const compile = (ctx: BuildContext) => sql`${leftExpression.compile(ctx)}${operatorFragment}`;
   return createExpression<boolean>({
-    compile: (ctx) => sql`${leftExpression.compile(ctx)}${operatorFragment}`,
+    compile,
     decoder: booleanCastDecoder,
     sqlType: "Bool",
+    stamp: { k: "isnull", not: operator === "is not null", left: leftExpression, compile },
   });
 };
 
@@ -3087,16 +3422,18 @@ const createBinaryExpression = (operator: string, left: unknown, right: unknown)
   // The operator string is closed over and never changes — build the SQL
   // fragment once at builder time and reuse it every compile.
   const operatorFragment = sql.raw(` ${operator} `);
+  const compile = (ctx: BuildContext) =>
+    sql`${leftExpression.compile(ctx)}${operatorFragment}${compilePredicateValue(
+      left,
+      right,
+      ctx,
+      leftExpression.sqlType,
+    )}`;
   return createExpression<boolean>({
-    compile: (ctx) =>
-      sql`${leftExpression.compile(ctx)}${operatorFragment}${compilePredicateValue(
-        left,
-        right,
-        ctx,
-        leftExpression.sqlType,
-      )}`,
+    compile,
     decoder: booleanCastDecoder,
     sqlType: "Bool",
+    stamp: { k: "binary", op: operator, left: leftExpression, right, sqlType: leftExpression.sqlType, compile },
   });
 };
 
@@ -3116,10 +3453,12 @@ export function or(...conditions: PredicateInput[]): Predicate | undefined {
 
 export const not = (condition: Predicate): Predicate => {
   const wrapped = condition as SqlPredicate;
+  const compile = (ctx: BuildContext) => sql`${SQL_NOT_OPEN}${wrapped.compile(ctx)}${SQL_CLOSE_PAREN}`;
   return createExpression<boolean>({
-    compile: (ctx) => sql`${SQL_NOT_OPEN}${wrapped.compile(ctx)}${SQL_CLOSE_PAREN}`,
+    compile,
     decoder: booleanCastDecoder,
     sqlType: "Bool",
+    stamp: { k: "not", inner: wrapped, compile },
   });
 };
 

@@ -138,6 +138,11 @@ export const passThroughDecoder: Decoder<unknown> = (value) => value;
 /** @internal Source object of a lazily aliased column ref (bare builder / anonymous CTE). */
 export const expressionOriginSymbol = Symbol("clickhouseORMExpressionOrigin");
 
+const structuralStamps = new WeakMap<object, unknown>();
+
+/** @internal Construction stamp. Not a public property; `.as()` / `.mapWith()` keep it via config spread. */
+export const readStructuralStamp = (value: object): unknown => structuralStamps.get(value);
+
 export const createExpression = <TData, TSourceKey extends string | undefined = string | undefined>(config: {
   compile: (ctx: BuildContext) => SQLFragment;
   origin?: object;
@@ -146,6 +151,7 @@ export const createExpression = <TData, TSourceKey extends string | undefined = 
   outputAlias?: string;
   sourceKey?: TSourceKey;
   windowCompiler?: WindowExpressionCompiler;
+  stamp?: unknown;
 }): SqlExpression<TData, TSourceKey> => {
   const expression = {
     kind: "expression" as const,
@@ -170,6 +176,7 @@ export const createExpression = <TData, TSourceKey extends string | undefined = 
     },
   };
 
+  if (config.stamp !== undefined) structuralStamps.set(expression, config.stamp);
   return trustSqlExpressionObject(expression);
 };
 
@@ -240,10 +247,14 @@ export const ensureExpression = <TData = unknown>(
       sqlType: config?.sqlType,
     });
   }
+  const compile = (ctx: BuildContext) => compileValue(value, ctx, config?.sqlType);
+  const primitive =
+    typeof value === "number" || typeof value === "string" || typeof value === "boolean" || typeof value === "bigint";
   return createExpression({
-    compile: (ctx) => compileValue(value, ctx, config?.sqlType),
+    compile,
     decoder: config?.decoder ?? (passThroughDecoder as Decoder<TData>),
     sqlType: config?.sqlType,
+    ...(primitive ? { stamp: { k: "const", value, sqlType: config?.sqlType, compile } } : {}),
   });
 };
 

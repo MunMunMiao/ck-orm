@@ -2494,7 +2494,7 @@ await db.replicasStatus();
 ```
 
 ## 可观测性
-<!-- src:11c06560 -->
+<!-- src:45091b93 -->
 
 `ck-orm` 提供两层可观测性能力：
 
@@ -2602,6 +2602,8 @@ span 的类型是 `CLIENT`。返回行的查询，span 名称是 `clickhouse QUE
 
 `includeStatement: false` 对共享追踪后端更安全。默认值是 `true`；如果表名、列名或查询结构不应离开服务边界，就关闭它。
 绑定值不会嵌入精简后的 SQL 语句，但 SQL 结构在运维上仍可能敏感。
+
+失败 span 的状态始终是 `ERROR`。默认情况下，插件会保留封闭集合里的失败分类（`error.type`、`ck_orm.error.kind`、`ck_orm.execution_state`，以及能映射到的 ClickHouse 错误码或已分配的 HTTP 状态），并且不会把原始错误的 message、堆栈、响应体和 cause 写进导出的 span。调用方拿到的错误对象不变。`includeErrorDiagnostics: true` 会恢复当前的原始诊断导出——status 的 message、对原始错误调用 `recordException`，以及现有的错误属性——而且与 `includeStatement` 无关。只有构造 `otelTracing()` 时读到一次的、值为布尔值 `true` 的自有数据属性，才会打开这个开关。这不是全面的脱敏保证。内置日志记录器和 `includeStatement: true` 仍会带上调用方提供的内容。
 
 #### 服务端 span
 
@@ -2762,7 +2764,7 @@ const toPublicQueryError = (error: unknown) => {
 不要把 `responseText` 或原始错误 `message` 返回给不受信任的客户端。ClickHouse 的错误文本可能包含 SQL 片段和对象名。
 
 ## 安全
-<!-- src:062d0032 -->
+<!-- src:b6d029f6 -->
 
 `ck-orm` 默认就让构造不安全的 SQL 变得很难。
 
@@ -2794,6 +2796,8 @@ const toPublicQueryError = (error: unknown) => {
 
 绑定值会单独存储为 ClickHouse 具名参数，不包含在语句文本中；但表名、列名和查询结构仍会出现在追踪输出中。
 如果追踪后端是共享的，或者部署在主机之外，请关闭 `includeStatement`，或者在收集器中过滤 `db.statement` / `db.query.text`。
+
+失败时，默认的追踪导出会保留封闭集合分类，并省略原始错误文本。`includeErrorDiagnostics: true` 会明确重新导出原始诊断，且与 `includeStatement` 无关。这个开关、`includeStatement: true` 以及内置日志记录器，都不是全面的脱敏控制。
 
 ClickHouse 服务端 span 也会把语句记录为 `system.opentelemetry_span_log` 中的 `db.statement`。除非你导出这张表，否则它只留在 ClickHouse 服务器上。
 

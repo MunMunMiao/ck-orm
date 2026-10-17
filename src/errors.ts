@@ -94,6 +94,7 @@ const make = (
 // the last match avoids spreading every match into a temporary array.
 const CLICKHOUSE_EXCEPTION_NAME_PATTERN = /\(([A-Z][A-Z0-9_]+)\)/g;
 const CLICKHOUSE_EXCEPTION_HEADER_PATTERN = /(?:^|\n)\s*Code:\s*\d+\.\s*DB::[A-Za-z]/m;
+const CLICKHOUSE_EXCEPTION_MARKER_LINE_PATTERN = /(?:^|\r?\n)[ \t]*__exception__[ \t]*(?:\r?\n|$)/m;
 const CLICKHOUSE_ERROR_CODE_PATTERN = /\bCode:\s*(\d+)\b/;
 
 const extractClickHouseName = (text: string) => {
@@ -216,9 +217,14 @@ export const createAbortedError = (
 
 export const extractClickHouseException = (text: string) => {
   const responseText = text.trim();
+  // Protocol frames are line-anchored `Code: N. DB::...` headers or standalone
+  // `__exception__` marker lines from ClickHouse HTTP cancelWithException.
+  // Ordinary JSON values, keys, and nested text may contain `__exception__`
+  // and must stay data.
   if (
     responseText === "" ||
-    (!CLICKHOUSE_EXCEPTION_HEADER_PATTERN.test(responseText) && !responseText.includes("__exception__"))
+    (!CLICKHOUSE_EXCEPTION_HEADER_PATTERN.test(responseText) &&
+      !CLICKHOUSE_EXCEPTION_MARKER_LINE_PATTERN.test(responseText))
   ) {
     return undefined;
   }

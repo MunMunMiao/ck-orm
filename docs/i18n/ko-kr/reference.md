@@ -2570,7 +2570,7 @@ await db.replicasStatus();
 ```
 
 ## 옵저버빌리티
-<!-- src:11c06560 -->
+<!-- src:45091b93 -->
 
 `ck-orm`은 옵저버빌리티 계층 두 가지를 제공합니다.
 
@@ -2676,6 +2676,8 @@ const db = clickhouseClient({
 `tracer`를 넘기지 않으면 플러그인은 `trace.getTracer("ck-orm")`를 사용합니다. 데이터베이스 이름, 서버 주소, 서버 포트, 요청 시간 초과는 `clickhouseClient(...)` 구성에서 가져옵니다. 서비스 수준 레이블은 `attributes`로 넘기세요. `db.`로 시작하는 키는 무시하므로 애플리케이션 코드가 내장 데이터베이스 속성을 덮어쓸 수 없습니다.
 
 `includeStatement: false`는 공유 트레이싱 백엔드에 더 안전한 설정입니다. 기본값은 `true`입니다. 테이블 이름, 컬럼 이름 또는 쿼리 형태가 서비스 경계 밖으로 나가면 안 될 때 끄세요. 바인딩된 값은 공백을 정리한 SQL 문에 포함되지 않지만 SQL 형태는 여전히 운영상 민감할 수 있습니다.
+
+실패한 스팬의 상태는 항상 `ERROR`입니다. 기본적으로 플러그인은 닫힌 집합의 실패 분류(`error.type`, `ck_orm.error.kind`, `ck_orm.execution_state`, 그리고 매핑되는 ClickHouse 코드나 할당된 HTTP 상태)를 유지하고, 원본 오류의 message, 스택, 본문, cause는 내보내는 스팬에 넣지 않습니다. 호출자가 받는 오류 객체는 그대로입니다. `includeErrorDiagnostics: true`는 현재의 원본 진단 내보내기(status의 message, 원본 오류에 대한 `recordException`, 기존 오류 특성)를 `includeStatement`와 무관하게 복원합니다. 이 옵트인은 `otelTracing()`을 만들 때 한 번 읽는, 값이 불리언 `true`인 고유 데이터 속성만 켭니다. 민감한 정보의 포괄적인 마스킹 보장은 아닙니다. 내장 로거와 `includeStatement: true`는 호출자가 넘긴 내용을 그대로 실어 나릅니다.
 
 #### 서버 측 스팬
 
@@ -2835,7 +2837,7 @@ const toPublicQueryError = (error: unknown) => {
 신뢰할 수 없는 클라이언트에 `responseText`나 오류의 원시 `message`를 반환하지 마세요. ClickHouse 오류 텍스트에는 SQL 조각과 객체 이름이 들어갈 수 있습니다.
 
 ## 보안
-<!-- src:062d0032 -->
+<!-- src:b6d029f6 -->
 
 `ck-orm`은 기본적으로 안전하지 않은 SQL을 만들기 어렵게 설계했습니다.
 
@@ -2866,6 +2868,8 @@ const toPublicQueryError = (error: unknown) => {
 `includeStatement`의 기본값이 `true`이므로 `otelTracing()`은 공백을 정리한 SQL 텍스트를 스팬의 `db.statement`와 `db.query.text`에 첨부합니다.
 
 바인딩된 값은 ClickHouse 이름 있는 매개변수로 따로 저장되므로 SQL 텍스트에는 포함되지 않습니다. 그래도 테이블 이름, 컬럼 이름, 쿼리 형태는 트레이싱 출력에 나타납니다. 트레이싱 백엔드를 공유하거나 외부 호스트에서 운영한다면 `includeStatement`를 끄거나 컬렉터에서 `db.statement` / `db.query.text`를 필터링하세요.
+
+실패 시 기본 트레이싱 내보내기는 닫힌 집합 분류를 유지하고 원본 오류 텍스트는 생략합니다. `includeErrorDiagnostics: true`는 `includeStatement`와 무관하게 원본 진단을 명시적으로 다시 내보냅니다. 이 플래그도, `includeStatement: true`도, 내장 로거도 민감한 정보의 포괄적인 마스킹 제어가 아닙니다.
 
 ClickHouse 서버 스팬도 `system.opentelemetry_span_log`에 SQL 문을 `db.statement`로 기록합니다. 이 테이블은 내보내지 않는 한 ClickHouse 서버에 머뭅니다.
 

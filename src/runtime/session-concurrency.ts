@@ -2,25 +2,24 @@ import { createAbortedError } from "../errors";
 
 type SessionQueueEntry = {
   activeCount: number;
-  waiters: SessionWaiter[];
-  // Head index — first non-yet-shifted waiter slot. Avoids `Array.shift()`
-  // in the drain loop, which is O(N) per call (memmove of every later
-  // element); under a long backlog the loop would degrade to O(N²).
-  head: number;
+  head: SessionWaiter | undefined;
+  tail: SessionWaiter | undefined;
 };
 
-// `cancelled` waiters are tombstones skipped at drain time. We favour O(1)
-// flag-flipping over O(N) `splice` removal so abort storms on a busy
-// session don't degrade to quadratic queue maintenance.
 type SessionWaiter = {
-  cancelled: boolean;
-  resume(): void;
+  previous: SessionWaiter | undefined;
+  next: SessionWaiter | undefined;
+  resume: (() => void) | undefined;
 };
 
-// Compact the waiter array once `head` has eaten through enough of it that
-// we'd otherwise grow without bound. Threshold tuned to keep the drained
-// prefix cheap to discard while only running on already-busy sessions.
-const SESSION_QUEUE_COMPACT_THRESHOLD = 16;
+const removeWaiter = (entry: SessionQueueEntry, waiter: SessionWaiter) => {
+  if (waiter.previous) waiter.previous.next = waiter.next;
+  else entry.head = waiter.next;
+  if (waiter.next) waiter.next.previous = waiter.previous;
+  else entry.tail = waiter.previous;
+  waiter.previous = undefined;
+  waiter.next = undefined;
+};
 
 export type SessionConcurrencyController = {
   run<TValue>(
@@ -38,8 +37,8 @@ export type SessionConcurrencyController = {
 
 const createSessionQueueEntry = (): SessionQueueEntry => ({
   activeCount: 0,
-  waiters: [],
-  head: 0,
+  head: undefined,
+  tail: undefined,
 });
 
 export const createIdempotentRelease = (releaseSlot: () => void): (() => void) => {
@@ -60,23 +59,15 @@ export const createSessionConcurrencyController = (maxConcurrentRequests: number
   const releaseSlot = (sessionId: string, entry: SessionQueueEntry) => {
     entry.activeCount -= 1;
 
-    while (entry.activeCount < maxConcurrentRequests && entry.head < entry.waiters.length) {
-      const waiter = entry.waiters[entry.head];
-      entry.head += 1;
-      // Skip tombstones from cancelled waiters; do not consume a slot for them.
-      if (waiter && !waiter.cancelled) {
-        waiter.resume();
-      }
+    while (entry.activeCount < maxConcurrentRequests && entry.head) {
+      const waiter = entry.head;
+      removeWaiter(entry, waiter);
+      const resume = waiter.resume;
+      waiter.resume = undefined;
+      resume?.();
     }
 
-    // Compact when the head has chewed through a non-trivial prefix so the
-    // backing array doesn't grow indefinitely on long-lived sessions.
-    if (entry.head >= SESSION_QUEUE_COMPACT_THRESHOLD && entry.head * 2 >= entry.waiters.length) {
-      entry.waiters = entry.waiters.slice(entry.head);
-      entry.head = 0;
-    }
-
-    if (entry.activeCount === 0 && entry.head >= entry.waiters.length) {
+    if (entry.activeCount === 0 && !entry.head) {
       sessions.delete(sessionId);
     }
   };
@@ -103,7 +94,7 @@ export const createSessionConcurrencyController = (maxConcurrentRequests: number
     }
 
     if (abortSignal?.aborted) {
-      if (entry.activeCount === 0 && entry.head >= entry.waiters.length) {
+      if (entry.activeCount === 0 && !entry.head) {
         sessions.delete(sessionId);
       }
       throw createQueuedAbortError(abortSignal);
@@ -119,14 +110,14 @@ export const createSessionConcurrencyController = (maxConcurrentRequests: number
         if (settled) return;
         settled = true;
         cleanup();
-        // Tombstone the waiter; releaseSlot will skip it. We can't drop the
-        // session entry here (live waiters may exist behind us) — releaseSlot
-        // already collapses it once the queue is empty.
-        waiter.cancelled = true;
+        removeWaiter(entry, waiter);
+        waiter.resume = undefined;
+        if (entry.activeCount === 0 && !entry.head) sessions.delete(sessionId);
         reject(signal ? createQueuedAbortError(signal) : createAbortedError());
       };
       const waiter: SessionWaiter = {
-        cancelled: false,
+        previous: entry.tail,
+        next: undefined,
         resume() {
           if (settled) return;
           settled = true;
@@ -136,7 +127,9 @@ export const createSessionConcurrencyController = (maxConcurrentRequests: number
         },
       };
       signal?.addEventListener("abort", onAbort, { once: true });
-      entry.waiters.push(waiter);
+      if (entry.tail) entry.tail.next = waiter;
+      else entry.head = waiter;
+      entry.tail = waiter;
     });
   };
 

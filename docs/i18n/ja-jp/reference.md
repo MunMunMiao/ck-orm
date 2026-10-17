@@ -2492,7 +2492,7 @@ await db.replicasStatus();
 ```
 
 ## オブザーバビリティ
-<!-- src:11c06560 -->
+<!-- src:45091b93 -->
 
 `ck-orm`は、オブザーバビリティのレイヤーを2つ備えています。
 
@@ -2598,6 +2598,8 @@ const db = clickhouseClient({
 `tracer`を渡さない場合、プラグインは`trace.getTracer("ck-orm")`を使います。データベース名、サーバーアドレス、サーバーポート、リクエストのタイムアウトは、`clickhouseClient(...)`の設定から取得します。サービス単位のラベルは`attributes`で渡します。`db.`で始まるキーは無視するため、アプリケーションコードでは組み込みのデータベース属性を上書きできません。
 
 複数のサービスで共有するトレーシングバックエンドでは、`includeStatement: false`のほうが安全です。デフォルトは`true`です。テーブル名、カラム名、クエリの形をサービスの境界から外に出したくない場合は、オフにしてください。バインドされた値は空白を詰めたSQLに埋め込まれませんが、SQLの形自体も運用上は機微な情報になる可能性があります。
+
+失敗したスパンのステータスは常に`ERROR`です。デフォルトでは、プラグインは閉じた集合の失敗分類（`error.type`、`ck_orm.error.kind`、`ck_orm.execution_state`、およびマップできるClickHouseコードまたは割り当て済みのHTTPステータス）を残し、元のエラーのmessage、スタック、本文、causeはエクスポートするスパンに出しません。呼び出し元のエラーオブジェクトは変わりません。`includeErrorDiagnostics: true`は、現在の生の診断エクスポート（statusのmessage、元のエラーに対する`recordException`、既存のエラー属性）を`includeStatement`とは独立に復元します。このオプトインを有効にするのは、`otelTracing()`の構築時に一度だけ読まれる、値が真偽値`true`である自身のデータプロパティだけです。包括的な秘匿の保証ではありません。組み込みロガーと`includeStatement: true`は、呼び出し元が渡した内容をそのまま運びます。
 
 #### サーバー側のスパン
 
@@ -2757,7 +2759,7 @@ const toPublicQueryError = (error: unknown) => {
 信頼できないクライアントには、`responseText`や生のエラー`message`を返さないでください。ClickHouseのエラーテキストには、SQLの断片やオブジェクト名が含まれることがあります。
 
 ## セキュリティ
-<!-- src:062d0032 -->
+<!-- src:b6d029f6 -->
 
 `ck-orm`は、デフォルトで安全でないSQLを組み立てにくくする設計です。
 
@@ -2788,6 +2790,8 @@ const toPublicQueryError = (error: unknown) => {
 `otelTracing()`は、`includeStatement`のデフォルトが`true`であるため、空白を詰めたSQLテキストを`db.statement`と`db.query.text`としてスパンに付与します。
 
 バインドされた値はClickHouseの名前付きパラメーターとして別に保存され、SQLテキストには含まれません。ただし、テーブル名、カラム名、クエリの形はトレーシングの出力に残ります。トレーシングバックエンドを共有する場合やホスト外に置いている場合は、`includeStatement`を無効にするか、コレクターで`db.statement`と`db.query.text`をフィルターしてください。
+
+失敗時、デフォルトのトレーシングエクスポートは閉じた集合の分類を残し、元のエラーテキストは出しません。`includeErrorDiagnostics: true`は、`includeStatement`とは独立に、生の診断を明示的に再エクスポートします。このフラグも、`includeStatement: true`も、組み込みロガーも、包括的な秘匿の制御ではありません。
 
 ClickHouseのサーバースパンも、ステートメントを`db.statement`として`system.opentelemetry_span_log`に記録します。このテーブルは、エクスポートしない限りClickHouseサーバー上にとどまります。
 

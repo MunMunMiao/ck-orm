@@ -10,7 +10,7 @@ import type {
   IsNestedRequiredOnInsert,
   NestedColumnBrand,
 } from "./query-shared";
-import { type SQLFragment, sql } from "./sql";
+import { type SQLFragment, sql, trustSqlTableObject } from "./sql";
 
 type InferSelect<TColumns extends Record<string, AnyColumn>> = {
   [K in keyof TColumns]: TColumns[K] extends Column<infer TData, string> ? TData : never;
@@ -389,7 +389,7 @@ export const ckTable = <TName extends string, TColumns extends Record<string, An
   // / `$inferInsert` / `alias` / `originalName` overrides the corresponding
   // table marker and downstream code (e.g. ck.eq(`source.kind === "table"`))
   // misidentifies the table.
-  const tableWithColumns = Object.assign({}, boundColumns, tableBase);
+  const tableWithColumns = trustSqlTableObject(Object.assign({}, boundColumns, tableBase));
   const resolvedOptions = typeof options === "function" ? options(tableWithColumns) : (options ?? {});
   tableWithColumns.options = resolvedOptions;
   return tableWithColumns;
@@ -427,12 +427,14 @@ export const ckAlias = <TTable extends AnyTable, TAlias extends string>(
     options: mappedOptions,
   };
 
-  return Object.assign(aliasedTable, boundColumns) as unknown as TableWithColumns<
-    BoundColumns<TTable["columns"], TTable["originalName"], TAlias>,
-    TTable["tableName"],
-    TAlias,
-    TTable["originalName"]
-  >;
+  return trustSqlTableObject(
+    Object.assign(aliasedTable, boundColumns) as unknown as TableWithColumns<
+      BoundColumns<TTable["columns"], TTable["originalName"], TAlias>,
+      TTable["tableName"],
+      TAlias,
+      TTable["originalName"]
+    >,
+  );
 };
 
 // Tables are immutable, so the rendered identifier fragment is stable for

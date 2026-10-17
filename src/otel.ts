@@ -9,6 +9,7 @@ import {
   trace,
 } from "@opentelemetry/api";
 import { isClickHouseORMError } from "./errors";
+import { CLICKHOUSE_ERROR_NAMES, HTTP_STATUS_CODES } from "./internal/clickhouse-error-codes";
 import type {
   ClickHouseORMPlugin,
   ClickHouseORMQueryErrorEvent,
@@ -22,6 +23,16 @@ export interface ClickHouseORMTracingOptions {
   readonly attributes?: Record<string, string | number | boolean>;
   readonly includeStatement?: boolean;
   readonly includeRowCount?: boolean;
+  /**
+   * Export the raw error message, stack, and current error attributes on
+   * failure spans. Defaults to `false`. Enabled only by an own data property
+   * whose value is strictly boolean `true`, read once when `otelTracing()` is
+   * constructed. Inherited, string, accessor, and later-mutated values do not
+   * enable it. Independent of `includeStatement`. This re-exports original
+   * diagnostics; it is not a comprehensive redaction guarantee. The caller's
+   * error object is unchanged.
+   */
+  readonly includeErrorDiagnostics?: boolean;
   /**
    * Send the span's W3C trace context (`traceparent` / `tracestate`) with each
    * request so ClickHouse records its server-side spans under it. Only sampled
@@ -37,6 +48,7 @@ const TRACE_CONTEXT_HEADERS = ["traceparent", "tracestate"] as const;
 export const otelTracing = (options: ClickHouseORMTracingOptions = {}): ClickHouseORMPlugin => {
   const tracer = options.tracer ?? trace.getTracer("ck-orm");
   const includeStatement = options.includeStatement ?? true;
+  const includeErrorDiagnostics = ownStrictTrue(options, "includeErrorDiagnostics");
   const propagateTraceContext = options.propagateTraceContext ?? false;
   const spanByExecutionId = new Map<string, Span>();
 
@@ -108,12 +120,20 @@ export const otelTracing = (options: ClickHouseORMTracingOptions = {}): ClickHou
     },
     onQueryError(event) {
       closeSpan(event, (span) => {
-        setErrorAttributes(span, event.error);
-        span.recordException(toSpanException(event.error));
-        span.setStatus({
-          code: SpanStatusCode.ERROR,
-          message: event.error instanceof Error ? event.error.message : String(event.error),
-        });
+        if (includeErrorDiagnostics) {
+          try {
+            setErrorAttributes(span, event.error);
+            span.recordException(toSpanException(event.error));
+            span.setStatus({
+              code: SpanStatusCode.ERROR,
+              message: event.error instanceof Error ? event.error.message : String(event.error),
+            });
+            return;
+          } catch {
+            // Opt-in reads can throw. Fall through without logging the accessor error.
+          }
+        }
+        projectSafeError(span, event.error);
       });
     },
   };
@@ -132,6 +152,128 @@ const toSpanException = (error: unknown): Error | string => {
   }
   if (typeof error === "string") return error;
   return String(error);
+};
+
+const SAFE_ERROR_KINDS = new Set<string>([
+  "client_validation",
+  "request_failed",
+  "decode",
+  "timeout",
+  "aborted",
+  "session",
+  "internal",
+]);
+const SAFE_EXECUTION_STATES = new Set<string>(["not_sent", "rejected", "unknown"]);
+
+const closedToken = (value: string, allowed: ReadonlySet<string>) => (allowed.has(value) ? value : "_OTHER");
+
+type OwnData =
+  | { readonly state: "data"; readonly value: unknown }
+  | { readonly state: "absent" }
+  | { readonly state: "unsafe" };
+
+// Own data descriptors only. Accessors are not invoked. A throwing Proxy trap is unsafe.
+const ownData = (value: unknown, key: string): OwnData => {
+  try {
+    if (value === null || (typeof value !== "object" && typeof value !== "function")) return { state: "absent" };
+    const desc = Object.getOwnPropertyDescriptor(value, key);
+    if (desc === undefined) return { state: "absent" };
+    if (desc.get !== undefined || desc.set !== undefined || !Object.hasOwn(desc, "value")) return { state: "unsafe" };
+    return { state: "data", value: desc.value };
+  } catch {
+    return { state: "unsafe" };
+  }
+};
+
+const fixedType = (error: unknown): string => {
+  if (error === null) return "null";
+  const kind = typeof error;
+  if (kind !== "object" && kind !== "function") return kind;
+  try {
+    if (error instanceof Error) return "Error";
+  } catch {
+    return "object";
+  }
+  return kind;
+};
+
+const closedException = (type: string): { name: string } => {
+  const exception: { name: string } = Object.create(null);
+  exception.name = type;
+  return exception;
+};
+
+const projectSafeError = (span: Span, error: unknown) => {
+  const publish = (type: string, kind?: string, state?: string, statusCode?: string) => {
+    span.setAttribute("error.type", type);
+    if (kind !== undefined) span.setAttribute("ck_orm.error.kind", kind);
+    if (state !== undefined) span.setAttribute("ck_orm.execution_state", state);
+    if (statusCode !== undefined) span.setAttribute("db.response.status_code", statusCode);
+    span.recordException(closedException(type));
+    span.setStatus({ code: SpanStatusCode.ERROR });
+  };
+  try {
+    const kind = ownData(error, "kind");
+    const state = ownData(error, "executionState");
+    const kindValue = kind.state === "data" && typeof kind.value === "string" ? kind.value : undefined;
+    const stateValue = state.state === "data" && typeof state.value === "string" ? state.value : undefined;
+    let orm = false;
+    if (kindValue !== undefined && stateValue !== undefined) {
+      try {
+        orm = error instanceof Error;
+      } catch {
+        orm = false;
+      }
+    }
+    if (!orm || kindValue === undefined || stateValue === undefined) {
+      publish(fixedType(error));
+      return;
+    }
+    const code = ownData(error, "clickhouseCode");
+    let type = closedToken(kindValue, SAFE_ERROR_KINDS);
+    let statusCode: string | undefined;
+    // An own integer outside the ClickHouse set is dropped. Do not mask it with HTTP.
+    if (code.state === "data" && typeof code.value === "number" && Number.isInteger(code.value)) {
+      const name = CLICKHOUSE_ERROR_NAMES.get(code.value);
+      if (name !== undefined) {
+        type = name;
+        statusCode = String(code.value);
+      }
+    } else {
+      const http = ownData(error, "httpStatus");
+      if (
+        http.state === "data" &&
+        typeof http.value === "number" &&
+        Number.isInteger(http.value) &&
+        HTTP_STATUS_CODES.has(http.value)
+      ) {
+        statusCode = String(http.value);
+      }
+    }
+    publish(type, closedToken(kindValue, SAFE_ERROR_KINDS), closedToken(stateValue, SAFE_EXECUTION_STATES), statusCode);
+  } catch {
+    try {
+      publish("object");
+    } catch {
+      try {
+        span.setStatus({ code: SpanStatusCode.ERROR });
+      } catch {
+        // Classification traps must not reach emitQueryError's console.error.
+      }
+    }
+  }
+};
+
+const ownStrictTrue = (target: object, key: string): boolean => {
+  try {
+    const desc = Object.getOwnPropertyDescriptor(target, key);
+    if (desc === undefined || desc.get !== undefined || desc.set !== undefined || !Object.hasOwn(desc, "value")) {
+      return false;
+    }
+    return desc.value === true;
+  } catch {
+    return false;
+  }
 };
 
 const setOptionalNumberAttribute = (span: Span, key: string, value: number | undefined) => {
