@@ -139,6 +139,19 @@ describe("ck-orm schema infer helpers", function describeClickHouseORMSchemaInfe
     expect(aliased.options.primaryKey).toBe(aliased.id);
   });
 
+  it("rebinds sampleBy to the aliased column", function testAliasRebindsSampleBy() {
+    const events = ckTable("events", { id: int32() }, (table) => ({
+      engine: "MergeTree",
+      orderBy: [table.id],
+      sampleBy: table.id,
+    }));
+
+    const aliased = ckAlias(events, "e");
+    expect(aliased.options.sampleBy).toBe(aliased.id);
+    expect(aliased.options.sampleBy).not.toBe(events.id);
+    expect((aliased.options.sampleBy as { tableAlias?: string }).tableAlias).toBe("e");
+  });
+
   it("rejects malformed alias names at construction time", function testAliasFailFast() {
     const events = ckTable("events", { id: int32() });
     // Previously these only failed at compile-time. Fail-fast keeps stack

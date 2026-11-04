@@ -389,6 +389,44 @@ describe("runtime protocol boundaries", () => {
       }
     });
 
+    it("REL-002: a synchronous iterator factory failure does not replace the request error", async () => {
+      const factoryError = new Error("iterator factory failed");
+      const fetchError = new TypeError("audit upload transport failure");
+      let acquired = 0;
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => {
+        unhandled.push(reason);
+      };
+      process.on("unhandledRejection", onUnhandled);
+      const source: AsyncIterable<Record<string, unknown>> = {
+        [Symbol.asyncIterator]() {
+          acquired += 1;
+          throw factoryError;
+        },
+      };
+      const db = clickhouseClient({
+        host,
+        fetch: () => {
+          throw fetchError;
+        },
+      });
+      try {
+        await expect(db.insertJsonEachRow("audit_upload_unit", source)).rejects.toMatchObject({
+          kind: "request_failed",
+          cause: fetchError,
+        });
+        await tick();
+        await tick();
+        const acquiredAfterCleanup = acquired;
+        await tick();
+        expect(acquired).toBe(acquiredAfterCleanup);
+        expect(acquiredAfterCleanup).toBeGreaterThan(0);
+        expect(unhandled).toEqual([]);
+      } finally {
+        process.removeListener("unhandledRejection", onUnhandled);
+      }
+    });
+
     it("REL-002 RED: locked stream close is idempotent when iterator.return throws synchronously", async () => {
       let returned = 0;
       const sentinel = new Error("cleanup sentinel");
@@ -1267,7 +1305,7 @@ describe("runtime protocol boundaries", () => {
           const insert = db
             .insertJsonEachRow(mappedCloseTable, source, {
               query_id: mode === "invalid-query-id" ? "invalid query id" : "audit_mapper_waiter",
-              abort_signal: abort.signal,
+              signal: abort.signal,
             })
             .then(
               () => ({ status: "fulfilled" as const }),

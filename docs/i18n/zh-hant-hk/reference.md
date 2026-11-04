@@ -737,7 +737,7 @@ ckType.qbit("embedding", ckType.float32(), { dimensions: 8 });
 插入的資料列會使用與 `typeof table.$inferInsert` 相同的推斷結構；不過，呼叫 `insert(table).values(...)` 時，可以省略有 ClickHouse 預設值或產生運算式的欄位。產生的 `INSERT` 欄位清單永遠不會包含 `MATERIALIZED` 和 `ALIAS` 欄位；即使明確傳入，也會被拒絕。
 
 ## 客戶端配置
-<!-- src:26d96c74 -->
+<!-- src:d9be8df3 -->
 
 用 `clickhouseClient()` 建立客戶端：
 
@@ -795,7 +795,7 @@ const db = clickhouseClient({
 
 | 欄位 | 用途 |
 | --- | --- |
-| `request_timeout` | 每次請求的實際耗時上限（可選），單位是毫秒。省略時，ck-orm 不會在客戶端套用逾時限制；請求的生命週期由底層擷取機制、平台、伺服器和 `abort_signal` 控制。長時間執行的串流查詢不要設定這項，改用 `abort_signal` 設定整體耗時上限（例如 `AbortSignal.timeout(30_000)`）。 |
+| `request_timeout` | 每次請求的實際耗時上限（可選），單位是毫秒。省略時，ck-orm 不會在客戶端套用逾時限制；請求的生命週期由底層擷取機制、平台、伺服器和 `signal` 控制。長時間執行的串流查詢不要設定這項，改用 `signal` 設定整體耗時上限（例如 `AbortSignal.timeout(30_000)`）。 |
 | `clickhouse_settings` | 預設的 ClickHouse 工作階段／查詢設定 |
 | `application` | 設定 ClickHouse 應用程式名稱 |
 
@@ -2362,7 +2362,7 @@ await db.runInSession(async (session) => {
 - 只有你明確要移除本地背壓，而且可以接受 `SESSION_IS_LOCKED` 時，才調高 `session_max_concurrent_requests`
 
 ## 執行階段方法
-<!-- src:1d0d331a -->
+<!-- src:2eb8221a -->
 
 除了建構器，客戶端也會公開較低階的執行階段方法。
 
@@ -2376,7 +2376,7 @@ await db.runInSession(async (session) => {
 - `session_check`
 - `role`
 - `auth`
-- `abort_signal`
+- `signal`
 - `http_headers`
 - `ignore_error_response`
 

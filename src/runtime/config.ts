@@ -52,7 +52,7 @@ export interface ClickHouseBaseQueryOptions {
    * may be reused across multiple requests; ck-orm registers and
    * removes its listener per-request to avoid leaks.
    */
-  readonly abort_signal?: AbortSignal;
+  readonly signal?: AbortSignal;
   readonly http_headers?: Record<string, string>;
   readonly ignore_error_response?: boolean;
 }
@@ -67,7 +67,7 @@ export interface ClickHouseStreamOptions extends ClickHouseBaseQueryOptions {
 
 export type ClickHouseEndpointOptions = Pick<
   ClickHouseBaseQueryOptions,
-  "abort_signal" | "auth" | "http_headers" | "query_id"
+  "signal" | "auth" | "http_headers" | "query_id"
 >;
 
 export type CreateTemporaryTableOptions = {
@@ -182,14 +182,14 @@ type SharedClientConfigOptions = {
    * does not schedule any timer — request lifetime is controlled by
    * the underlying fetch implementation, the server (e.g. ClickHouse
    * `max_execution_time`), the platform default socket timeout, or
-   * the caller via `abort_signal`.
+   * the caller via `signal`.
    *
    * For long-running streaming queries, prefer leaving this unset and
-   * applying a wall-clock budget through `abort_signal` (e.g.
+   * applying a wall-clock budget through `signal` (e.g.
    * `AbortSignal.timeout(...)`) instead — that way the timeout does
    * not kill an in-flight stream the caller may still want to drain.
    *
-   * Per-request `abort_signal` is composed with this; whichever fires
+   * Per-request `signal` is composed with this; whichever fires
    * first wins.
    */
   readonly request_timeout?: number;

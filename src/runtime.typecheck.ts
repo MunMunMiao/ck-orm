@@ -84,13 +84,18 @@ db.stream(ckSql`select 1`, {
   format: "JSONEachRow",
 });
 
+const signal = new AbortController().signal;
 db.select({
   id: users.id,
 })
   .from(users)
   .execute({
     query_id: "typed_query",
+    signal,
   });
+db.select().from(users).iterator({ signal });
+db.ping({ signal });
+db.replicasStatus({ signal });
 
 // @ts-expect-error insert rows should reject unknown columns
 db.insert(users).values({ typo_name: "alice" });

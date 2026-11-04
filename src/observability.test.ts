@@ -359,6 +359,33 @@ describe("ck-orm observability", function describeClickHouseORMObservability() {
     }
   });
 
+  it("keeps going when console.error fails while reporting a plugin hook error", async function testConsoleErrorFailureIsIgnored() {
+    const flaky: ClickHouseORMPlugin = {
+      name: "flaky",
+      onQueryError() {
+        throw new Error("hook failed");
+      },
+    };
+    const event = createQueryEvent({
+      mode: "command",
+      queryKind: "raw",
+      statement: "truncate table logs",
+      operation: "TRUNCATE",
+      startedAt: 1,
+    });
+    const consoleError = spyOn(console, "error").mockImplementation(() => {
+      throw new Error("console failed");
+    });
+    try {
+      await expect(
+        emitQueryError([flaky], createQueryErrorEvent(event, new Error("boom"), 7)),
+      ).resolves.toBeUndefined();
+      expect(consoleError).toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   it("skips instrumentations that do not declare a matching lifecycle hook", async function testPartialHookSkip() {
     const calls: string[] = [];
     const tagged = (tag: string): ClickHouseORMPlugin => ({

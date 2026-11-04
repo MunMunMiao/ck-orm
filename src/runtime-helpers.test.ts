@@ -414,6 +414,25 @@ describe("ck-orm runtime/json-stream", function describeJsonStream() {
     expect(returnCalled).toBe(1);
   });
 
+  it("ignores iterator.return failures when the upload stream is canceled", async function testCancelIgnoresReturnFailure() {
+    let returnCalled = 0;
+    const iter: AsyncIterableIterator<{ id: number }> = {
+      [Symbol.asyncIterator]() {
+        return this;
+      },
+      async next() {
+        return { value: { id: 1 }, done: false };
+      },
+      async return() {
+        returnCalled += 1;
+        throw new Error("return failed");
+      },
+    };
+    const result = createJsonEachRowBody(iter, json) as { body: ReadableStream<Uint8Array> };
+    await expect(result.body.cancel()).resolves.toBeUndefined();
+    expect(returnCalled).toBe(1);
+  });
+
   it("invokes pull twice in succession through the reader contract", async function testSequentialPulls() {
     let nextCalls = 0;
     const iter: AsyncIterableIterator<{ id: number }> = {

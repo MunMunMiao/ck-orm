@@ -18,6 +18,7 @@ import {
   uint64,
 } from "./columns";
 import { fn, tableFn } from "./functions";
+import { getCountDecoder } from "./internal/count";
 import { asc, desc } from "./query";
 import { createExpression, passThroughDecoder, type Selection, type SqlExpression } from "./query-shared";
 import { compileSql, sql } from "./sql";
@@ -715,6 +716,11 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
     expect(toDateTime64Built.params).toEqual({
       orm_param1: "UTC",
     });
+    const toDateTime64NoZone = compileExpression(
+      fn.toDateTime64(string().bind({ name: "created_at", tableName: "orders" }), 3),
+    );
+    expect(toDateTime64NoZone.query).toBe("toDateTime64(`orders`.`created_at`, 3)");
+    expect(toDateTime64NoZone.params).toEqual({});
     expect(() => fn.toDateTime64(string(), 10)).toThrow(
       "toDateTime64 scale must be an integer between 0 and 9, got 10",
     );
@@ -2132,6 +2138,8 @@ describe("ck-orm functions", function describeClickHouseORMFunctions() {
       }),
     ).query;
     expect(havingExpr).toContain("toFloat64(uniqExact(`events`.`user_id`)) > {orm_paramN:Int64}");
+
+    expect(() => getCountDecoder("bogus" as never)).toThrow("Unknown count mode: bogus");
 
     // Boundary decoder coverage for uniqExact mirrors count.
     expect(asExpression(fn.uniqExact(uniqArg)).decoder(0)).toBe(0);

@@ -798,7 +798,7 @@ Actualmente, `ckType.map(...)` solo admite claves `String` y representa el mapa 
 Las filas que insertas tienen la misma forma inferida que `typeof table.$inferInsert`. Al llamar a `insert(table).values(...)`, puedes omitir las columnas con valores predeterminados de ClickHouse o con expresiones generadas. Las columnas `MATERIALIZED` y `ALIAS` nunca se escriben en la lista de columnas del `INSERT` generado; si las pasas explícitamente, se rechaza la operación.
 
 ## Configuración del cliente
-<!-- src:26d96c74 -->
+<!-- src:d9be8df3 -->
 
 Crea un cliente con `clickhouseClient()`:
 
@@ -856,7 +856,7 @@ La mayoría de proyectos solo necesitan unos pocos campos del cliente:
 
 | Campo | Propósito |
 | --- | --- |
-| `request_timeout` | Tiempo de espera opcional por solicitud, en milisegundos, que mide el tiempo total transcurrido. Si lo omites, ck-orm no aplica ningún tiempo de espera en el cliente: la duración de la solicitud la controlan el fetch subyacente, la plataforma, el servidor o `abort_signal`. Para consultas en flujo de larga duración, déjalo sin configurar y aplica el límite de tiempo mediante `abort_signal` (p. ej., `AbortSignal.timeout(30_000)`). |
+| `request_timeout` | Tiempo de espera opcional por solicitud, en milisegundos, que mide el tiempo total transcurrido. Si lo omites, ck-orm no aplica ningún tiempo de espera en el cliente: la duración de la solicitud la controlan el fetch subyacente, la plataforma, el servidor o `signal`. Para consultas en flujo de larga duración, déjalo sin configurar y aplica el límite de tiempo mediante `signal` (p. ej., `AbortSignal.timeout(30_000)`). |
 | `clickhouse_settings` | Ajustes predeterminados de sesión y de consulta de ClickHouse |
 | `application` | Define el nombre de la aplicación de ClickHouse |
 
@@ -2439,7 +2439,7 @@ Uso recomendado:
 - Aumenta `session_max_concurrent_requests` solo cuando quieras desactivar explícitamente el control local de concurrencia y puedas tolerar `SESSION_IS_LOCKED`.
 
 ## Métodos de ejecución
-<!-- src:1d0d331a -->
+<!-- src:2eb8221a -->
 
 Además del constructor, el cliente ofrece métodos de ejecución de bajo nivel.
 
@@ -2453,7 +2453,7 @@ Los campos habituales por consulta son:
 - `session_check`
 - `role`
 - `auth`
-- `abort_signal`
+- `signal`
 - `http_headers`
 - `ignore_error_response`
 

@@ -792,7 +792,7 @@ ckType.qbit("embedding", ckType.float32(), { dimensions: 8 });
 목록에는 `MATERIALIZED`와 `ALIAS` 컬럼을 넣지 않습니다. 명시적으로 넘겨도 허용되지 않습니다.
 
 ## 클라이언트 구성
-<!-- src:26d96c74 -->
+<!-- src:d9be8df3 -->
 
 클라이언트는 `clickhouseClient()`로 만듭니다.
 
@@ -850,7 +850,7 @@ const db = clickhouseClient({
 
 | 필드 | 용도 |
 | --- | --- |
-| `request_timeout` | 요청별 실제 경과 시간 제한을 밀리초로 지정하는 선택적 필드입니다. 생략하면 ck-orm은 클라이언트 쪽 시간 제한을 적용하지 않습니다. 요청이 언제 끝나는지는 fetch, 플랫폼, 서버, `abort_signal`이 결정합니다. 오래 실행되는 스트리밍 쿼리에서는 이 값을 설정하지 말고 `abort_signal`(예: `AbortSignal.timeout(30_000)`)로 실행 시간 한도를 적용하세요. |
+| `request_timeout` | 요청별 실제 경과 시간 제한을 밀리초로 지정하는 선택적 필드입니다. 생략하면 ck-orm은 클라이언트 쪽 시간 제한을 적용하지 않습니다. 요청이 언제 끝나는지는 fetch, 플랫폼, 서버, `signal`이 결정합니다. 오래 실행되는 스트리밍 쿼리에서는 이 값을 설정하지 말고 `signal`(예: `AbortSignal.timeout(30_000)`)로 실행 시간 한도를 적용하세요. |
 | `clickhouse_settings` | 기본 ClickHouse 세션 및 쿼리 설정 |
 | `application` | ClickHouse 애플리케이션 이름 설정 |
 
@@ -2429,7 +2429,7 @@ await db.runInSession(async (session) => {
 - 로컬 백프레셔를 없애려는 의도가 분명하고 `SESSION_IS_LOCKED`를 감수할 수 있을 때만 `session_max_concurrent_requests`를 높이세요.
 
 ## 런타임 메서드
-<!-- src:1d0d331a -->
+<!-- src:2eb8221a -->
 
 빌더 외에도 클라이언트는 저수준 런타임 메서드를 제공합니다.
 
@@ -2443,7 +2443,7 @@ await db.runInSession(async (session) => {
 - `session_check`
 - `role`
 - `auth`
-- `abort_signal`
+- `signal`
 - `http_headers`
 - `ignore_error_response`
 

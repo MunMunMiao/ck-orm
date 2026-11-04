@@ -160,7 +160,7 @@ export const createFetchClickHouseTransport = (config: NormalizedClientConfig): 
       }
     }
 
-    const { signal, cleanup: finalize } = createAbortController(config.request_timeout, mergedOptions.abort_signal);
+    const { signal, cleanup: finalize } = createAbortController(config.request_timeout, mergedOptions.signal);
 
     try {
       const init: RequestInit & { duplex?: "half" } = {
@@ -326,12 +326,11 @@ export const createFetchClickHouseTransport = (config: NormalizedClientConfig): 
           } else {
             // A known request/response failure must not wait for an
             // uncooperative source `return()` queued behind in-flight `next()`.
-            // Start the same memoized close once and observe later rejection.
-            try {
-              void Promise.resolve(close()).then(undefined, () => undefined);
-            } catch {
-              // Sync close throw after a known primary must not replace it.
-            }
+            // One memoized close: a sync throw and a later rejection are both
+            // absorbed here, so neither can replace the primary error.
+            void Promise.resolve()
+              .then(close)
+              .then(undefined, () => undefined);
           }
         }
       }
@@ -353,7 +352,7 @@ export const createFetchClickHouseTransport = (config: NormalizedClientConfig): 
         options: mergedOptions,
         auth,
       });
-      const { signal, cleanup } = createAbortController(config.request_timeout, mergedOptions.abort_signal);
+      const { signal, cleanup } = createAbortController(config.request_timeout, mergedOptions.signal);
 
       try {
         const response = await config.fetch(

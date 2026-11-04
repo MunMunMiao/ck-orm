@@ -738,7 +738,7 @@ ckType.qbit("embedding", ckType.float32(), { dimensions: 8 });
 插入行的推断结构和 `typeof table.$inferInsert` 一致；调用 `insert(table).values(...)` 时，可以省略带 ClickHouse 默认值或生成表达式的列。生成的 `INSERT` 列列表永远不会包含 `MATERIALIZED` 和 `ALIAS` 列；显式传入这些列会被拒绝。
 
 ## 客户端配置
-<!-- src:26d96c74 -->
+<!-- src:d9be8df3 -->
 
 用 `clickhouseClient()` 创建客户端：
 
@@ -796,7 +796,7 @@ const db = clickhouseClient({
 
 | 字段 | 用途 |
 | --- | --- |
-| `request_timeout` | 每个请求可选的实际耗时上限，单位为毫秒。省略时，ck-orm 不会强制设置客户端超时——请求持续多久由底层 fetch、平台、服务器和 `abort_signal` 决定。对于长时间运行的流式查询，不要设置它，改用 `abort_signal` 控制实际耗时预算（例如 `AbortSignal.timeout(30_000)`）。 |
+| `request_timeout` | 每个请求可选的实际耗时上限，单位为毫秒。省略时，ck-orm 不会强制设置客户端超时——请求持续多久由底层 fetch、平台、服务器和 `signal` 决定。对于长时间运行的流式查询，不要设置它，改用 `signal` 控制实际耗时预算（例如 `AbortSignal.timeout(30_000)`）。 |
 | `clickhouse_settings` | 默认的 ClickHouse 会话/查询设置 |
 | `application` | 设置 ClickHouse 应用名称 |
 
@@ -2352,7 +2352,7 @@ await db.runInSession(async (session) => {
 - 只有明确要去掉本地背压，并且能接受 `SESSION_IS_LOCKED` 时，才调高 `session_max_concurrent_requests`
 
 ## 运行时方法
-<!-- src:1d0d331a -->
+<!-- src:2eb8221a -->
 
 除了查询构建器，客户端还提供更底层的运行时方法。
 
@@ -2366,7 +2366,7 @@ await db.runInSession(async (session) => {
 - `session_check`
 - `role`
 - `auth`
-- `abort_signal`
+- `signal`
 - `http_headers`
 - `ignore_error_response`
 

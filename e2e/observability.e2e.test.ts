@@ -344,7 +344,7 @@ describeE2E("ck-orm e2e observability", function describeObservability() {
       let caught: unknown;
       try {
         await sdk.db.execute(ckSql`SELECT toUInt32(${REAL_DB_MARKER}) AS value`, {
-          abort_signal: AbortSignal.timeout(10_000),
+          signal: AbortSignal.timeout(10_000),
         });
       } catch (error) {
         caught = error;
@@ -374,7 +374,7 @@ describeE2E("ck-orm e2e observability", function describeObservability() {
     const sdk = realSdk();
     try {
       expect(
-        await sdk.db.execute(ckSql`SELECT ${REAL_DB_MARKER} AS value`, { abort_signal: AbortSignal.timeout(10_000) }),
+        await sdk.db.execute(ckSql`SELECT ${REAL_DB_MARKER} AS value`, { signal: AbortSignal.timeout(10_000) }),
       ).toEqual([{ value: REAL_DB_MARKER }]);
       await sdk.provider.forceFlush();
       const spans = sdk.exporter.getFinishedSpans();
