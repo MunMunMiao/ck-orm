@@ -799,7 +799,7 @@ Structures de schéma courantes et valeurs correspondantes en TypeScript :
 Les lignes à insérer utilisent la même structure inférée que `typeof table.$inferInsert`, mais vous pouvez omettre les colonnes qui ont une valeur par défaut ClickHouse ou une expression générée lorsque vous appelez `insert(table).values(...)`. Les colonnes `MATERIALIZED` et `ALIAS` n'apparaissent jamais dans la liste de colonnes `INSERT` générée ; si vous les transmettez malgré tout, l'opération est rejetée.
 
 ## Configuration du client
-<!-- src:26d96c74 -->
+<!-- src:d9be8df3 -->
 
 Créez un client avec `clickhouseClient()` :
 
@@ -857,7 +857,7 @@ La plupart des projets n'ont besoin que de quelques champs du client :
 
 | Champ | Rôle |
 | --- | --- |
-| `request_timeout` | Délai maximal facultatif par requête, en millisecondes. Si vous ne le définissez pas, ck-orm n'applique aucun délai côté client : la durée de la requête dépend du fetch sous-jacent, de la plateforme, du serveur ou de `abort_signal`. Pour les requêtes en diffusion continue de longue durée, laissez ce champ vide et imposez plutôt une limite de temps via `abort_signal` (par exemple `AbortSignal.timeout(30_000)`). |
+| `request_timeout` | Délai maximal facultatif par requête, en millisecondes. Si vous ne le définissez pas, ck-orm n'applique aucun délai côté client : la durée de la requête dépend du fetch sous-jacent, de la plateforme, du serveur ou de `signal`. Pour les requêtes en diffusion continue de longue durée, laissez ce champ vide et imposez plutôt une limite de temps via `signal` (par exemple `AbortSignal.timeout(30_000)`). |
 | `clickhouse_settings` | Paramètres par défaut de session et de requête ClickHouse |
 | `application` | Définit le nom de l'application ClickHouse |
 
@@ -2442,7 +2442,7 @@ Utilisation recommandée :
 - n'augmentez `session_max_concurrent_requests` que si vous voulez explicitement désactiver la sérialisation locale et pouvez accepter `SESSION_IS_LOCKED`
 
 ## Méthodes d'exécution
-<!-- src:1d0d331a -->
+<!-- src:2eb8221a -->
 
 En plus du constructeur, le client expose des méthodes d'exécution de bas niveau.
 
@@ -2456,7 +2456,7 @@ Les champs courants à fournir pour chaque requête sont :
 - `session_check`
 - `role`
 - `auth`
-- `abort_signal`
+- `signal`
 - `http_headers`
 - `ignore_error_response`
 

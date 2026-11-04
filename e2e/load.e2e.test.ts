@@ -114,7 +114,7 @@ loadDescribe("ck-orm e2e load", function describeLoad() {
       let aborted: unknown;
       try {
         for await (const _row of db.stream(ckSql`select id from ${ckSql.identifier(tableName)} order by id`, {
-          abort_signal: controller.signal,
+          signal: controller.signal,
         })) {
           received += 1;
           if (received >= 1000) {

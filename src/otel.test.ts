@@ -426,6 +426,28 @@ describe("ck-orm/otel", function describeOtelPlugin() {
     expect(noCountTracer.spans[0]?.attributes["db.response.returned_rows"]).toBeUndefined();
   });
 
+  it("stringifies non-Error non-string failures on diagnostic spans", async function testNonErrorException() {
+    const traced = createCapturedTracer();
+    const instrumentation = otelTracing({
+      tracer: traced.tracer,
+      includeErrorDiagnostics: true,
+    });
+    const event = createQueryEvent({
+      mode: "query",
+      queryKind: "raw",
+      statement: "select 1",
+      operation: "SELECT",
+      startedAt: 1,
+    });
+    await instrumentation.onQueryStart?.(event);
+    await instrumentation.onQueryError?.(createQueryErrorEvent(event, 42, 2));
+    expect(traced.spans[0]?.exceptions).toEqual(["42"]);
+    expect(traced.spans[0]?.status).toEqual({
+      code: SpanStatusCode.ERROR,
+      message: "42",
+    });
+  });
+
   it("attaches db.session.id and ck_orm.session_id to tracing spans when the event carries sessionId", async function testTracingSessionAttributes() {
     const tracer = createCapturedTracer();
     const instrumentation = otelTracing({

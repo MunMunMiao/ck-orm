@@ -3785,6 +3785,30 @@ describe("ck-orm left join nullability", function describeLeftJoinNullability() 
     });
   });
 
+  it("skips implicit columns from a joined source that has no stable key", function testImplicitSelectSkipsKeylessJoin() {
+    const db = createQueryClient();
+    const anonCte = db.$with().as(db.select({ customerId: orders.id }).from(orders));
+    const compiled = db
+      .with(anonCte)
+      .select()
+      .from(orders)
+      .innerJoin(taggedOrders, eq(orders.id, taggedOrders.id))
+      .leftJoin(anonCte, eq(orders.id, anonCte.customerId))
+      [compileQuerySymbol]();
+
+    expect(compiled.selection.map((item) => item.path)).toEqual([
+      ["orders", "id"],
+      ["orders", "name"],
+      ["orders", "amount"],
+      ["tagged_orders", "id"],
+      ["tagged_orders", "tags"],
+    ]);
+    const statement = normalizeSql(compiled.statement);
+    expect(statement).toContain("inner join `tagged_orders`");
+    expect(statement).toContain("left join");
+    expect(statement).toContain("customerId");
+  });
+
   it("collapses an unmatched left-joined group when its array and map fields are empty", function testLeftJoinEmptyContainers() {
     const db = createQueryClient();
     const users = ckTable("users", {

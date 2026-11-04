@@ -507,7 +507,7 @@ describe("PERF-001 JSONEachRow line-search budget", () => {
       },
     });
     const iterator = db.stream(sql`SELECT 1`, {
-      abort_signal: external.signal,
+      signal: external.signal,
       query_id: "audit_perf001_final_abort",
     });
     try {

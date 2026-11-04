@@ -1826,6 +1826,7 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
 
     globalThis.fetch = mock(async (input: string | URL | Request, requestInit?: RequestInit) => {
       const init = initOf(input, requestInit);
+      init?.signal?.throwIfAborted();
       const bodyText = await readBodyText(init?.body);
       if (typeof bodyText === "string") {
         bodies.push(bodyText);
@@ -1842,10 +1843,11 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
         async (session) => {
           await session.createTemporaryTableRaw("tmp_abort_cleanup", "(id Int32)");
           abortController.abort("stop cleanup inheritance");
+          await expect(session.command(sql`select 1`)).rejects.toMatchObject({ kind: "aborted" });
           throw userError;
         },
         {
-          abort_signal: abortController.signal,
+          signal: abortController.signal,
         },
       ),
     ).rejects.toBe(userError);
@@ -1900,14 +1902,14 @@ describe("ck-orm runtime extras", function describeClickHouseORMRuntimeExtras() 
     });
 
     // Success path: user-owned signal passed in, request resolves OK.
-    await db.execute(sql`select 1`, { query_id: "leak_ok", abort_signal: externalController.signal });
+    await db.execute(sql`select 1`, { query_id: "leak_ok", signal: externalController.signal });
     expect(addCount).toBe(1);
     expect(removeCount).toBe(1);
 
     // Timeout path: even if the caller's finalize() chain were skipped, the
     // listener must come off the external signal once the inner controller aborts.
     await expectRejectsWithClickhouseError(
-      db.execute(sql`select 1`, { query_id: "leak_timeout", abort_signal: externalController.signal }),
+      db.execute(sql`select 1`, { query_id: "leak_timeout", signal: externalController.signal }),
       {
         kind: "timeout",
         executionState: "unknown",

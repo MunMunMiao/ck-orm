@@ -429,7 +429,7 @@ describe("PERF-006 empty-plugin observation cost", () => {
       await db.runInSession(
         async (session) => {
           await expect(
-            session.execute(sql`SELECT 1 /* audit_perf006 */`, { ...queryOptions, abort_signal: controller.signal }),
+            session.execute(sql`SELECT 1 /* audit_perf006 */`, { ...queryOptions, signal: controller.signal }),
           ).rejects.toMatchObject({ kind: "aborted" });
           await session.command(sql`SELECT 1 /* audit_perf006 */`, { query_id: "audit_perf006_after_abort" });
         },
@@ -509,7 +509,7 @@ describe("PERF-006 empty-plugin observation cost", () => {
         async (session) => {
           const iterator = session.stream(sql`SELECT n /* audit_perf006 */`, {
             ...queryOptions,
-            abort_signal: controller.signal,
+            signal: controller.signal,
           });
           expect(await iterator.next()).toEqual({ value: { n: 1 }, done: false });
           controller.abort(new DOMException("synthetic stream abort", "AbortError"));

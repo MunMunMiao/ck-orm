@@ -201,7 +201,7 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
     if (!sessionConcurrencyController) {
       return operation();
     }
-    return sessionConcurrencyController.run(options.session_id, operation, options.abort_signal);
+    return sessionConcurrencyController.run(options.session_id, operation, options.signal);
   };
 
   const buildQueryEvent = (input: {
@@ -320,7 +320,7 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
       yield* operation();
       return;
     }
-    yield* sessionConcurrencyController.runStream(options.session_id, operation, options.abort_signal, () =>
+    yield* sessionConcurrencyController.runStream(options.session_id, operation, options.signal, () =>
       waitForSessionRelease(options),
     );
   };
@@ -346,7 +346,7 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
           session_check: undefined,
           query_id: createUuid(),
           ignore_error_response: false,
-          abort_signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())),
+          signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())),
         },
         { id: options.query_id },
         { id: "String" },
@@ -360,7 +360,7 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
           ...options,
           query_id: createUuid(),
           query_params: undefined,
-          abort_signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())),
+          signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())),
           ignore_error_response: false,
         });
         return;
@@ -909,7 +909,7 @@ export const createClickHouseORMClient = <TJoinUseNulls extends 0 | 1 = 1>(
         try {
           const identifier = renderTempTableIdentifier(tableName);
           await sessionClient.command(sql(`DROP TEMPORARY TABLE IF EXISTS ${identifier}`), {
-            abort_signal: undefined,
+            signal: undefined,
           });
         } catch (error) {
           cleanupErrors.push(error);

@@ -514,6 +514,31 @@ describe("ck-orm columns", function describeClickHouseORMColumns() {
     expect((nestedErr as DecodeError).message).toContain("[ck-orm]");
   });
 
+  it("joins nested container paths when an inner decode error already has one", function testNestedContainerDecodePaths() {
+    const matrix = array(array(int32()));
+    let matrixErr: unknown;
+    try {
+      matrix.mapFromDriverValue([[1], [true]] as unknown);
+    } catch (error) {
+      matrixErr = error;
+    }
+    expect(isDecodeError(matrixErr)).toBe(true);
+    expect((matrixErr as DecodeError).path).toBe("[1][0]");
+    expect((matrixErr as DecodeError).message).toMatch(/\(at \[1\]\[0\]\)$/);
+
+    const payloads = array(json<{ id: string }>({ typeHints: { id: uint64() } }));
+    let payloadErr: unknown;
+    try {
+      payloads.mapFromDriverValue([{ id: "not-a-number" }]);
+    } catch (error) {
+      payloadErr = error;
+    }
+    expect(isDecodeError(payloadErr)).toBe(true);
+    expect((payloadErr as DecodeError).path).toBe("[0].id");
+    expect((payloadErr as DecodeError).message).toMatch(/\(at \[0\]\.id\)$/);
+    expect((payloadErr as DecodeError).message).not.toMatch(/\(at id\)/);
+  });
+
   it("annotates map decode failures and wraps non-DecodeError throws by message", function testMapAndNonDecodeErrorRethrow() {
     // Map decode error path: inner value column throws DecodeError with a coerced value.
     const counters = map(string(), int32());

@@ -737,7 +737,7 @@ ckType.qbit("embedding", ckType.float32(), { dimensions: 8 });
 挿入する行の形は、`typeof table.$inferInsert`から推論される形と同じです。ただし、ClickHouseのデフォルト値や生成式を持つカラムは、`insert(table).values(...)`を呼び出すときに省略できます。生成される`INSERT`のカラムリストには、`MATERIALIZED`カラムと`ALIAS`カラムは含まれません。これらを明示的に渡すと、受け付けられません。
 
 ## クライアント設定
-<!-- src:26d96c74 -->
+<!-- src:d9be8df3 -->
 
 `clickhouseClient()`でクライアントを作成します。
 
@@ -795,7 +795,7 @@ const db = clickhouseClient({
 
 | フィールド | 用途 |
 | --- | --- |
-| `request_timeout` | リクエストごとに指定できる実時間ベースのタイムアウト（ミリ秒）。省略すると、ck-ormはクライアント側のタイムアウトを設定しません。リクエストの寿命は、下層のfetch / platform / server / `abort_signal`が制御します。長く実行されるストリーミングクエリでは、ここを未設定にし、代わりに`abort_signal`で実時間の上限を設定してください（例：`AbortSignal.timeout(30_000)`）。 |
+| `request_timeout` | リクエストごとに指定できる実時間ベースのタイムアウト（ミリ秒）。省略すると、ck-ormはクライアント側のタイムアウトを設定しません。リクエストの寿命は、下層のfetch / platform / server / `signal`が制御します。長く実行されるストリーミングクエリでは、ここを未設定にし、代わりに`signal`で実時間の上限を設定してください（例：`AbortSignal.timeout(30_000)`）。 |
 | `clickhouse_settings` | ClickHouseのセッション・クエリ設定のデフォルト値 |
 | `application` | ClickHouseアプリケーション名の設定 |
 
@@ -2351,7 +2351,7 @@ await db.runInSession(async (session) => {
 - ローカルのバックプレッシャーを無効にしたく、`SESSION_IS_LOCKED`も許容できる場合にだけ、`session_max_concurrent_requests`を上げてください。
 
 ## ランタイムメソッド
-<!-- src:1d0d331a -->
+<!-- src:2eb8221a -->
 
 ビルダーだけでなく、クライアントには低レベルのランタイムメソッドもあります。
 
@@ -2365,7 +2365,7 @@ await db.runInSession(async (session) => {
 - `session_check`
 - `role`
 - `auth`
-- `abort_signal`
+- `signal`
 - `http_headers`
 - `ignore_error_response`
 

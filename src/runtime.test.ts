@@ -493,6 +493,40 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
     }
   });
 
+  it("does not let a throwing onCleanupError mask the session result", async function testCleanupHookThrowPreservesResult() {
+    const tmpScope = ckTable("tmp_hook_throw", {
+      user_id: string(),
+    });
+    setFetchMock(async (_url, init) => {
+      const text = await readBodyText(init.body);
+      if (typeof text === "string" && text.startsWith("DROP TEMPORARY TABLE")) {
+        return sessionLockedResponse();
+      }
+      return new Response("", { status: 200 });
+    });
+
+    const db = clickhouseClient({
+      host: "http://localhost:8123",
+    });
+    let hookCalls = 0;
+    const result = await db.runInSession(
+      async (session) => {
+        await session.createTemporaryTable(tmpScope);
+        return "kept";
+      },
+      {
+        session_id: "cleanup_hook_throw",
+        onCleanupError() {
+          hookCalls += 1;
+          throw new Error("hook failed");
+        },
+      },
+    );
+
+    expect(result).toBe("kept");
+    expect(hookCalls).toBe(1);
+  });
+
   it("throws SessionError when temporary-table cleanup hits SESSION_IS_LOCKED", async function testCleanupSessionLockedThrows() {
     const tmpScope = ckTable("tmp_scope", {
       user_id: string(),
@@ -1264,6 +1298,32 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
     expect(headers.get("x-extra-header")).toBe("override");
   });
 
+  for (const mode of ["execute", "iterator"] as const) {
+    it(`forwards signal cancellation through select().${mode}()`, async () => {
+      const controller = new AbortController();
+      const reason = new Error("cancel typed select");
+      const rows = ckTable("signal_rows", { value: string() });
+      const db = clickhouseClient({
+        host: "http://localhost:8123",
+        fetch(request) {
+          controller.abort(reason);
+          request.signal.throwIfAborted();
+          return mode === "execute" ? Response.json({ data: [{ value: "ok" }] }) : new Response('{"value":"ok"}\n');
+        },
+      });
+      const query = db.select().from(rows);
+      const options = { signal: controller.signal, query_id: "signal_select" };
+      const pending = mode === "execute" ? query.execute(options) : query.iterator(options).next();
+
+      await expect(pending).rejects.toMatchObject({
+        kind: "aborted",
+        executionState: "unknown",
+        queryId: "signal_select",
+        cause: reason,
+      });
+    });
+  }
+
   it("applies timeout and abort handling to system endpoint helpers", async function testSystemEndpointTimeoutAndAbort() {
     const { calls } = setFetchMock(async (_url, init) => {
       return await new Promise<Response>((_resolve, reject) => {
@@ -1298,7 +1358,7 @@ describe("ck-orm runtime", function describeClickHouseORMRuntime() {
 
     const controller = new AbortController();
     const replicasPromise = abortDb.replicasStatus({
-      abort_signal: controller.signal,
+      signal: controller.signal,
     });
     controller.abort(new Error("manual abort"));
     await expectRejectsWithClickhouseError(replicasPromise, {

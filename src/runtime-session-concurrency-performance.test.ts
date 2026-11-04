@@ -386,7 +386,7 @@ describe("PERF-002 session waiter queue", () => {
     });
     const abort = new AbortController();
     const cancelled = db
-      .execute(sql`SELECT 2`, { query_id: "cancelled", abort_signal: abort.signal })
+      .execute(sql`SELECT 2`, { query_id: "cancelled", signal: abort.signal })
       .catch((error: { kind?: unknown }) => {
         expect(error.kind).toBe("aborted");
       });
