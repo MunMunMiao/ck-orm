@@ -1305,13 +1305,19 @@ export function qbit<TInner extends Float32 | Float64 | BFloat16, TData extends 
 }
 // `Enum8` and `Enum16` differ only in width — same key/value validation, same
 // decoder. Render the body once and let the public factories pick the label.
+const ENUM_VALUE_RANGE = { Enum8: [-128, 127], Enum16: [-32768, 32767] } as const;
 const buildEnumColumn = <TData extends string>(
   label: "Enum8" | "Enum16",
   configuredName: string | undefined,
   values: Record<string, number>,
 ) => {
+  const [min, max] = ENUM_VALUE_RANGE[label];
   const entries = Object.entries(values)
-    .map(([key, value]) => `'${escapeSqlSingleQuoted(key)}' = ${value}`)
+    .map(([key, value]) => {
+      // `number` is erased at runtime; an unchecked value would be spliced into `sqlType` as raw SQL.
+      assertIntegerInRange(`${label} member "${key}"`, value, min, max);
+      return `'${escapeSqlSingleQuoted(key)}' = ${value}`;
+    })
     .join(", ");
   return createColumnFactory<TData, string>({
     configuredName,
