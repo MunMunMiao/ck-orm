@@ -1,7 +1,16 @@
 {
   "files": {
     "ignoreUnknown": true,
-    "includes": ["**", "!dist", "!node_modules", "!coverage", "!bun.lock", "!docs/dist", "!docs/.build"]
+    "includes": [
+      "**",
+      "!dist",
+      "!node_modules",
+      "!coverage",
+      "!bun.lock",
+      "!docs/dist",
+      "!docs/.build",
+      "!CLAUDE-SECURITY-*"
+    ]
   },
   "css": {
     "parser": {
